@@ -448,6 +448,21 @@ CLAUDE.md/AGENTS.md에 '변경분 반영 필요' 표시". 루트가 지금 5개 
       `ssot_explorer.log`가 실제로 생성됨을 확인(빈 파일 — 에러 없었으므로
       정상). exe 재빌드 후 동일 smoke-test 통과.
 
+[D-026] git 저장소 초기화 — 첫 커밋(D-001~D-025 전체 스냅샷)
+결정: 사용자가 "커밋은 항상 하고 있는거지?"라고 질문 → 확인해보니 이
+      프로젝트뿐 아니라 상위 폴더 전부(Local_APP, SSOT_Coding_File, SSOT,
+      Desktop) 어디에도 .git이 없어 커밋이 한 번도 없었음(`git status`가
+      모든 상위 경로에서 "not a git repository" 반환으로 실측 확인).
+      → `SSOT_Explorer\` 폴더에 `git init` + `.gitignore`(build/, dist/,
+      *.spec, __pycache__/, .pytest_cache/ — 전부 재생성 가능한 산출물)
+      + 첫 커밋(10개 파일, 2336줄, D-001~D-025 전체 반영 상태).
+이유: OneDrive 동기화는 파일 백업만 해주지 diff/롤백/커밋 단위 이력을 안
+      준다 — main.py 58KB+test_main.py 11KB+설계문서 다수가 지금까지 전부
+      "지금 상태"만 존재하고 과거 시점으로 되돌아갈 방법이 없었다. CI(D-024
+      TODO)도 git 저장소 없인 아예 불가능해서 선행조건이었음.
+검증: `git log --oneline`으로 root-commit 1개 존재 확인, `git status`로
+      더 이상 "not a git repository" 안 뜨는지 확인.
+
 ================================================================
 PART 2 — TODO
 ================================================================
