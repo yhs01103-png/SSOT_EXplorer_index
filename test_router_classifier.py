@@ -65,17 +65,22 @@ def test_classify_content_sorts_descending_by_score():
 
 
 # ------------------------------------------ D-033: IDF 가중치, floor→additive
+#
+# D-034: 아래 테스트들은 실제 국어사전 단어만 쓴다 — kiwipiepy는 사전에
+# 없는 조어("특이어" 등)를 문맥에 따라 다르게 쪼개서(형태소 분석기 특성상
+# 미등록어 처리가 확률적), 예전에 임의로 지어낸 복합어 픽스처가 깨진 걸
+# 발견하고 전부 실제 단어로 교체(D-034).
 
 def test_compute_idf_downweights_terms_common_across_roots():
-    """"코드"가 모든 문서에 나오고 "특이어"는 하나에만 나오면, 후자가 훨씬
+    """"코드"가 모든 문서에 나오고 "특이"는 하나에만 나오면, 후자가 훨씬
     높은 가중치를 받아야 한다 — IDF의 핵심 성질."""
     corpora = {
         "a": "코드 프로젝트 규칙",
-        "b": "코드 프로젝트 정리",
-        "c": "코드 특이어 문서",
+        "b": "코드 프로젝트 문서",
+        "c": "코드 특이 사항",
     }
     idf = rc.compute_idf(corpora)
-    assert idf["특이어"] > idf["코드"]
+    assert idf["특이"] > idf["코드"]
 
 
 def test_classify_content_idf_differentiates_generic_vs_specific_match():
@@ -84,11 +89,11 @@ def test_classify_content_idf_differentiates_generic_vs_specific_match():
     단어까지 겹친 루트가 확실히 더 높은 점수를 받아야 한다(예전엔 둘 다
     scope 신호면 강제로 0.5 동점이었음)."""
     roots = [
-        {"label": "generic_only", "path": "C:\\g", "scope": "", "referenceCondition": "코드 프로젝트 규칙 정리"},
-        {"label": "generic_plus_specific", "path": "C:\\gs", "scope": "", "referenceCondition": "코드 프로젝트 규칙 정리 범용규칙모음집"},
-        {"label": "unrelated", "path": "C:\\u", "scope": "", "referenceCondition": "완전히 다른 주제 내용"},
+        {"label": "generic_only", "path": "C:\\g", "scope": "", "referenceCondition": "코드 프로젝트 규칙 문서"},
+        {"label": "generic_plus_specific", "path": "C:\\gs", "scope": "", "referenceCondition": "코드 프로젝트 규칙 문서 범용 모음집"},
+        {"label": "unrelated", "path": "C:\\u", "scope": "", "referenceCondition": "고양이 강아지 물고기 이야기"},
     ]
-    text = "코드 프로젝트 규칙 정리 범용규칙모음집 작업"
+    text = "코드 프로젝트 규칙 문서 범용 모음집 작업"
     results = rc.classify_content(text, roots)
     by_label = {c["rootLabel"]: c for c in results}
     assert by_label["generic_plus_specific"]["score"] > by_label["generic_only"]["score"]

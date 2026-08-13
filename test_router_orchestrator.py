@@ -44,19 +44,21 @@ def test_find_readme_missing_returns_none(tmp_path):
 def test_orchestrate_merges_structured_and_prose_only_candidates(tmp_path):
     """referenceCondition을 씀 — scope는 D-030 수정으로 "키워드겹침"이
     아니라 "scope일치" 신호를 낸다(router_classifier._keyword_signal이
-    scope를 안 봄), 구조화 키워드겹침 신호를 확실히 내려면 referenceCondition."""
+    scope를 안 봄), 구조화 키워드겹침 신호를 확실히 내려면 referenceCondition.
+    D-034: 실제 국어사전 단어("보안")만 씀 — kiwipiepy가 미등록 조어를
+    문맥별로 다르게 쪼개서 예전 임의 복합어 픽스처가 깨진 걸 발견하고 교체."""
     prose_only_dir = tmp_path / "prose_only"
     prose_only_dir.mkdir()
-    (prose_only_dir / "README.md").write_text("특수프로즈키워드 관련 안내", encoding="utf-8")
+    (prose_only_dir / "README.md").write_text("보안 정책 안내", encoding="utf-8")
 
     structured_only_dir = tmp_path / "structured_only"
     structured_only_dir.mkdir()
 
     roots = [
         {"label": "prose_only", "path": str(prose_only_dir), "scope": "", "referenceCondition": ""},
-        {"label": "structured_only", "path": str(structured_only_dir), "scope": "", "referenceCondition": "특수프로즈키워드"},
+        {"label": "structured_only", "path": str(structured_only_dir), "scope": "", "referenceCondition": "보안 정책"},
     ]
-    result = ro.orchestrate("특수프로즈키워드 관련 문서", roots, log_path=tmp_path / "log.json")
+    result = ro.orchestrate("보안 정책 문서", roots, log_path=tmp_path / "log.json")
     labels = {c["rootLabel"] for c in result["candidates"]}
     assert labels == {"prose_only", "structured_only"}
 
@@ -69,10 +71,10 @@ def test_orchestrate_merges_structured_and_prose_only_candidates(tmp_path):
 def test_orchestrate_combines_signals_for_same_root(tmp_path):
     root_dir = tmp_path / "both"
     root_dir.mkdir()
-    (root_dir / "README.md").write_text("특수프로즈키워드 안내문", encoding="utf-8")
+    (root_dir / "README.md").write_text("보안 정책 안내문", encoding="utf-8")
 
-    roots = [{"label": "both", "path": str(root_dir), "scope": "", "referenceCondition": "특수프로즈키워드"}]
-    result = ro.orchestrate("특수프로즈키워드 문서", roots, log_path=tmp_path / "log.json")
+    roots = [{"label": "both", "path": str(root_dir), "scope": "", "referenceCondition": "보안 정책"}]
+    result = ro.orchestrate("보안 정책 문서", roots, log_path=tmp_path / "log.json")
     assert len(result["candidates"]) == 1
     cand = result["candidates"][0]
     assert set(cand["signals"]) == {"키워드겹침", "프로즈검색"}

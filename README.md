@@ -10,7 +10,12 @@ SSOT 인덱싱 트리 전용 탐색기 대체 뷰어 + 다중 AI 툴 규칙 동�
 - 배포용: `dist\SSOT_Explorer.exe` 더블클릭(설치 불필요, 단일 실행파일)
 - 개발용: `pip install -r requirements.txt` 후 `python main.py`
 - exe 재빌드: `pip install -r requirements-dev.txt` 후
-  `python -m PyInstaller --noconfirm --windowed --onefile --name "SSOT_Explorer" main.py`
+  `python -m PyInstaller --noconfirm --windowed --onefile --name "SSOT_Explorer" --collect-all kiwipiepy_model --collect-all kiwipiepy main.py`
+  (D-034 — `--collect-all` 2개 필수. kiwipiepy는 언어모델 데이터 파일이
+  따로 있어서, 이 플래그 없이 빌드하면 PyInstaller가 모델 파일을 안
+  담아서 exe 안에서 조용히 예전 정규식 토크나이저로 폴백됨 — 앱은 안
+  죽지만 분류 정밀도가 떨어짐. exe 용량이 기존 대비 훨씬 커짐(~150MB,
+  모델 파일 포함)이 정상.)
 - **회귀 테스트**(2026-08-13 도입, D-024 — Lazzy_App_OS_Monorepo/server의
   `test_*.py`+pytest 컨벤션 이식): `pip install -r requirements-dev.txt` 후
   `pytest -q`. `test_main.py`가 레지스트리 로드/저장, D-021 원자적쓰기+동시성
@@ -59,7 +64,7 @@ SSOT 인덱싱 트리 전용 탐색기 대체 뷰어 + 다중 AI 툴 규칙 동�
   ssot_explorer.log`에 기록되고 사용자에게 다이얼로그로 알림 — exe가
   `--windowed`(콘솔 없음)라 로그 파일 없이는 문제 진단이 불가능했음.
   버튼 클릭 같은 슬롯 안 예외는 알림만 뜨고 앱은 계속 실행됨.
-- **새 문서 저장**(툴바, D-029~D-033): 텍스트를 붙여넣으면
+- **새 문서 저장**(툴바, D-029~D-034): 텍스트를 붙여넣으면
   `router_orchestrator.py`가 3단계 캐스케이드로 등록 루트 중 맞는 곳을
   제안 — (1) `router_classifier.py`: 레지스트리 label/referenceCondition
   키워드겹침(IDF 가중치, D-033) + scope 리터럴매치(Lazzy_App_OS_Monorepo의
@@ -67,15 +72,18 @@ SSOT 인덱싱 트리 전용 탐색기 대체 뷰어 + 다중 AI 툴 규칙 동�
   README.md를 그 자리에서 실시간 스캔(레지스트리로 복사 안 함 — README는
   항상 그 폴더에만 있다는 원칙 유지), 같은 IDF 가중치 공유 (3)
   `router_proposals.py`의 신뢰 폐루프(confidence_calibrator.py 이식, 연속
-  5승인→승급/1회거부로 즉시 강등) 주석. 여러 루트에 흔한 단어("코드"/
-  "프로젝트")는 IDF로 가중치를 낮추고, "내용을"/"대화" 같은 요청 형식
-  어휘는 불용어로 걸러냄(D-033). AI 없는 휴리스틱 v1 — 여전히 완벽하진
-  않음(정직한 실측 기록은 결정이력 D-033 참고). 사용자가 후보+파일명을
-  고르고 "저장" 버튼을 눌러야만 실제로 파일이 써짐 — SSOT_Explorer
-  전체에서 새 파일을 쓰는 유일한 지점(P-01의 조건부 예외, 아래 참고).
-  승인/취소는 `router_proposals.py`가 기록, 신뢰됨 후보는 "✅신뢰됨"
-  배지(승급해도 승인 절차 자동 생략은 안 함). "새 파일이 생기면 자동
-  추적"(`router_watcher.py`)은 아직 스켈레톤만(O-006).
+  5승인→승급/1회거부로 즉시 강등) 주석. 토크나이저는 kiwipiepy(한국어
+  형태소 분석기, D-034) — 명사류만 신호로 남기고 조사/어미/동사 활용은
+  자동 제외("프로젝트를"/"프로젝트가"가 같은 토큰으로 통합됨), 미설치
+  환경에선 정규식 방식으로 자동 폴백. 여러 루트에 흔한 단어("코드"/
+  "프로젝트")는 IDF로 가중치를 낮추고, "내용"/"대화" 같은 요청 형식
+  명사는 불용어로 걸러냄(D-033/D-034). AI 없는 휴리스틱 v1 — 여전히
+  완벽하진 않음(정직한 실측 기록은 결정이력 D-033/D-034 참고). 사용자가
+  후보+파일명을 고르고 "저장" 버튼을 눌러야만 실제로 파일이 써짐 —
+  SSOT_Explorer 전체에서 새 파일을 쓰는 유일한 지점(P-01의 조건부 예외,
+  아래 참고). 승인/취소는 `router_proposals.py`가 기록, 신뢰됨 후보는
+  "✅신뢰됨" 배지(승급해도 승인 절차 자동 생략은 안 함). "새 파일이
+  생기면 자동 추적"(`router_watcher.py`)은 아직 스켈레톤만(O-006).
 - **CLI 진입점**: `python router_orchestrator.py --text "..."`(3단계 전부
   거친 최종 결과, D-032 권장) 또는 `router_classifier.py --text "..."`
   (구조화 신호만, 더 빠름, D-030) — GUI 없이 아무 Claude Code 세션에서나
