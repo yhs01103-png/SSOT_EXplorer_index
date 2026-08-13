@@ -633,6 +633,49 @@ CLAUDE.md/AGENTS.md에 '변경분 반영 필요' 표시". 루트가 지금 5개 
       end-to-end 확인 — 기술적으로는 정상 동작, 분류 정확도는 위 실측대로
       한계 확인. 앱/exe smoke-test 통과.
 
+[D-031] SessionStart 훅(md 없이 레지스트리 직접 확인) + 앱 시작 시 전체 루트 자동 init
+결정: 사용자가 D-030 직후 원래 요구를 재정리 — "등록된 SSOT 루트 어디서
+      Claude Code를 켜든 md 파일을 따로 안 만들어도 레지스트리 컨텍스트를
+      확인하게 할 수 있냐" + "SSOT_Explorer를 켜놓으면 등록된 인덱싱 폴더를
+      전부 init 상태로 유지해달라". 정확한 구현 전에 Claude Code 공식
+      문서(SessionStart 훅 스키마)를 WebFetch로 먼저 확인(훅은 전체 세션에
+      영향을 주므로 추측으로 안 짬) — stdin에 `cwd` 필드가 있음을 확인 후 구현.
+      (1) `~/.claude/hooks/ssot_session_context.py`(신규, SessionStart 훅) —
+      `cwd`가 등록된 루트(또는 그 하위)와 겹치면 owner/scope/리뷰상태/
+      primarySource경고/관련폴더(relations)를 additionalContext로 즉시
+      주입. **그 폴더에 CLAUDE.md가 있는지 없는지, 최신인지와 완전히
+      무관** — 레지스트리를 직접 읽으므로 파일 동기화가 밀려 있어도
+      Claude Code만큼은 항상 최신. 전문(referenceCondition)은 안 박고
+      포인터만(이 프로젝트 전체 원칙과 동일) — Claude Code가 필요하면
+      레지스트리를 직접 Read. `~/.claude/settings.json`에 SessionStart
+      항목 추가(matcher 없음 — startup/resume/clear/compact 전부 적용,
+      컨텍스트 재주입이 특히 유용한 상황들이라 의도적으로 전부 포함).
+      기존 ssot_index_reminder.py(PostToolUse, 반응형)의 자매 훅(선제형).
+      (2) `SSOTExplorer._ensure_all_roots_initialized()`(main.py 신규 메서드,
+      `__init__`에서 자동 호출) — 등록된 루트 중 init CLAUDE.md가 아예 없는
+      것만 골라 자동 생성(add_root()가 신규 루트 1개에 하던 걸 앱 시작 시
+      전체로 확장). 기존 파일 있으면(손편집이든 이미 동기화됐든) 절대
+      안 건드림 — "없는 것만 채운다"라 SYNC_MARKER 확인조차 불필요.
+이유: CLAUDE.md 파일 동기화(수동 버튼 클릭)에 의존하면 "안 눌렀다/밀렸다"
+      만큼 Claude Code가 낡은 정보를 볼 위험이 있음 — 레지스트리를 세션
+      시작 시 직접 읽는 훅이 그 위험을 구조적으로 없앤다. CLAUDE.md 생성
+      기능 자체는 그대로 유지 — Cursor/Windsurf 등 훅 미지원 툴은 여전히
+      물리 파일이 필요해서 폐기 대상이 아니라 상호보완 관계.
+검증: `ssot_session_context.py`를 WebFetch로 확인한 정확한 stdin 스키마로
+      파이프 테스트(Bash echo는 백슬래시 경로를 깨뜨려서 실패 — 파일
+      리다이렉션으로 재시도해 실제 등록 루트 cwd에서 owner/scope/관련폴더
+      3개가 정확히 포함된 additionalContext 생성 확인, 무관한 cwd에선
+      조용히 빈 출력 확인). settings.json은 Python으로 JSON 유효성 +
+      SessionStart 항목 존재 + 기존 PostToolUse 보존 확인(jq 미설치라
+      대체). SessionStart는 세션 시작 시에만 발동해서 이번 턴 안에서 직접
+      발동 증명은 불가(다음 세션부터 적용, 사용자에게 안내 필요) — 이건
+      Claude Code 훅 자체의 구조적 한계.
+      main.py 쪽은 test_main.py에 3개 추가(누락 루트에 실제 생성/기존
+      파일 안 건드림/존재 안 하는 경로 조용히 건너뜀) — pytest 전체 70개
+      통과. 실제 레지스트리(5개 루트, 전부 이미 init 있음)로 앱 smoke-test
+      해서 "이미 있으면 아무것도 안 건드림" 경로도 실사용 데이터로 확인
+      (파일 타임스탬프 불변 확인). exe 재빌드 후 동일 smoke-test 통과.
+
 ================================================================
 PART 2 — TODO
 ================================================================

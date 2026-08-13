@@ -34,6 +34,15 @@ SSOT 인덱싱 트리 전용 탐색기 대체 뷰어 + 다중 AI 툴 규칙 동�
 - **+ 루트 추가 / − 루트 삭제 / 새로고침(F5)**: 레지스트리 갱신 + 새 루트는
   등록 즉시 init CLAUDE.md 자동 생성. 트리에서 루트 선택 후 Delete 키로도
   삭제 가능(하위 폴더 선택 시엔 동작 안 함 — 오조작 방지)
+- **앱 시작 시 전체 루트 자동 init**(2026-08-14, D-031): 등록된 루트 중
+  init CLAUDE.md가 아예 없는 것만 골라 자동 생성 — 손편집이든 이미 있는
+  파일이든 절대 안 건드림.
+- **SessionStart 훅**(`~/.claude/hooks/ssot_session_context.py`, D-031,
+  SSOT_Explorer 앱과 별개로 항상 동작): Claude Code를 등록된 SSOT 루트
+  (또는 그 하위)에서 열면, 그 폴더에 CLAUDE.md가 있든 없든 최신이든
+  아니든 상관없이 레지스트리를 직접 읽어 owner/scope/리뷰상태/관련폴더를
+  세션 시작 시 바로 주입. 파일 동기화가 밀려 있어도 Claude Code만큼은
+  항상 최신 정보를 봄.
 - **선택 루트 동기화 (AI 툴별)**: 다이얼로그에서 CLAUDE.md/AGENTS.md/
   .cursorrules/.windsurfrules 중 골라서(또는 전체 한번에) 같은 참조조건으로
   동기화. 손으로 쓴 파일은 확인 후에만 덮어씀. "리뷰 완료로 표시" 버튼도 여기.

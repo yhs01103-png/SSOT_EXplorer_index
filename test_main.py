@@ -503,3 +503,39 @@ def test_toolbar_has_save_document_action(isolated_qsettings):
         assert any(a.text() == "새 문서 저장" for a in toolbar_actions)
     finally:
         win.close()
+
+
+# --------------------------------------------------- D-031: 루트 자동 init
+
+def test_ensure_all_roots_initialized_creates_missing_claude_md(tmp_path, isolated_registry, isolated_qsettings):
+    root_dir = tmp_path / "missing_init_root"
+    root_dir.mkdir()
+    m.save_roots([{"label": "missing_init_root", "path": str(root_dir), "referenceCondition": ""}])
+
+    win = m.SSOTExplorer()  # __init__이 _ensure_all_roots_initialized()를 호출
+    try:
+        claude_path = root_dir / "CLAUDE.md"
+        assert claude_path.exists()
+        assert m.SYNC_MARKER in claude_path.read_text(encoding="utf-8")
+    finally:
+        win.close()
+
+
+def test_ensure_all_roots_initialized_does_not_touch_existing_file(tmp_path, isolated_registry, isolated_qsettings):
+    root_dir = tmp_path / "already_has_init"
+    root_dir.mkdir()
+    existing_content = "# 손으로 쓴 내용 — 절대 안 건드려야 함"
+    (root_dir / "CLAUDE.md").write_text(existing_content, encoding="utf-8")
+    m.save_roots([{"label": "already_has_init", "path": str(root_dir), "referenceCondition": ""}])
+
+    win = m.SSOTExplorer()
+    try:
+        assert (root_dir / "CLAUDE.md").read_text(encoding="utf-8") == existing_content
+    finally:
+        win.close()
+
+
+def test_ensure_all_roots_initialized_skips_nonexistent_path(isolated_registry, isolated_qsettings):
+    m.save_roots([{"label": "gone", "path": "C:\\definitely-does-not-exist-xyz", "referenceCondition": ""}])
+    win = m.SSOTExplorer()  # 예외 없이 조용히 건너뛰어야 함
+    win.close()

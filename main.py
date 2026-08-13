@@ -1046,6 +1046,7 @@ class SSOTExplorer(QMainWindow):
         self._build_shortcuts()
         self.populate_roots()
         self._restore_state()
+        self._ensure_all_roots_initialized()
 
     # -------------------------------------------------------- 창 상태 기억
 
@@ -1166,6 +1167,34 @@ class SSOTExplorer(QMainWindow):
         self.tree.clear()
         self.populate_roots()
         self.statusBar().showMessage("🔄 새로고침 완료", 3000)
+
+    def _ensure_all_roots_initialized(self):
+        """D-031 — "앱을 켜놓으면 등록된 인덱싱 폴더를 전부 init 상태로
+        유지해달라"는 요청. 등록된 루트 중 CLAUDE.md(또는 .claude\\CLAUDE.md)
+        가 아예 없는 것만 골라 init 포인터를 자동 생성 — add_root()가 신규
+        루트 하나에 대해 하던 걸 앱 시작 시 전체 루트로 확장한 것. 기존
+        파일이 있으면(손편집이든 이미 동기화된 것이든) 절대 손 안 댐 —
+        "없는 것만 채운다"라 SYNC_MARKER 확인조차 필요 없다(덮어쓸 대상이
+        없으므로). 조용히 처리하고 상태바에 몇 개 채웠는지만 알림."""
+        created = []
+        for entry in self.roots:
+            root_path = Path(entry["path"])
+            if not root_path.is_dir():
+                continue  # 경로 자체가 없으면(다른 기기 전용 등) 건너뜀
+            claude_path = resolve_claude_md_target(root_path)
+            if claude_path.exists():
+                continue
+            try:
+                claude_path.write_text(generate_init_claude_md(entry), encoding="utf-8")
+                created.append(entry["label"])
+            except OSError:
+                pass  # 권한 문제 등 — 조용히 건너뜀, 앱 시작을 막을 이유 없음
+        if created:
+            self.tree.clear()
+            self.populate_roots()
+            self.statusBar().showMessage(
+                f"📌 init 파일 없던 루트 {len(created)}개 자동 생성: {', '.join(created)}", 6000
+            )
 
     def add_root(self):
         folder = QFileDialog.getExistingDirectory(self, "SSOT 루트로 등록할 폴더 선택")
