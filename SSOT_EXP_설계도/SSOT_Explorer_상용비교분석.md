@@ -126,22 +126,47 @@ SSOT_Explorer 쪽 사실은 전부 실제 코드(`main.py`, `test_main.py`) 기�
   RuleSync도 마찬가지(항상 로컬 rulesync.md가 소스). 작지만 실제로 드문
   기능.
 
+### CLAUDE.md 스캐너를 갖춘 GUI 앱 — `실제로 존재함(2026-08-13 정정)`
+- **정정**: 처음 이 문서를 쓸 때 "직접 경쟁 상대는 없다"고 했는데, 재질문
+  받고 다시 찾아보니 부정확했다 — **Claudia**(marcusbey/claudia)와
+  **opcode**(winfunc/opcode 원본, buckstrdr가 포크)가 실제로 "Project
+  Scanner: 프로젝트 안의 CLAUDE.md 파일을 전부 찾아준다" 기능을 갖춘 GUI
+  데스크톱 앱이다[9][10]. 둘 다 Claude Code용 종합 GUI 래퍼(세션 관리,
+  에이전트, MCP 서버 관리 등)의 부가 기능으로 스캐너를 포함한 구조 — 오픈
+  소스(AGPL), 무료, Anthropic 비공식.
+- **실제 기능 대조**: WebFetch로 두 프로젝트 문서를 직접 확인한 결과,
+  Project Scanner는 **"CLAUDE.md 파일 찾기 + 에디터 + 실시간 마크다운
+  미리보기"까지만** — AGENTS.md/.cursorrules/.windsurfrules 등 타 포맷
+  동기화, 파일 변경/드리프트 감지, 리뷰 신선도 추적, owner/scope 메타데이터,
+  다중 프로젝트를 하나의 레지스트리로 묶어 관리하는 기능은 **문서상 전혀
+  언급되지 않음**[9][10].
+- **정확한 결론**: "CLAUDE.md를 찾아서 보여주는 GUI"라는 최소 기능
+  자체는 이미 상용(정확히는 오픈소스 무료) 앱으로 존재한다 — 이 부분만
+  떼놓고 보면 SSOT_Explorer가 "세상에 없는 걸 만든 것"은 아니다. 다만
+  그 위에 SSOT_Explorer가 쌓은 나머지(레지스트리 기반 다중포맷 동기화,
+  드리프트 감지, 리뷰 신선도, 영향범위 전파, 동시성 안전, primarySource)는
+  이 두 앱 어디에도 없다 — "파일 찾기"와 "SSOT 레지스트리 운영"은 기능
+  난이도가 다른 층위다.
+
 ---
 
 ## 종합 — 니치 포지셔닝
 
-1. **직접 경쟁 상대는 없다**: Backstage는 "이 리그가 아님"(엔터프라이즈
-   플랫폼), RuleSync는 "포맷 개수·CLI 자동화"에서 SSOT_Explorer보다 앞서지만
-   GUI 트리뷰어·드리프트감지·리뷰신선도·영향범위전파는 안 갖고 있다 —
-   서로 다른 문제를 푼다(RuleSync = "규칙 동기화 CLI 유틸", SSOT_Explorer =
-   "개인 워크스페이스 전체를 훑어보는 탐색기+동기화+감시 통합 도구").
-2. **니치는 "개인용 다중 프로젝트 SSOT 관리"**: 팀/엔터프라이즈용 도구
-   (Backstage)와 CLI 유틸(RuleSync) 사이, GUI로 여러 프로젝트를 넘나들며
-   보고/동기화/감시까지 한 화면에서 하는 자리는 실제로 비어 있다 —
-   다만 이 니치의 시장 자체가 "1인 개발자가 여러 프로젝트를 Claude Code로
-   동시에 굴리는" 아주 좁은 사용자층이라, 앱으로 확장할 가치는 "이 사용자
+1. **"CLAUDE.md 찾아서 보여주는" 최소 기능은 이미 상용에 있다(정정)**:
+   Claudia/opcode가 Project Scanner로 이미 제공 중[9][10] — 여기까지는
+   SSOT_Explorer의 독자성이 아니다. Backstage는 "이 리그가 아님"(엔터프라이즈
+   플랫폼), RuleSync는 "포맷 개수·CLI 자동화"에서 SSOT_Explorer보다 앞선다.
+2. **레지스트리 기반 SSOT 운영 계층은 여전히 안 보인다**: 파일 찾기(Claudia/
+   opcode) + 포맷 동기화(RuleSync) + 엔터프라이즈 카탈로그(Backstage) 각각은
+   상용/오픈소스로 존재하지만, 이 셋을 "1인 개발자가 여러 독립 프로젝트
+   루트를 넘나들며" 한 GUI에서 동시에 하는(드리프트감지+리뷰신선도+영향범위
+   전파+동시성안전까지 포함) 도구는 이번 조사에서 못 찾았다 — 다만 이건
+   "SSOT_Explorer가 유일하다"를 증명한 게 아니라 "이번 검색 범위에서는
+   안 나왔다"는 더 약한 주장으로 정정한다(정직성 조건).
+3. **니치 시장 자체가 좁다**: 1인 개발자가 여러 프로젝트를 Claude Code로
+   동시에 굴리는 사용자층 자체가 작아서, 앱으로 확장할 가치는 "이 사용자
    본인이 실사용하는 한" 유효하고, 그 이상(배포/판매)은 이번 분석 범위 밖.
-3. **즉시 조치 필요**: `.cursorrules`/`.windsurfrules` 레거시 포맷 문제
+4. **즉시 조치 필요**: `.cursorrules`/`.windsurfrules` 레거시 포맷 문제
    (위 ⚠️) — 다음 라운드 최우선 후보로 별도 O-번호/TODO 등록 권장.
 
 ---
@@ -156,3 +181,5 @@ SSOT_Explorer 쪽 사실은 전부 실제 코드(`main.py`, `test_main.py`) 기�
 [6] Windsurf vs Cursor 2026(Verdent) — https://www.verdent.ai/guides/windsurf-vs-cursor-2026
 [7] AGENTS.md 구축 가이드(Augment Code) — https://www.augmentcode.com/guides/how-to-build-agents-md
 [8] Agent Rules 커뮤니티 표준 — https://github.com/agent-rules/agent-rules
+[9] Claudia(marcusbey) — https://github.com/marcusbey/claudia
+[10] opcode(buckstrdr, winfunc/opcode 포크) — https://github.com/buckstrdr/opcode
