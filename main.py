@@ -29,12 +29,15 @@ from pathlib import Path
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QTreeWidget, QTreeWidgetItem, QSplitter,
-    QTextBrowser, QToolBar, QLineEdit, QInputDialog, QFileDialog,
+    QTextBrowser, QTextEdit, QToolBar, QLineEdit, QInputDialog, QFileDialog,
     QMessageBox, QMenu, QListWidget, QListWidgetItem, QDialog, QVBoxLayout,
     QDialogButtonBox, QWidget, QPushButton, QLabel, QHBoxLayout, QStyle,
 )
 from PySide6.QtCore import Qt, QProcess, QThread, Signal, QSettings
 from PySide6.QtGui import QAction, QFont, QKeySequence
+
+import router_classifier
+import router_proposals
 
 SCRIPTS_DIR = Path.home() / ".claude" / "scripts"
 DRIFT_LOG_PATH = SCRIPTS_DIR / "ssot-index-drift.log"
@@ -854,6 +857,120 @@ class SyncFormatsDialog(QDialog):
         self.status_label.setText(f"✅ 리뷰 완료로 표시: {today}")
 
 
+# ------------------------------------------------------- 라우터(D-029) — 저장
+
+class SaveDocumentDialog(QDialog):
+    """"저장하면 알아서 맞는 프로젝트 폴더로" 워크플로우의 1단계(수동 캡처
+    + 분류 제안 + 사용자 승인, 2026-08-13 D-029). router_classifier로
+    등록 루트 중 후보를 순위매겨 보여주고, 사용자가 후보를 골라 "저장"을
+    눌러야만 실제로 파일을 쓴다 — 이 다이얼로그가 SSOT_Explorer 전체에서
+    새 파일을 실제로 쓰는 유일한 지점이다. P-01(파일쓰기 자동화 금지)의
+    조건부 예외: 매번 사용자가 명시적으로 승인 버튼을 눌러야만 실행되고,
+    승인/취소 둘 다 router_proposals에 기록돼 나중에 제안 정밀도를 높이는
+    재료가 된다(사용자 요청사항)."""
+
+    def __init__(self, roots: list[dict], parent=None):
+        super().__init__(parent)
+        self.roots = roots
+        self.setWindowTitle("새 문서 저장 — 분류 제안")
+        self.resize(600, 520)
+        self.candidates: list[dict] = []
+        self.classified_text = ""
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("저장할 내용을 붙여넣으세요:"))
+        self.content_edit = QTextEdit()
+        self.content_edit.setPlaceholderText("여기에 텍스트를 붙여넣거나 입력...")
+        layout.addWidget(self.content_edit)
+
+        classify_btn = QPushButton("🔍 분류 제안 보기")
+        classify_btn.clicked.connect(self.run_classification)
+        layout.addWidget(classify_btn)
+
+        layout.addWidget(QLabel("제안된 저장 위치(점수 높은 순 — 등록 루트 label/scope/참조조건과 겹치는 키워드 기준):"))
+        self.candidates_list = QListWidget()
+        layout.addWidget(self.candidates_list)
+
+        filename_row = QHBoxLayout()
+        filename_row.addWidget(QLabel("파일명:"))
+        self.filename_edit = QLineEdit()
+        self.filename_edit.setPlaceholderText("예: 회의메모.md")
+        filename_row.addWidget(self.filename_edit)
+        layout.addLayout(filename_row)
+
+        self.status_label = QLabel("")
+        self.status_label.setWordWrap(True)
+        layout.addWidget(self.status_label)
+
+        btn_row = QHBoxLayout()
+        save_btn = QPushButton("✅ 여기에 저장")
+        save_btn.clicked.connect(self.save_to_selected)
+        cancel_btn = QPushButton("취소")
+        cancel_btn.clicked.connect(self.cancel_and_close)
+        btn_row.addWidget(save_btn)
+        btn_row.addWidget(cancel_btn)
+        layout.addLayout(btn_row)
+
+    def run_classification(self):
+        text = self.content_edit.toPlainText()
+        if not text.strip():
+            self.status_label.setText("⚠️ 내용을 먼저 입력하세요.")
+            return
+        self.classified_text = text
+        self.candidates = router_classifier.classify_content(text, self.roots)
+        self.candidates_list.clear()
+        if not self.candidates:
+            self.status_label.setText(
+                "😕 겹치는 키워드가 없어 제안할 후보가 없습니다 — 이 버전(v1, "
+                "휴리스틱)은 자동제안 실패 시 대안이 없습니다. 파일명을 직접 "
+                "정하고 폴더는 트리에서 직접 관리하세요(다음 라운드 개선 후보)."
+            )
+            return
+        for c in self.candidates:
+            item = QListWidgetItem(f"{c['rootLabel']}  (점수 {c['score']})\n   {c['reason']}")
+            item.setData(Qt.UserRole, c)
+            self.candidates_list.addItem(item)
+        self.status_label.setText(f"✅ 후보 {len(self.candidates)}개 — 하나를 선택하고 파일명을 입력한 뒤 저장하세요.")
+
+    def save_to_selected(self):
+        items = self.candidates_list.selectedItems()
+        if not items:
+            self.status_label.setText("⚠️ 먼저 후보 목록에서 하나를 선택하세요.")
+            return
+        candidate = items[0].data(Qt.UserRole)
+        filename = self.filename_edit.text().strip()
+        if not filename:
+            self.status_label.setText("⚠️ 파일명을 입력하세요.")
+            return
+        target = Path(candidate["rootPath"]) / filename
+        if target.exists():
+            resp = QMessageBox.question(
+                self, "덮어쓰기 확인",
+                f"{target}\n\n이미 존재합니다. 덮어쓸까요?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if resp != QMessageBox.Yes:
+                return
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(self.classified_text, encoding="utf-8")
+        except OSError as e:
+            self.status_label.setText(f"❌ 저장 실패: {e}")
+            return
+        router_proposals.record_decision(candidate, self.classified_text, "approved")
+        QMessageBox.information(self, "저장 완료", f"저장됨: {target}")
+        self.accept()
+
+    def cancel_and_close(self):
+        if self.candidates:
+            # 후보를 봤는데(=제안을 받았는데) 저장 안 하고 취소 — 1순위
+            # 후보 기준으로 "취소" 기록(제안 정밀도 데이터 누적, 사용자
+            # 요청사항). 아예 분류를 안 돌려본 채 닫으면 기록 안 함 —
+            # 판단할 제안 자체가 없었으니까.
+            router_proposals.record_decision(self.candidates[0], self.classified_text, "cancelled")
+        self.reject()
+
+
 # ---------------------------------------------------------------------- 앱
 
 class SSOTExplorer(QMainWindow):
@@ -995,6 +1112,14 @@ class SSOTExplorer(QMainWindow):
         manage_action.triggered.connect(self.open_management)
         bar.addAction(manage_action)
 
+        save_doc_action = QAction(style.standardIcon(QStyle.SP_FileIcon), "새 문서 저장", self)
+        save_doc_action.setToolTip(
+            "텍스트를 붙여넣으면 등록된 루트 중 맞는 곳을 제안 — 승인해야만 "
+            "실제 저장(D-029, 항상 사용자 확인 필요)"
+        )
+        save_doc_action.triggered.connect(self.open_save_document_dialog)
+        bar.addAction(save_doc_action)
+
     def _build_shortcuts(self):
         """전역 단축키. Ctrl+F는 창 어디서든(WindowShortcut, 기본값), Delete는
         트리가 포커스 있을 때만(WidgetShortcut) — 검색창에서 텍스트 지울 때
@@ -1017,6 +1142,12 @@ class SSOTExplorer(QMainWindow):
     def open_management(self):
         dlg = ManagementDialog(self)
         dlg.exec()
+
+    def open_save_document_dialog(self):
+        dlg = SaveDocumentDialog(self.roots, self)
+        if dlg.exec() == QDialog.Accepted:
+            self.refresh_tree()
+            self.statusBar().showMessage("📥 새 문서 저장됨 — 트리 새로고침함", 4000)
 
     def refresh_tree(self):
         """레지스트리+파일시스템을 다시 읽어 트리를 재구성한다(F5). 예전엔

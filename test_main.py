@@ -22,6 +22,7 @@ from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import QApplication, QMessageBox, QStyle
 
 import main as m
+import router_proposals
 
 
 # ------------------------------------------------------------------ fixtures
@@ -44,6 +45,17 @@ def isolated_registry(tmp_path, monkeypatch):
     monkeypatch.setattr(m, "REGISTRY_PATH", reg_path)
     m._LAST_KNOWN_HASH = ""
     yield reg_path
+
+
+@pytest.fixture(autouse=True)
+def isolated_router_proposals(tmp_path, monkeypatch):
+    """D-029 — SaveDocumentDialog가 승인/취소 시 router_proposals.record_decision
+    을 실제로 호출하는데, 실제 사용자 로그(~/.claude/scripts/
+    ssot_router_proposals.json)를 절대 안 건드리게 격리. main.py가
+    `import router_proposals`로 모듈 자체를 참조하므로 여기서 patch하면
+    main.py 쪽 호출에도 그대로 반영된다."""
+    monkeypatch.setattr(router_proposals, "PROPOSALS_LOG_PATH", tmp_path / "proposals.json")
+    yield
 
 
 @pytest.fixture
@@ -386,5 +398,106 @@ def test_update_relations_panel_shows_and_hides(isolated_registry, isolated_qset
         win.update_relations_panel(Path("C:\\completely\\unrelated"))
         assert not win.relations_list.isVisible()
         assert win.relations_list.count() == 0
+    finally:
+        win.close()
+
+
+# --------------------------------------------------- D-029: 새 문서 저장(라우터)
+
+def test_save_document_dialog_run_classification_populates_candidates(tmp_path):
+    root_dir = tmp_path / "flutter_App"
+    root_dir.mkdir()
+    roots = [{"label": "flutter_App", "path": str(root_dir), "scope": "플러터 앱 개발", "referenceCondition": ""}]
+    dlg = m.SaveDocumentDialog(roots)
+    try:
+        dlg.content_edit.setPlainText("플러터 앱 개발 관련 메모")
+        dlg.run_classification()
+        assert dlg.candidates_list.count() == 1
+        assert dlg.candidates[0]["rootLabel"] == "flutter_App"
+    finally:
+        dlg.close()
+
+
+def test_save_document_dialog_no_candidates_shows_hint(tmp_path):
+    root_dir = tmp_path / "x"
+    root_dir.mkdir()
+    roots = [{"label": "x", "path": str(root_dir), "scope": "전혀다른주제", "referenceCondition": ""}]
+    dlg = m.SaveDocumentDialog(roots)
+    try:
+        dlg.content_edit.setPlainText("겹치지 않는 별개 내용")
+        dlg.run_classification()
+        assert dlg.candidates_list.count() == 0
+        assert "후보가 없습니다" in dlg.status_label.text()
+    finally:
+        dlg.close()
+
+
+def test_save_document_dialog_save_writes_file_and_records_approved(tmp_path, monkeypatch):
+    # QMessageBox.information은 실제로 부르면 모달로 블로킹된다 — mock 필수
+    # (D-025에서 이미 겪은 것과 같은 함정, 여기서도 빠뜨렸다가 테스트가
+    # 멈춰서 발견하고 고침).
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: None))
+    root_dir = tmp_path / "flutter_App"
+    root_dir.mkdir()
+    roots = [{"label": "flutter_App", "path": str(root_dir), "scope": "플러터 앱 개발", "referenceCondition": ""}]
+    dlg = m.SaveDocumentDialog(roots)
+    try:
+        dlg.content_edit.setPlainText("플러터 앱 개발 메모 내용")
+        dlg.run_classification()
+        dlg.candidates_list.setCurrentRow(0)
+        dlg.filename_edit.setText("메모.md")
+        dlg.save_to_selected()
+
+        saved_file = root_dir / "메모.md"
+        assert saved_file.exists()
+        assert saved_file.read_text(encoding="utf-8") == "플러터 앱 개발 메모 내용"
+
+        proposals = router_proposals.load_proposals()
+        assert len(proposals) == 1
+        assert proposals[0]["decision"] == "approved"
+        assert proposals[0]["rootLabel"] == "flutter_App"
+    finally:
+        dlg.close()
+
+
+def test_save_document_dialog_save_without_selection_shows_warning(tmp_path):
+    roots = [{"label": "x", "path": str(tmp_path), "scope": "", "referenceCondition": ""}]
+    dlg = m.SaveDocumentDialog(roots)
+    try:
+        dlg.save_to_selected()
+        assert "먼저" in dlg.status_label.text()
+        assert router_proposals.load_proposals() == []
+    finally:
+        dlg.close()
+
+
+def test_save_document_dialog_cancel_after_classification_records_cancelled(tmp_path):
+    root_dir = tmp_path / "flutter_App"
+    root_dir.mkdir()
+    roots = [{"label": "flutter_App", "path": str(root_dir), "scope": "플러터 앱 개발", "referenceCondition": ""}]
+    dlg = m.SaveDocumentDialog(roots)
+    dlg.content_edit.setPlainText("플러터 앱 개발 메모")
+    dlg.run_classification()
+    dlg.cancel_and_close()  # reject() 호출 — 다이얼로그는 이 시점에 이미 닫힘
+
+    proposals = router_proposals.load_proposals()
+    assert len(proposals) == 1
+    assert proposals[0]["decision"] == "cancelled"
+    assert (root_dir / "메모.md").exists() is False  # 파일은 절대 안 써짐
+
+
+def test_save_document_dialog_cancel_without_classification_records_nothing():
+    roots = [{"label": "x", "path": "C:\\x", "scope": "", "referenceCondition": ""}]
+    dlg = m.SaveDocumentDialog(roots)
+    dlg.cancel_and_close()
+    assert router_proposals.load_proposals() == []
+
+
+def test_toolbar_has_save_document_action(isolated_qsettings):
+    win = m.SSOTExplorer()
+    try:
+        assert hasattr(win, "open_save_document_dialog")
+        toolbar_actions = [a for tb in win.findChildren(m.QToolBar) for a in tb.actions()]
+        assert any(a.text() == "새 문서 저장" for a in toolbar_actions)
     finally:
         win.close()
