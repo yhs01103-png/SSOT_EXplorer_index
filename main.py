@@ -30,8 +30,8 @@ from pathlib import Path
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QTreeWidget, QTreeWidgetItem, QSplitter,
     QTextBrowser, QToolBar, QLineEdit, QInputDialog, QFileDialog,
-    QMessageBox, QMenu, QListWidget, QDialog, QVBoxLayout, QDialogButtonBox,
-    QWidget, QPushButton, QLabel, QHBoxLayout, QStyle,
+    QMessageBox, QMenu, QListWidget, QListWidgetItem, QDialog, QVBoxLayout,
+    QDialogButtonBox, QWidget, QPushButton, QLabel, QHBoxLayout, QStyle,
 )
 from PySide6.QtCore import Qt, QProcess, QThread, Signal, QSettings
 from PySide6.QtGui import QAction, QFont, QKeySequence
@@ -201,6 +201,59 @@ def load_shared_docs() -> list[dict]:
     return data.get("sharedDocs", [])
 
 
+# ------------------------------------------------------------------ 관계
+#
+# 2026-08-13(D-028) — Lazzy_App_OS_Monorepo의 "능동적 인덱싱" 이식. 그쪽
+# CLAUDE.md들은 그냥 폴더 목록이 아니라 각 항목에 "언제/왜 여는지" 조건이
+# 붙은 표+양방향 역참조 프로즈다. 지금까지 SSOT_Explorer 레지스트리는 이
+# 정보를 각 루트 referenceCondition 프로즈 안에 통째로 묻어놓기만 해서
+# 앱이 그 관계를 몰랐다 — 트리에서 폴더 하나를 클릭해도 "이게 뭐랑 왜
+# 연관되는지"는 안 보여줬다. relations를 별도 구조화 데이터로 승격해서
+# 트리 어느 폴더를 클릭하든(등록된 루트든 아니든) 관련 폴더+이유를 역조회
+# 할 수 있게 한다. dependsOnDocs(안1: 자동스캔 대신 명시적 선언)와 같은
+# 원칙 — 프로즈 관계는 자동 추출이 신뢰할 수 없어(D-020 판단 그대로) 사람이
+# (Claude Code가 대화 중) 직접 선언한다.
+
+def load_relations() -> list[dict]:
+    """폴더 대 폴더 관계 선언 목록. 각 항목: fromPath/toPath/reason/
+    bidirectional(기본 True — 두 경로 중 어느 쪽을 클릭해도 관계가 보임)."""
+    if not REGISTRY_PATH.exists():
+        return []
+    try:
+        data = json.loads(REGISTRY_PATH.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    relations = data.get("relations", [])
+    for r in relations:
+        r.setdefault("bidirectional", True)
+    return relations
+
+
+def _is_or_under(target: Path, base: Path) -> bool:
+    """target이 base 자신이거나 base의 하위 경로인지 — relative_to는 같은
+    경로일 때도 Path('.')를 반환하며 성공하므로 두 케이스를 한 번에 잡는다."""
+    try:
+        target.relative_to(base)
+        return True
+    except ValueError:
+        return False
+
+
+def find_relations_for_path(target: Path, relations: list[dict]) -> list[dict]:
+    """target 폴더(또는 그 하위)에 걸리는 관계만 골라, 클릭한 쪽 기준으로
+    "반대쪽" 경로/이유를 붙여 돌려준다. bidirectional=False면 fromPath
+    쪽에서 클릭했을 때만 보여준다(단방향 선언)."""
+    matches = []
+    for rel in relations:
+        from_p = Path(rel["fromPath"])
+        to_p = Path(rel["toPath"])
+        if _is_or_under(target, from_p):
+            matches.append({**rel, "otherPath": rel["toPath"], "direction": "from"})
+        elif rel.get("bidirectional", True) and _is_or_under(target, to_p):
+            matches.append({**rel, "otherPath": rel["fromPath"], "direction": "to"})
+    return matches
+
+
 REVIEW_STALE_DAYS = 180  # 이보다 오래 리뷰 안 되면 관리자 패널에서 경고 표시
 
 
@@ -256,6 +309,7 @@ def save_roots(roots: list[dict]) -> None:
         "— 전부 Claude Code가 대화 중 직접 채운다.",
     )
     payload.setdefault("sharedDocs", [])
+    payload.setdefault("relations", [])  # D-028 — 병합 보존(sharedDocs와 동일 이유)
     payload["roots"] = roots
 
     REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -467,6 +521,21 @@ def format_shared_docs_text(shared_docs: list[dict]) -> str:
         exists = Path(d["path"]).exists()
         lines.append(f"■ {d['label']}{'' if exists else ' ⚠️ 파일 없음'}\n  경로: {d['path']}")
     return "\n\n".join(lines)
+
+
+def get_available_drives() -> list[str]:
+    """존재하는 Windows 드라이브 문자 목록(C:\\, D:\\ 등) — 외부 의존성 없이
+    알파벳을 순회하며 확인한다. 2026-08-13(D-028) — "앱을 켜면 전체 탐색기가
+    다 들어온다" 요구를 위한 최상위 진입점. 실제 내용은 여기서 안 읽는다
+    (존재 여부만 stat) — 각 드라이브 밑은 트리가 펼칠 때만(지연 로딩) 읽음,
+    그래서 드라이브가 몇 개든 이 함수 자체는 즉시 끝난다."""
+    import string
+    drives = []
+    for letter in string.ascii_uppercase:
+        drive = f"{letter}:\\"
+        if Path(drive).exists():
+            drives.append(drive)
+    return drives
 
 
 def find_index_files(folder: Path) -> dict:
@@ -822,9 +891,27 @@ class SSOTExplorer(QMainWindow):
         viewer_font.setPointSize(13)
         self.viewer.setFont(viewer_font)
 
+        # 2026-08-13(D-028) — 관계 패널: 선택한 폴더가 relations 목록에
+        # 걸리면(등록된 루트든 아니든) "관련 폴더 + 이유"를 뷰어 위에 보여준다.
+        # 관계가 없는 폴더 선택 시엔 라벨/리스트 둘 다 숨김(불필요한 빈 패널
+        # 안 뜨게).
+        self.relations_label = QLabel("🔗 연관된 인덱싱 폴더 (더블클릭 시 이동)")
+        self.relations_list = QListWidget()
+        self.relations_list.setMaximumHeight(110)
+        self.relations_list.itemDoubleClicked.connect(self.on_relation_double_clicked)
+        self.relations_label.setVisible(False)
+        self.relations_list.setVisible(False)
+
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.addWidget(self.relations_label)
+        right_layout.addWidget(self.relations_list)
+        right_layout.addWidget(self.viewer)
+
         self.splitter = QSplitter(Qt.Horizontal)
         self.splitter.addWidget(self.tree)
-        self.splitter.addWidget(self.viewer)
+        self.splitter.addWidget(right_panel)
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 2)
         self.setCentralWidget(self.splitter)
@@ -1102,11 +1189,16 @@ class SSOTExplorer(QMainWindow):
             self.reveal_path(dlg.result_path)
 
     def reveal_path(self, target: str):
-        """루트부터 target까지 트리를 순차적으로 펼치며 내려가서 선택한다."""
+        """루트부터 target까지 트리를 순차적으로 펼치며 내려가서 선택한다.
+        2026-08-13(D-028): 최상위에 구분선(전체 드라이브 라벨, 경로 데이터
+        없음)이 섞여 있어 건너뛴다 — 안 그러면 Path(None)에서 죽는다."""
         target_path = Path(target)
         for i in range(self.tree.topLevelItemCount()):
             top = self.tree.topLevelItem(i)
-            root_path = Path(top.data(0, Qt.UserRole))
+            top_data = top.data(0, Qt.UserRole)
+            if not top_data:
+                continue
+            root_path = Path(top_data)
             try:
                 rel = target_path.relative_to(root_path)
             except ValueError:
@@ -1140,6 +1232,25 @@ class SSOTExplorer(QMainWindow):
             self.style_item(item, root_path)
             self.tree.addTopLevelItem(item)
             self.add_children_placeholder(item, root_path)
+
+        # 2026-08-13(D-028) — 등록된 루트 밑에 전체 드라이브도 추가로 노출.
+        # "앱을 켜면 어느 드라이브든 탐색기 전체가 들어온다" 요구 — 내용을
+        # 미리 스캔하지 않고(느림+대부분 무관) 기존 지연로딩(on_item_expanded)
+        # 그대로 재사용해서 드라이브 문자만 최상위에 추가한다. 구분선은
+        # NoItemFlags라 선택/펼치기 불가(순수 라벨).
+        separator = QTreeWidgetItem(["── 전체 드라이브 (등록 안 된 폴더 탐색용) ──"])
+        separator.setFlags(Qt.NoItemFlags)
+        sep_font = separator.font(0)
+        sep_font.setItalic(True)
+        separator.setFont(0, sep_font)
+        self.tree.addTopLevelItem(separator)
+
+        for drive in get_available_drives():
+            drive_path = Path(drive)
+            item = QTreeWidgetItem([drive])
+            item.setData(0, Qt.UserRole, str(drive_path))
+            self.tree.addTopLevelItem(item)
+            self.add_children_placeholder(item, drive_path)
 
     def style_item(self, item: QTreeWidgetItem, folder: Path):
         idx = find_index_files(folder)
@@ -1180,11 +1291,36 @@ class SSOTExplorer(QMainWindow):
                     self.add_children_placeholder(child, entry)
                 item.addChild(child)
 
+    def update_relations_panel(self, target: Path):
+        """D-028 — target이 relations 목록에 걸리면(등록된 루트든 임의
+        폴더든) 패널을 채우고, 없으면 숨긴다. 파일/폴더 어느 쪽을 선택해도
+        동작(관계는 폴더 단위 prefix 매치라 파일이면 그 부모까지 안 봄 —
+        의도적으로 단순하게: 파일 자체에 관계를 걸 일은 거의 없음)."""
+        relations = find_relations_for_path(target, load_relations())
+        self.relations_list.clear()
+        if not relations:
+            self.relations_label.setVisible(False)
+            self.relations_list.setVisible(False)
+            return
+        for rel in relations:
+            arrow = "↔" if rel.get("bidirectional", True) else "→"
+            list_item = QListWidgetItem(f"{arrow} {rel['otherPath']}\n   {rel['reason']}")
+            list_item.setData(Qt.UserRole, rel["otherPath"])
+            self.relations_list.addItem(list_item)
+        self.relations_label.setVisible(True)
+        self.relations_list.setVisible(True)
+
+    def on_relation_double_clicked(self, item):
+        other_path = item.data(Qt.UserRole)
+        if other_path:
+            self.reveal_path(other_path)
+
     def on_selection_changed(self):
         items = self.tree.selectedItems()
         if not items:
             return
         target = Path(items[0].data(0, Qt.UserRole))
+        self.update_relations_panel(target)
         if target.is_file():
             self.current_folder = None
             self.viewer.setPlainText(f"[파일] {target}\n\n더블클릭하면 기본 프로그램으로 엽니다.")

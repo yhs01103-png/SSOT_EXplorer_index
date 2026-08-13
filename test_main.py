@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import Qt, QSettings
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import QApplication, QMessageBox, QStyle
 
@@ -283,3 +283,108 @@ def test_excepthook_logs_and_shows_dialog_without_blocking(monkeypatch):
         assert shown, "미처리 예외가 QMessageBox.critical로 사용자에게 보여야 함"
     finally:
         sys.excepthook = original
+
+
+# ------------------------------------------------------- D-028: 관계 + 전체탐색기
+
+def test_get_available_drives_includes_current_drive():
+    drives = m.get_available_drives()
+    current_drive = Path(__file__).drive + "\\"  # 예: "C:\\"
+    assert current_drive in drives
+
+
+def test_is_or_under_matches_equal_and_descendant_but_not_unrelated():
+    base = Path("C:\\a\\b")
+    assert m._is_or_under(base, base)  # 자기 자신
+    assert m._is_or_under(Path("C:\\a\\b\\c"), base)  # 하위
+    assert not m._is_or_under(Path("C:\\a\\x"), base)  # 무관
+    assert not m._is_or_under(Path("C:\\a"), base)  # 상위(반대 방향은 매치 안 함)
+
+
+def test_find_relations_for_path_matches_from_side():
+    relations = [{"fromPath": "C:\\x", "toPath": "C:\\y", "reason": "테스트", "bidirectional": True}]
+    matches = m.find_relations_for_path(Path("C:\\x\\sub"), relations)
+    assert len(matches) == 1
+    assert matches[0]["otherPath"] == "C:\\y"
+    assert matches[0]["direction"] == "from"
+
+
+def test_find_relations_for_path_matches_to_side_when_bidirectional():
+    relations = [{"fromPath": "C:\\x", "toPath": "C:\\y", "reason": "테스트", "bidirectional": True}]
+    matches = m.find_relations_for_path(Path("C:\\y"), relations)
+    assert len(matches) == 1
+    assert matches[0]["otherPath"] == "C:\\x"
+    assert matches[0]["direction"] == "to"
+
+
+def test_find_relations_for_path_ignores_to_side_when_not_bidirectional():
+    relations = [{"fromPath": "C:\\x", "toPath": "C:\\y", "reason": "단방향", "bidirectional": False}]
+    assert m.find_relations_for_path(Path("C:\\y"), relations) == []
+    assert len(m.find_relations_for_path(Path("C:\\x"), relations)) == 1
+
+
+def test_find_relations_for_path_no_match_returns_empty():
+    relations = [{"fromPath": "C:\\x", "toPath": "C:\\y", "reason": "테스트", "bidirectional": True}]
+    assert m.find_relations_for_path(Path("C:\\completely\\unrelated"), relations) == []
+
+
+def test_load_relations_defaults_bidirectional_true(isolated_registry):
+    isolated_registry.write_text(
+        json.dumps({
+            "roots": [],
+            "relations": [{"fromPath": "C:\\x", "toPath": "C:\\y", "reason": "필드 생략 테스트"}],
+        }),
+        encoding="utf-8",
+    )
+    m._LAST_KNOWN_HASH = m._hash_bytes(isolated_registry.read_bytes())
+    relations = m.load_relations()
+    assert relations[0]["bidirectional"] is True
+
+
+def test_save_roots_preserves_relations(isolated_registry):
+    """D-020 sharedDocs 보존 회귀와 같은 패턴 — relations도 roots만 저장할 때
+    같이 사라지면 안 됨."""
+    isolated_registry.write_text(
+        json.dumps({
+            "roots": [],
+            "relations": [{"fromPath": "C:\\x", "toPath": "C:\\y", "reason": "보존 확인용"}],
+        }),
+        encoding="utf-8",
+    )
+    m._LAST_KNOWN_HASH = m._hash_bytes(isolated_registry.read_bytes())
+    m.save_roots([{"label": "a", "path": "C:\\a"}])
+    payload = json.loads(isolated_registry.read_text(encoding="utf-8"))
+    assert payload["relations"] == [{"fromPath": "C:\\x", "toPath": "C:\\y", "reason": "보존 확인용"}]
+
+
+def test_populate_roots_adds_drive_section_without_crashing_reveal(isolated_registry, isolated_qsettings):
+    """구분선(경로데이터 없음)이 섞여도 reveal_path가 안 죽는지 — D-028 도입
+    중 실제로 발견해서 고친 버그의 회귀 테스트."""
+    win = m.SSOTExplorer()
+    try:
+        # 등록된 루트 0개 + 구분선 1개 + 드라이브 N개가 최상위에 있어야 함
+        assert win.tree.topLevelItemCount() >= 2
+        # 존재하지 않는 경로라 실제로 못 찾지만, 예외 없이 조용히 리턴돼야 함
+        win.reveal_path("C:\\definitely-does-not-exist-xyz")
+    finally:
+        win.close()
+
+
+def test_update_relations_panel_shows_and_hides(isolated_registry, isolated_qsettings, monkeypatch):
+    monkeypatch.setattr(
+        m, "load_relations",
+        lambda: [{"fromPath": "C:\\x", "toPath": "C:\\y", "reason": "패널 테스트", "bidirectional": True}],
+    )
+    win = m.SSOTExplorer()
+    win.show()  # isVisible()은 실제로 show()된 창이어야 의미 있게 반영됨
+    try:
+        win.update_relations_panel(Path("C:\\x\\sub"))
+        assert win.relations_list.isVisible()
+        assert win.relations_list.count() == 1
+        assert win.relations_list.item(0).data(Qt.UserRole) == "C:\\y"
+
+        win.update_relations_panel(Path("C:\\completely\\unrelated"))
+        assert not win.relations_list.isVisible()
+        assert win.relations_list.count() == 0
+    finally:
+        win.close()

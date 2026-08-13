@@ -494,6 +494,48 @@ CLAUDE.md/AGENTS.md에 '변경분 반영 필요' 표시". 루트가 지금 5개 
       4개 항목으로 재작성 + 출처 [9][10] 추가) — "정직성 조건" 원칙상
       최초 결론을 지우지 않고 정정 이력을 남기는 방식 채택.
 
+[D-028] 전체 드라이브 탐색 + 관계(relations) 구조화 — Lazzy "능동적 인덱싱" 이식
+결정: 사용자가 "Lazzy의 인덱싱 참조조건 능동성을 가져와서 파일로 구조화"
+      제안(잠재력 평가 직후) → 둘 다 지금 바로 설계+구현.
+      (1) 전체 드라이브 탐색 — `get_available_drives()`가 존재하는 드라이브
+        문자만 확인(내용 스캔 없음, stat만), `populate_roots()`가 등록된
+        루트 뒤에 구분선(Qt.NoItemFlags, 선택 불가) + 드라이브별 최상위
+        항목을 추가. 실제 폴더 내용은 기존 지연로딩(on_item_expanded)을
+        그대로 재사용 — 앱 켤 때 전체를 미리 스캔하지 않음(느리고 대부분
+        무관하므로 의도적으로 안 함).
+      (2) 관계 구조화 — 레지스트리에 최상위 `relations` 배열 신설
+        (`{fromPath, toPath, reason, bidirectional}`). `find_relations_for_path()`
+        가 경로 prefix 매치(`_is_or_under`)로 역조회 — 등록된 루트든 임의
+        드라이브 밑 폴더든 상관없이 매치됨. UI: 뷰어 위에 관계 패널
+        (QListWidget, 관계 없으면 자동 숨김) 신설, 더블클릭 시 반대쪽 경로로
+        `reveal_path` 이동. dependsOnDocs(D-020)와 같은 원칙 — 자동 텍스트
+        스캔 대신 명시적 선언(프로즈 관계는 파싱 신뢰도가 낮음).
+      (3) 실 데이터 4건 채움 — 기존 각 루트 referenceCondition 프로즈에
+        이미 있던 양방향 참조(flutter_App↔Local_APP, flutter_App↔
+        Coding_Nomal, flutter_App↔개발자 전용 어플, 개발자 전용 어플↔
+        모든_표본_일상_전략)를 relations로 구조화 이관.
+      [버그수정] 구현 중 `reveal_path()`가 구분선(경로 데이터 없는 최상위
+        항목)을 만나면 `Path(None)`에서 TypeError로 죽는 걸 발견 — 최상위
+        루프에서 데이터 없는 항목은 건너뛰도록 방어 추가. 이 드라이브탐색
+        기능을 넣기 전엔 모든 최상위 항목이 항상 경로를 가졌어서 드러난 적
+        없던 잠재 버그.
+이유: 지금까지 레지스트리는 "루트가 뭘 갖고 있는지"만 구조화했지 "루트끼리/
+      임의 폴더끼리 왜 연관되는지"는 프로즈에 묻혀 있어 앱이 몰랐다 —
+      Lazzy CLAUDE.md들의 "언제/왜 여는지" 조건표+양방향 역참조 스타일을
+      구조화 데이터로 승격하면 사람이 프로즈를 안 읽어도 앱이 대신
+      보여줄 수 있다. 전체 드라이브 노출은 "등록 안 된 폴더를 클릭해도
+      관계가 뜨는" 시나리오 자체를 가능하게 하는 전제조건.
+검증: test_main.py에 11개 추가(드라이브 목록에 현재 드라이브 포함,
+      _is_or_under 자기자신/하위/무관/상위 4가지, find_relations_for_path
+      from쪽매치/to쪽매치(양방향)/단방향이면 to쪽 무시/무관시 빈배열 4가지,
+      load_relations bidirectional 기본값, save_roots가 relations 보존
+      (D-020 sharedDocs 패턴과 동일), populate_roots+reveal_path가 구분선
+      섞여도 안 죽음(버그 회귀 테스트), update_relations_panel이 관계
+      있으면 보이고 없으면 숨겨짐) — pytest 전체 32개 전부 통과. 앱
+      smoke-test 중 크래시로그(ssot_explorer.log) 비어있음 확인(에러 없음).
+      exe 재빌드 후 동일 smoke-test 통과. 레지스트리에 실제 relations 4건
+      기입 완료(flutter_App.claude\ssot-roots.json).
+
 ================================================================
 PART 2 — TODO
 ================================================================
