@@ -1,0 +1,94 @@
+# SSOT Explorer
+
+SSOT 인덱싱 트리 전용 탐색기 대체 뷰어 + 다중 AI 툴 규칙 동기화 도구. Windows
+탐색기 대신, 각 폴더의 CLAUDE.md/README.md 내용을 트리 옆에서 바로 볼 수 있고,
+등록된 루트의 규칙을 CLAUDE.md/AGENTS.md/.cursorrules/.windsurfrules로 동시에
+맞출 수 있다.
+
+## 실행
+
+- 배포용: `dist\SSOT_Explorer.exe` 더블클릭(설치 불필요, 단일 실행파일)
+- 개발용: `pip install -r requirements.txt` 후 `python main.py`
+- exe 재빌드: `pip install -r requirements-dev.txt` 후
+  `python -m PyInstaller --noconfirm --windowed --onefile --name "SSOT_Explorer" main.py`
+- **회귀 테스트**(2026-08-13 도입, D-024 — Lazzy_App_OS_Monorepo/server의
+  `test_*.py`+pytest 컨벤션 이식): `pip install -r requirements-dev.txt` 후
+  `pytest -q`. `test_main.py`가 레지스트리 로드/저장, D-021 원자적쓰기+동시성
+  충돌감지, D-023 primarySource, 툴바/단축키 등을 실제 사용자 레지스트리·
+  QSettings를 안 건드리는 격리된 임시 경로에서 검증한다 — 코드 고칠 때마다
+  스크래치 테스트를 새로 써서 지우는 대신 여기 추가해서 계속 쌓아간다.
+
+## 기능
+
+- 좌측: 트리(지연 로딩, 폴더+파일 전부 표시, `.claude` 폴더도 노출) —
+  CLAUDE.md/README.md 있는 폴더는 굵게
+- 우측: 선택한 폴더의 CLAUDE.md/README.md를 마크다운으로 렌더링해서 표시
+- 상단 검색창(Ctrl+F로 포커스): 이름으로 재귀 검색(백그라운드 스레드라 큰
+  루트에서도 UI 안 멈춤) → 결과 더블클릭 시 트리에서 그 위치로 이동
+- **+ 루트 추가 / − 루트 삭제 / 새로고침(F5)**: 레지스트리 갱신 + 새 루트는
+  등록 즉시 init CLAUDE.md 자동 생성. 트리에서 루트 선택 후 Delete 키로도
+  삭제 가능(하위 폴더 선택 시엔 동작 안 함 — 오조작 방지)
+- **선택 루트 동기화 (AI 툴별)**: 다이얼로그에서 CLAUDE.md/AGENTS.md/
+  .cursorrules/.windsurfrules 중 골라서(또는 전체 한번에) 같은 참조조건으로
+  동기화. 손으로 쓴 파일은 확인 후에만 덮어씀. "리뷰 완료로 표시" 버튼도 여기.
+- **전체 내보내기**: 등록된 모든 루트의 CLAUDE.md를 참조조건 전문 포함
+  완전판으로 — 레지스트리/앱 없이도 동작하게 만드는 스냅샷
+- 더블클릭: 폴더는 탐색기로, 파일은 기본 프로그램으로 엶
+- 우클릭: 탐색기로 열기 / VS Code로 열기 / 터미널 열기 / **여기서 Claude Code
+  실행**(cd 후 `claude` 바로 실행) / 경로 복사 / 웹 아티팩트 열기(등록돼
+  있으면) — 결과는 하단 상태바에 표시
+- **관리자 패널**(툴바): 루트별 owner/scope/리뷰 경과일(180일 초과 시 ⚠️)
+  포함 정리된 레지스트리 뷰, "지금 드리프트 체크 실행"(실시간 진행상황 스트리밍)
+- 창 크기/좌우 분할 비율/마지막 선택 위치를 다음 실행 때 그대로 복원(QSettings)
+- **오류 로깅**(2026-08-13, D-025): 미처리 예외는 `~/.claude/scripts/
+  ssot_explorer.log`에 기록되고 사용자에게 다이얼로그로 알림 — exe가
+  `--windowed`(콘솔 없음)라 로그 파일 없이는 문제 진단이 불가능했음.
+  버튼 클릭 같은 슬롯 안 예외는 알림만 뜨고 앱은 계속 실행됨.
+
+## 이 앱이 안 하는 것
+
+- **파일 변경 감지(드리프트) 상시 감시**: 앱 자체는 백그라운드 감시 안 함 —
+  별도 스크립트(`~/.claude/scripts/ssot_index_drift_check.py`, 순수 Python,
+  Windows 작업 스케줄러가 매일 09:00 실행)와 훅 스크립트
+  (`~/.claude/hooks/ssot_index_reminder.py`)가 담당. 둘 다 2026-08-13부로
+  PowerShell(.ps1)에서 순수 Python으로 교체 — 크로스플랫폼(Windows/Mac/Linux)
+  이고, exe 없이 `python3`만 있으면 동작. 옛 .ps1 파일은 참고용으로만 보존
+  (더 이상 자동 실행 안 됨). 앱의 "지금 드리프트 체크 실행"은 이 스크립트를
+  대신 실행해줄 뿐(보너스 기능).
+- **README.md 생성/편집**: 안 함 — README는 각 프로젝트의 실제 규칙이라
+  건드리지 않음. 레지스트리엔 "언제 여는지" 짧은 참조조건만 유지.
+- **자유 폴더에 임의로 규칙파일 생성**: 안 함 — 생성/동기화는 **등록된 루트만**
+  대상. 프로젝트 자체 CLAUDE.md는 여전히 사람/Claude Code가 직접 작성.
+- **파일 복사/이동/삭제/이름변경**: 안 함(P-01, 고위험이라 의도적으로 제외).
+
+## 레지스트리(`ssot-roots.json`) — 단일 소스
+
+`flutter_App\.claude\ssot-roots.json`이 유일한 소스(2026-08-13부로 이 위치로
+이동, 예전엔 `~/.claude/` 밑 전역 위치) — 이 앱, 드리프트 스크립트, 훅
+스크립트가 전부 이 파일을 공유해서 읽는다. 각 루트 항목:
+
+- `referenceCondition` — 실질적 규칙 SSOT(프로즈). CLAUDE.md/AGENTS.md/
+  .cursorrules/.windsurfrules 전부 이걸로 동기화됨(포인터 모드 — 내용은 항상
+  레지스트리 확인, 파일엔 복붙 안 함. "전체 내보내기"만 예외적으로 전문을 박음)
+- `readmeReferenceCondition` — README.md는 안 건드리되, 언제 여는지의 요약
+- `webArtifactUrl` — claude.ai 아티팩트 등 웹 문서 URL(있으면)
+- `primarySource` — `"local"`(기본) | `"web"`. `"web"`이면 `webArtifactUrl`이
+  **유일한 정본**이고 로컬 참조조건은 참고용 스냅샷일 뿐 — init/전체내보내기
+  둘 다 그 사실을 문구로 명시하고, 동기화 다이얼로그에도 경고가 뜬다(Lazzy_
+  App_OS_Monorepo가 문서 2개를 웹 전용으로 전환한 사례를 이식, D-023)
+- `owner` / `scope` / `lastReviewed` — 프로즈+경량 스키마 하이브리드
+  (Backstage catalog-info.yaml 방식). 도구가 검증 가능한 최소 필드만 —
+  나머지는 계속 자유 프로즈
+- **참조조건 수정은 Claude Code가**: 앱 UI로 편집하지 않음 — 대화 중 레지스트리
+  JSON을 직접 고침
+- **기존 손편집 내용 보호**: flutter_App/Local_APP/Coding_Nomal/개발자 전용
+  어플 4개는 사람이 공들여 쓴 CLAUDE.md라 동기화 마커가 없음 — 동기화를 눌러도
+  확인창 없이는 안 덮어씀(D-010/P-05)
+
+현재 등록 루트(5개): flutter_App, Local_APP, Coding_Nomal, 개발자 전용 어플,
+coding_admin.
+
+## 설계 문서
+
+`SSOT_EXP_설계도\` 폴더 — 결정이력/TODO, 정책맵, 실행규격서 3파일(v1.0 단일
+레포 구조).

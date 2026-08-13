@@ -1,0 +1,9 @@
+# 빌드 산출물 — PyInstaller가 매번 재생성(손으로 커스텀 안 함, SSOT_Explorer.spec도
+# 동일 이유로 제외)
+build/
+dist/
+*.spec
+
+__pycache__/
+*.pyc
+.pytest_cache/
