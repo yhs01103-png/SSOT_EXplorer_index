@@ -463,6 +463,27 @@ CLAUDE.md/AGENTS.md에 '변경분 반영 필요' 표시". 루트가 지금 5개 
 검증: `git log --oneline`으로 root-commit 1개 존재 확인, `git status`로
       더 이상 "not a git repository" 안 뜨는지 확인.
 
+[D-027] 상용/표준 비교분석 문서 신설 — Lazzy 아이언맨_자비스_비교분석.md 방법론 이식
+결정: 사용자가 "최고급 상용작이랑 정밀분석 먼저 해달라" 요청 →
+      `SSOT_EXP_설계도\SSOT_Explorer_상용비교분석.md` 신설(4번째 설계문서).
+      WebSearch로 Backstage(3,400개+ 회사 채택, catalog-info.yaml,
+      TechDocs, 250개+ 플러그인), RuleSync(8개 AI툴 포맷 지원, CLI+웹SaaS,
+      복수 독립구현), AGENTS.md 표준(2025-08 OpenAI 발표→Linux Foundation
+      Agentic AI Foundation 이관, 30개+ 툴 네이티브 지원, 저장소 60,000개+)
+      실시간 확인 후 축A(인프라 성숙도)/축B(기능완성도) 정밀 대조.
+      **⚠️ 조사 중 실제 코드 결함 발견**: `.cursorrules`(단일파일)는 이미
+      폐기(Cursor는 `.cursor/rules/*.mdc` 디렉토리로 이전), `.windsurfrules`도
+      레거시(Windsurf는 `.windsurf/rules/` 권장, 과도기로만 구버전 지원) —
+      SSOT_Explorer가 지금 생성하는 두 포맷이 최신 Cursor에서 아예 안 읽힐
+      수 있음. → H-006으로 등록(아래), 사용자가 분석 먼저 요청했으므로 이번
+      라운드에선 코드 수정 안 하고 문서화만.
+이유: 이 앱을 실사용 계속할지/어디까지 발전시킬지 판단하려면 "이미 있는
+      상용/표준 도구 대비 뭐가 겹치고 뭐가 다른지"를 정직하게 봐야 함 —
+      Lazzy가 검증한 축A/축B + 정직성조건 방법론을 그대로 가져오는 게
+      가장 낮은 비용으로 같은 rigor를 얻는 방법.
+검증: 출처 8개 전부 각주로 URL 명시(추측 표시 없이 실제 검색 결과 기반),
+      SSOT_Explorer 쪽 서술은 전부 실제 코드(main.py) 확인 후 작성.
+
 ================================================================
 PART 2 — TODO
 ================================================================
@@ -502,6 +523,23 @@ H-005  GitHub 원격 저장소 연결 + CI(.github/workflows/tests.yml, Lazzy �
         (2026-08-13). 컴퓨터 하나 죽으면 커밋 이력도 같이 사라지는 상태이고,
         CI(push/PR마다 pytest -q 자동 실행)도 원격 없인 불가능.
   완료 조건: 사용자가 원격 연결 요청 시 진행
+
+🔴 P1
+H-006  .cursorrules/.windsurfrules 최신 포맷으로 갱신 + AGENTS.md 1차 포맷화
+  대상: main.py의 FORMAT_TARGETS, generate_init_pointer/generate_full_export_pointer
+  원인: D-027 상용비교분석 조사 중 발견 — `.cursorrules`(단일파일)는 Cursor에서
+        이미 폐기, `.cursor/rules/*.mdc` 디렉토리로 이전됨. `.windsurfrules`도
+        Windsurf 쪽에서 `.windsurf/rules/`가 권장이고 구버전은 과도기 지원만.
+        지금 SSOT_Explorer가 만드는 두 파일이 최신 버전 Cursor에서 아예 안
+        읽힐 수 있음 — 우선순위 높음(단순 기능추가가 아니라 있는 기능이 이미
+        낡은 상태).
+  수정 방향(안): (1) `.cursor/rules/*.mdc`, `.windsurf/rules/*.md` 디렉토리
+        타깃 추가 (2) AGENTS.md를 "여러 툴이 네이티브로 읽는 1차 공용 포맷"
+        으로 격상, 나머지는 하위호환용 부가 포맷으로 재포지셔닝 (3) 레거시
+        플랫 파일(.cursorrules/.windsurfrules)은 존재 시 계속 동기화하되
+        신규 생성은 디렉토리 포맷 우선 — 구체 설계는 별도 라운드에서 확정.
+  완료 조건: 사용자 확인 후 진행(이번 라운드는 분석까지만 — 사용자가 "분석
+        먼저"라고 명시)
 
 ================================================================
 === 미결 (O-번호, OPEN) ===
