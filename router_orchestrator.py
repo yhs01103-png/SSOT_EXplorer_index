@@ -26,6 +26,14 @@ ORCHESTRATION_LOG_PATH에 원자적 쓰기로 남긴다 — router_proposals의
 
 CLI: `python router_orchestrator.py --text "..."` — router_classifier.py의
 CLI와 같은 계약(JSON 입출력)이지만 3단계를 전부 거친 최종 결과를 준다.
+
+**D-033(2026-08-14) — IDF 공유 + additive 병합으로 정밀도 개선**: D-032
+직후 실제 질의("이 대화 내용을 범용 코드 프로젝트 규칙으로 만들어줘")로
+돌려보니 정답이 5순위→공동1위(4파전 동점)로만 개선됐다 — floor(고정값)
+병합 방식이 "흔한 단어만 걸려도 전부 0.5"로 뭉개는 게 원인. 이제 등록
+루트 전체(레지스트리 텍스트 + README 실시간 스캔)를 합친 corpus로 IDF를
+한 번 계산해서 1단계(classify_content)와 2단계(프로즈검색) 둘 다 같은
+가중치 기준을 쓰게 하고, 병합도 max()(floor) 대신 +=(additive)로 바꿨다.
 """
 from __future__ import annotations
 
@@ -39,6 +47,7 @@ import router_proposals
 
 ORCHESTRATION_LOG_PATH = Path.home() / ".claude" / "scripts" / "ssot_orchestrator_log.json"
 README_FILENAME = "readme.md"
+PROSE_MATCH_WEIGHT = 0.4  # D-033: 프로즈검색 신호가 additive로 기여하는 최대 가중치
 
 
 def _find_readme(root_path: Path) -> Path | None:
@@ -58,20 +67,16 @@ def _find_readme(root_path: Path) -> Path | None:
     return None
 
 
-def _prose_scan_signal(text_words: set[str], root_path: Path) -> dict | None:
-    """2단계 — README.md를 그 자리에서 읽어서(복사 안 함) 키워드 겹침만
-    본다. 안 걸리면 None."""
+def _read_readme(root_path: Path) -> tuple[str, str] | None:
+    """README.md를 그 자리에서 읽기만(복사 안 함) — (경로문자열, 내용) 또는
+    None. IDF corpus 구성과 2단계 매치 둘 다 이 함수로 딱 한 번만 읽는다."""
     readme = _find_readme(root_path)
     if not readme:
         return None
     try:
-        content = readme.read_text(encoding="utf-8", errors="replace")
+        return str(readme), readme.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
-    overlap = text_words & router_classifier.tokenize(content)
-    if not overlap:
-        return None
-    return {"matchedKeywords": sorted(overlap), "readmePath": str(readme)}
 
 
 def orchestrate(text: str, roots: list[dict], log_path: Path | None = None) -> dict:
@@ -81,36 +86,52 @@ def orchestrate(text: str, roots: list[dict], log_path: Path | None = None) -> d
     steps = []
     text_words = router_classifier.tokenize(text)
 
-    # 1단계 — 구조화 신호
-    structured = router_classifier.classify_content(text, roots)
+    # 0단계(신호 아님, 준비) — 레지스트리 텍스트 + README 실시간 스캔을
+    # 합친 corpus로 IDF를 한 번 계산 — 1/2단계가 같은 가중치 기준을 쓰게.
+    readme_cache: dict[str, tuple[str, str] | None] = {}
+    corpora: dict[str, str] = {}
+    for r in roots:
+        label = r["label"]
+        readme_hit = _read_readme(Path(r["path"]))
+        readme_cache[label] = readme_hit
+        registry_text = " ".join([r.get("label", "") or "", r.get("referenceCondition", "") or ""])
+        corpora[label] = registry_text + " " + (readme_hit[1] if readme_hit else "")
+    idf = router_classifier.compute_idf(corpora)
+
+    # 1단계 — 구조화 신호(공유 idf 사용)
+    structured = router_classifier.classify_content(text, roots, idf=idf)
     steps.append({"stage": "structured", "candidateCount": len(structured)})
     merged: dict[str, dict] = {
         c["rootLabel"]: {**c, "signals": list(c["signals"])} for c in structured
     }
 
-    # 2단계 — 프로즈 검색(실시간 스캔, 이관 아님)
+    # 2단계 — 프로즈 검색(같은 idf로 가중치, additive 병합 — floor 아님)
     prose_hit_count = 0
     for r in roots:
-        hit = _prose_scan_signal(text_words, Path(r["path"]))
-        if not hit:
+        label = r["label"]
+        readme_hit = readme_cache.get(label)
+        if not readme_hit:
+            continue
+        readme_path, content = readme_hit
+        overlap = text_words & router_classifier.tokenize(content)
+        if not overlap:
             continue
         prose_hit_count += 1
-        label = r["label"]
-        preview = ", ".join(hit["matchedKeywords"][:5])
+        matched_keywords = sorted(overlap)
+        preview = ", ".join(matched_keywords[:5])
+        prose_score = router_classifier._weighted_overlap_score(overlap, text_words, idf) * PROSE_MATCH_WEIGHT
         if label in merged:
             merged[label]["signals"].append("프로즈검색")
-            merged[label]["matchedKeywords"] = sorted(
-                set(merged[label]["matchedKeywords"]) | set(hit["matchedKeywords"])
-            )
-            merged[label]["score"] = max(merged[label]["score"], 0.5)
-            merged[label]["reason"] += f" / README 검색 겹침({hit['readmePath']}): {preview}"
+            merged[label]["matchedKeywords"] = sorted(set(merged[label]["matchedKeywords"]) | overlap)
+            merged[label]["score"] = round(min(merged[label]["score"] + prose_score, 1.0), 3)
+            merged[label]["reason"] += f" / README 검색 겹침(IDF가중, {readme_path}): {preview}"
         else:
             merged[label] = {
                 "rootLabel": label,
                 "rootPath": r["path"],
-                "score": 0.4,  # 구조화 신호 없이 프로즈만 걸린 경우 — 단독으론 약한 신호
-                "matchedKeywords": hit["matchedKeywords"],
-                "reason": f"README 검색 겹침({hit['readmePath']}): {preview}",
+                "score": round(prose_score, 3),
+                "matchedKeywords": matched_keywords,
+                "reason": f"README 검색 겹침(IDF가중, {readme_path}): {preview}",
                 "signals": ["프로즈검색"],
             }
     steps.append({"stage": "prose_scan", "candidateCount": prose_hit_count})

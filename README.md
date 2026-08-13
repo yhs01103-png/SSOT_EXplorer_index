@@ -59,20 +59,23 @@ SSOT 인덱싱 트리 전용 탐색기 대체 뷰어 + 다중 AI 툴 규칙 동�
   ssot_explorer.log`에 기록되고 사용자에게 다이얼로그로 알림 — exe가
   `--windowed`(콘솔 없음)라 로그 파일 없이는 문제 진단이 불가능했음.
   버튼 클릭 같은 슬롯 안 예외는 알림만 뜨고 앱은 계속 실행됨.
-- **새 문서 저장**(툴바, D-029~D-032): 텍스트를 붙여넣으면
+- **새 문서 저장**(툴바, D-029~D-033): 텍스트를 붙여넣으면
   `router_orchestrator.py`가 3단계 캐스케이드로 등록 루트 중 맞는 곳을
-  제안 — (1) `router_classifier.py`: 레지스트리 label/scope/
-  referenceCondition 키워드겹침(Lazzy_App_OS_Monorepo의
+  제안 — (1) `router_classifier.py`: 레지스트리 label/referenceCondition
+  키워드겹침(IDF 가중치, D-033) + scope 리터럴매치(Lazzy_App_OS_Monorepo의
   user_info_indexer.py 다중신호 구조를 실제로 읽고 이식) (2) 등록 루트
   README.md를 그 자리에서 실시간 스캔(레지스트리로 복사 안 함 — README는
-  항상 그 폴더에만 있다는 원칙 유지) (3) `router_proposals.py`의 신뢰
-  폐루프(confidence_calibrator.py 이식, 연속 5승인→승급/1회거부로 즉시
-  강등) 주석. AI 없는 휴리스틱 v1. 사용자가 후보+파일명을 고르고 "저장"
-  버튼을 눌러야만 실제로 파일이 써짐 — SSOT_Explorer 전체에서 새 파일을
-  쓰는 유일한 지점(P-01의 조건부 예외, 아래 참고). 승인/취소는
-  `router_proposals.py`가 기록, 신뢰됨 후보는 "✅신뢰됨" 배지(승급해도
-  승인 절차 자동 생략은 안 함). "새 파일이 생기면 자동 추적"
-  (`router_watcher.py`)은 아직 스켈레톤만(O-006).
+  항상 그 폴더에만 있다는 원칙 유지), 같은 IDF 가중치 공유 (3)
+  `router_proposals.py`의 신뢰 폐루프(confidence_calibrator.py 이식, 연속
+  5승인→승급/1회거부로 즉시 강등) 주석. 여러 루트에 흔한 단어("코드"/
+  "프로젝트")는 IDF로 가중치를 낮추고, "내용을"/"대화" 같은 요청 형식
+  어휘는 불용어로 걸러냄(D-033). AI 없는 휴리스틱 v1 — 여전히 완벽하진
+  않음(정직한 실측 기록은 결정이력 D-033 참고). 사용자가 후보+파일명을
+  고르고 "저장" 버튼을 눌러야만 실제로 파일이 써짐 — SSOT_Explorer
+  전체에서 새 파일을 쓰는 유일한 지점(P-01의 조건부 예외, 아래 참고).
+  승인/취소는 `router_proposals.py`가 기록, 신뢰됨 후보는 "✅신뢰됨"
+  배지(승급해도 승인 절차 자동 생략은 안 함). "새 파일이 생기면 자동
+  추적"(`router_watcher.py`)은 아직 스켈레톤만(O-006).
 - **CLI 진입점**: `python router_orchestrator.py --text "..."`(3단계 전부
   거친 최종 결과, D-032 권장) 또는 `router_classifier.py --text "..."`
   (구조화 신호만, 더 빠름, D-030) — GUI 없이 아무 Claude Code 세션에서나

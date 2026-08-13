@@ -426,7 +426,10 @@ def test_save_document_dialog_no_candidates_shows_hint(tmp_path):
     roots = [{"label": "x", "path": str(root_dir), "scope": "전혀다른주제", "referenceCondition": ""}]
     dlg = m.SaveDocumentDialog(roots)
     try:
-        dlg.content_edit.setPlainText("겹치지 않는 별개 내용")
+        # D-033: "내용"이 불용어라 짧은 문구엔 못 씀(needs_clarification
+        # 분기로 새서 테스트 의도가 흐려짐) — 충분히 길고 구체적인, 그러나
+        # 등록 루트와는 진짜 무관한 문장으로 바꿈.
+        dlg.content_edit.setPlainText("겹치지 않는 완전히 별개인 임의의 낯선 주제입니다")
         dlg.run_classification()
         assert dlg.candidates_list.count() == 0
         assert "후보가 없습니다" in dlg.status_label.text()

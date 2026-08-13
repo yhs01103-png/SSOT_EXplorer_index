@@ -7,6 +7,8 @@ import json
 import subprocess
 import sys
 
+import pytest
+
 import router_classifier as rc
 
 
@@ -62,16 +64,48 @@ def test_classify_content_sorts_descending_by_score():
     assert results[0]["score"] >= results[1]["score"]
 
 
+# ------------------------------------------ D-033: IDF 가중치, floor→additive
+
+def test_compute_idf_downweights_terms_common_across_roots():
+    """"코드"가 모든 문서에 나오고 "특이어"는 하나에만 나오면, 후자가 훨씬
+    높은 가중치를 받아야 한다 — IDF의 핵심 성질."""
+    corpora = {
+        "a": "코드 프로젝트 규칙",
+        "b": "코드 프로젝트 정리",
+        "c": "코드 특이어 문서",
+    }
+    idf = rc.compute_idf(corpora)
+    assert idf["특이어"] > idf["코드"]
+
+
+def test_classify_content_idf_differentiates_generic_vs_specific_match():
+    """D-032 실측 문제의 재현+회귀 테스트 — "코드"/"프로젝트"/"규칙"처럼
+    거의 모든 루트에 흔한 단어만 걸린 루트보다, 그 단어들에 더해 특이
+    단어까지 겹친 루트가 확실히 더 높은 점수를 받아야 한다(예전엔 둘 다
+    scope 신호면 강제로 0.5 동점이었음)."""
+    roots = [
+        {"label": "generic_only", "path": "C:\\g", "scope": "", "referenceCondition": "코드 프로젝트 규칙 정리"},
+        {"label": "generic_plus_specific", "path": "C:\\gs", "scope": "", "referenceCondition": "코드 프로젝트 규칙 정리 범용규칙모음집"},
+        {"label": "unrelated", "path": "C:\\u", "scope": "", "referenceCondition": "완전히 다른 주제 내용"},
+    ]
+    text = "코드 프로젝트 규칙 정리 범용규칙모음집 작업"
+    results = rc.classify_content(text, roots)
+    by_label = {c["rootLabel"]: c for c in results}
+    assert by_label["generic_plus_specific"]["score"] > by_label["generic_only"]["score"]
+    assert "unrelated" not in by_label
+
+
 # ---------------------------------------------- D-030: 다중신호(union) 구조
 
 def test_classify_content_scope_literal_signal_alone_is_enough():
     """키워드 겹침이 0이어도 scope 문구가 텍스트에 그대로 있으면 신호2만
-    으로 채택돼야 함(union 원칙 — 신호 하나만 걸려도 후보)."""
+    으로 채택돼야 함(union 원칙 — 신호 하나만 걸려도 후보). D-033: floor가
+    아니라 additive라 점수는 SCOPE_MATCH_BONUS 그 자체(0.3) — 0.5가 아님."""
     roots = [{"label": "x", "path": "C:\\x", "scope": "보안금고특수키워드", "referenceCondition": ""}]
     results = rc.classify_content("이건 보안금고특수키워드 관련 새 메모다", roots)
     assert len(results) == 1
     assert "scope일치" in results[0]["signals"]
-    assert results[0]["score"] >= 0.5  # 신호 단독이어도 무시 못 할 최소 점수
+    assert results[0]["score"] == pytest.approx(rc.SCOPE_MATCH_BONUS)
 
 
 def test_classify_content_both_signals_rank_above_single_signal():
