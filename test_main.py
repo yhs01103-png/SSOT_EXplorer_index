@@ -49,12 +49,14 @@ def isolated_registry(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def isolated_router_proposals(tmp_path, monkeypatch):
-    """D-029 — SaveDocumentDialog가 승인/취소 시 router_proposals.record_decision
-    을 실제로 호출하는데, 실제 사용자 로그(~/.claude/scripts/
-    ssot_router_proposals.json)를 절대 안 건드리게 격리. main.py가
+    """D-029/D-030 — SaveDocumentDialog가 승인/취소 시 router_proposals.
+    record_decision을 실제로 호출하는데(내부적으로 신뢰상태 파일도 같이
+    씀), 실제 사용자 로그(~/.claude/scripts/ssot_router_proposals.json,
+    ssot_router_trust.json)를 절대 안 건드리게 격리. main.py가
     `import router_proposals`로 모듈 자체를 참조하므로 여기서 patch하면
     main.py 쪽 호출에도 그대로 반영된다."""
     monkeypatch.setattr(router_proposals, "PROPOSALS_LOG_PATH", tmp_path / "proposals.json")
+    monkeypatch.setattr(router_proposals, "TRUST_STATE_PATH", tmp_path / "trust.json")
     yield
 
 

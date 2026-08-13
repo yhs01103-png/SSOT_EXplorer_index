@@ -920,14 +920,24 @@ class SaveDocumentDialog(QDialog):
         self.candidates = router_classifier.classify_content(text, self.roots)
         self.candidates_list.clear()
         if not self.candidates:
-            self.status_label.setText(
-                "😕 겹치는 키워드가 없어 제안할 후보가 없습니다 — 이 버전(v1, "
-                "휴리스틱)은 자동제안 실패 시 대안이 없습니다. 파일명을 직접 "
-                "정하고 폴더는 트리에서 직접 관리하세요(다음 라운드 개선 후보)."
-            )
+            # D-030: "물어보기 원칙" 이식 — 진짜 무관해서 후보가 없는 건지,
+            # 내용 자체가 너무 짧아서/지시대명사 위주라 판단 근거가 부족한
+            # 건지 구분해서 알려준다.
+            if router_classifier.needs_clarification(text):
+                self.status_label.setText(
+                    "🤔 내용이 너무 짧거나 무엇을 가리키는지 애매해서 판단이 "
+                    "어렵습니다 — 조금 더 구체적으로 적어서 다시 시도하세요."
+                )
+            else:
+                self.status_label.setText(
+                    "😕 겹치는 키워드/scope가 없어 제안할 후보가 없습니다 — 이 "
+                    "버전(v1, 휴리스틱)은 자동제안 실패 시 대안이 없습니다. "
+                    "파일명을 직접 정하고 폴더는 트리에서 직접 관리하세요."
+                )
             return
         for c in self.candidates:
-            item = QListWidgetItem(f"{c['rootLabel']}  (점수 {c['score']})\n   {c['reason']}")
+            trust_badge = " ✅신뢰됨" if router_proposals.is_trusted(c["rootLabel"]) else ""
+            item = QListWidgetItem(f"{c['rootLabel']}{trust_badge}  (점수 {c['score']})\n   {c['reason']}")
             item.setData(Qt.UserRole, c)
             self.candidates_list.addItem(item)
         self.status_label.setText(f"✅ 후보 {len(self.candidates)}개 — 하나를 선택하고 파일명을 입력한 뒤 저장하세요.")

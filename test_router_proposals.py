@@ -1,5 +1,6 @@
-"""router_proposals.py 전용 테스트 — D-029. PROPOSALS_LOG_PATH를 임시
-경로로 격리해서 실제 사용자 로그(~/.claude/scripts/ssot_router_proposals.json)
+"""router_proposals.py 전용 테스트 — D-029, D-030(신뢰 폐루프 추가).
+PROPOSALS_LOG_PATH/TRUST_STATE_PATH를 임시 경로로 격리해서 실제 사용자
+로그(~/.claude/scripts/ssot_router_proposals.json, ssot_router_trust.json)
 를 절대 안 건드린다."""
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ import router_proposals as rp
 @pytest.fixture(autouse=True)
 def isolated_proposals_log(tmp_path, monkeypatch):
     monkeypatch.setattr(rp, "PROPOSALS_LOG_PATH", tmp_path / "proposals.json")
+    monkeypatch.setattr(rp, "TRUST_STATE_PATH", tmp_path / "trust.json")
     yield
 
 
@@ -67,3 +69,47 @@ def test_acceptance_rate_filters_by_root_label():
     rp.record_decision(cand_b, "y", "cancelled")
     assert rp.acceptance_rate("a") == 1.0
     assert rp.acceptance_rate("b") == 0.0
+
+
+# ------------------------------------------- D-030: 신뢰 폐루프(승급/강등)
+
+def test_is_trusted_false_when_no_history():
+    assert rp.is_trusted("never-seen") is False
+
+
+def test_trust_promotes_after_streak_of_approvals():
+    candidate = {"rootLabel": "a", "rootPath": "C:\\a", "score": 0.5, "reason": "테스트"}
+    for _ in range(rp.TRUST_PROMOTION_STREAK - 1):
+        rp.record_decision(candidate, "x", "approved")
+    assert rp.is_trusted("a") is False  # 아직 스트릭 미달
+    rp.record_decision(candidate, "x", "approved")  # 마지막 1번 채움
+    assert rp.is_trusted("a") is True
+
+
+def test_trust_resets_and_demotes_on_single_cancellation():
+    candidate = {"rootLabel": "a", "rootPath": "C:\\a", "score": 0.5, "reason": "테스트"}
+    for _ in range(rp.TRUST_PROMOTION_STREAK):
+        rp.record_decision(candidate, "x", "approved")
+    assert rp.is_trusted("a") is True
+
+    rp.record_decision(candidate, "x", "cancelled")  # 단 한 번의 거부
+    assert rp.is_trusted("a") is False  # 이미 승급했어도 즉시 강등
+
+    state = rp.load_trust_state()
+    assert state["a"]["streak"] == 0  # 스트릭도 0으로 리셋
+
+
+def test_trust_is_tracked_independently_per_root_label():
+    cand_a = {"rootLabel": "a", "rootPath": "C:\\a", "score": 0.5, "reason": "테스트"}
+    cand_b = {"rootLabel": "b", "rootPath": "C:\\b", "score": 0.5, "reason": "테스트"}
+    for _ in range(rp.TRUST_PROMOTION_STREAK):
+        rp.record_decision(cand_a, "x", "approved")
+    assert rp.is_trusted("a") is True
+    assert rp.is_trusted("b") is False  # b는 아직 이력 없음
+
+
+def test_save_trust_state_leaves_no_tmp_file():
+    candidate = {"rootLabel": "a", "rootPath": "C:\\a", "score": 0.5, "reason": "테스트"}
+    rp.record_decision(candidate, "x", "approved")
+    leftovers = list(rp.TRUST_STATE_PATH.parent.glob(rp.TRUST_STATE_PATH.name + ".tmp*"))
+    assert leftovers == []

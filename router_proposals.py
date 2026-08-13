@@ -1,14 +1,20 @@
-"""SSOT_Explorer 라우터 — 제안 이력(2026-08-13 D-029).
+"""SSOT_Explorer 라우터 — 제안 이력 + 신뢰 폐루프(2026-08-13 D-029,
+2026-08-13 D-030에서 신뢰승급/강등 실제 이식).
 
-자동분류 제안을 사용자가 승인/취소한 기록을 남긴다 — "지금은 제안만 하고
-자세히 설명하되, 사용자가 승인/취소 버튼을 누르면 그걸 기록해서 나중에
-로그로 정밀도를 높이는 재료로 쓴다"는 요청의 저장소 부분. 지금은 그
-정밀도 계산(점수 재조정 등)까지는 안 하고 원장부만 쌓는다 — 실제
-재조정 로직은 데이터가 어느 정도 쌓인 뒤 별도 라운드 과제(O-007).
+자동분류 제안을 사용자가 승인/취소한 기록을 남긴다. 처음(D-029)엔 원장부만
+쌓았는데, 사용자가 "Lazzy의 confidence_calibrator.py를 실제로 읽어보라"고
+요청해서 코드를 직접 확인한 결과 — 그쪽은 승인/거부 결과를 그냥 로그로만
+남기지 않고 (kind, action) 조합별로 **연속 승인 스트릭을 추적해 신뢰
+승급/강등**까지 한다(5연속 approved → trusted 승급, 단 한 번이라도 거부되면
+즉시 스트릭 0 + 이미 승급했어도 강등 — 보수적). D-030이 그 핵심 메커니즘을
+포팅한 버전: `_update_trust()`가 root_label별로 같은 계산을 한다.
 
-Lazzy_App_OS_Monorepo의 ConfidenceJudgment/confidence_calibrator 패턴
-(판정마다 근거를 남기고, 사후 정확도를 추적해 다음 판단에 반영하는 폐루프)
-과 방향이 같다 — 다만 이건 그 축소판(원장부만, 자동 재조정은 아직 없음).
+**주의**: trusted==True가 돼도 이 파일이나 SaveDocumentDialog가 승인 절차를
+자동으로 생략하지는 않는다 — 사용자가 명시적으로 "항상 사람 확인 후 승인/
+취소, 절대 자동실행 안 함"이라고 확정했으므로(D-029), trusted 여부는 UI에
+"✅ 신뢰됨" 배지로만 노출되고 실제 저장은 여전히 매번 버튼 클릭이 필요하다.
+Lazzy 원본은 trusted면 리뷰 자체를 생략(mark_trusted_auto)하지만, 그 부분은
+사용자 결정과 배치돼 의도적으로 이식 안 함.
 
 router_classifier.py와 마찬가지로 Qt를 import하지 않는 순수 모듈 — 나중에
 서버 프로세스로 떼어내도 그대로 재사용 가능.
@@ -21,6 +27,8 @@ from datetime import datetime
 from pathlib import Path
 
 PROPOSALS_LOG_PATH = Path.home() / ".claude" / "scripts" / "ssot_router_proposals.json"
+TRUST_STATE_PATH = Path.home() / ".claude" / "scripts" / "ssot_router_trust.json"
+TRUST_PROMOTION_STREAK = 5  # Lazzy confidence_calibrator.py의 _REVIEW_PROMOTION_THRESHOLD와 동일 값
 
 
 def load_proposals() -> list[dict]:
@@ -32,16 +40,17 @@ def load_proposals() -> list[dict]:
         return []
 
 
-def _save_proposals(proposals: list[dict]) -> None:
-    """D-021과 같은 원자적 쓰기(temp+os.replace) 패턴 재사용 — 이 로그는
-    단일 기기·단일 프로세스 전용이라(OneDrive로 여러 기기에 공유되는
-    레지스트리와 다름) 낙관적 동시성 검사는 생략하고 원자성만 챙긴다."""
-    PROPOSALS_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    raw = json.dumps(proposals, ensure_ascii=False, indent=2).encode("utf-8")
-    tmp_path = PROPOSALS_LOG_PATH.with_name(PROPOSALS_LOG_PATH.name + f".tmp{os.getpid()}")
+def _atomic_write_json(path: Path, data) -> None:
+    """D-021과 같은 원자적 쓰기(temp+os.replace) 패턴 — proposals 로그와
+    trust 상태 둘 다 이걸로 쓴다. 둘 다 단일 기기·단일 프로세스 전용이라
+    (OneDrive로 여러 기기에 공유되는 레지스트리와 다름) 낙관적 동시성
+    검사는 생략하고 원자성만 챙긴다."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    raw = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+    tmp_path = path.with_name(path.name + f".tmp{os.getpid()}")
     try:
         tmp_path.write_bytes(raw)
-        os.replace(tmp_path, PROPOSALS_LOG_PATH)
+        os.replace(tmp_path, path)
     finally:
         if tmp_path.exists():
             try:
@@ -50,10 +59,15 @@ def _save_proposals(proposals: list[dict]) -> None:
                 pass
 
 
+def _save_proposals(proposals: list[dict]) -> None:
+    _atomic_write_json(PROPOSALS_LOG_PATH, proposals)
+
+
 def record_decision(candidate: dict, content_preview: str, decision: str) -> dict:
     """decision은 "approved" | "cancelled"만 허용. 승인된 것만 실제 파일
     쓰기로 이어진다(main.py의 SaveDocumentDialog가 처리) — 이 함수는
-    기록만 하고 파일시스템은 건드리지 않는다."""
+    기록만 하고 파일시스템은 건드리지 않는다. 기록 직후 _update_trust로
+    신뢰 스트릭도 같이 갱신한다."""
     if decision not in ("approved", "cancelled"):
         raise ValueError(f"알 수 없는 decision: {decision!r}")
     proposals = load_proposals()
@@ -69,14 +83,16 @@ def record_decision(candidate: dict, content_preview: str, decision: str) -> dic
     }
     proposals.append(entry)
     _save_proposals(proposals)
+    root_label = candidate.get("rootLabel")
+    if root_label:
+        _update_trust(root_label, decision)
     return entry
 
 
 def acceptance_rate(root_label: str | None = None) -> float | None:
     """지금까지 기록된 제안 중 승인 비율 — root_label 지정 시 그 루트만.
     데이터 0건이면 None(계산 불가 — 0%와 구분해야 함, 아직 아무 신호도
-    없는 상태를 "전부 틀렸다"로 오독하면 안 됨). "정밀도 높여지는 방향"의
-    첫 단계 지표 — 실제 분류 점수에 반영하는 건 이후 라운드 과제."""
+    없는 상태를 "전부 틀렸다"로 오독하면 안 됨)."""
     proposals = load_proposals()
     if root_label:
         proposals = [p for p in proposals if p.get("rootLabel") == root_label]
@@ -84,3 +100,43 @@ def acceptance_rate(root_label: str | None = None) -> float | None:
         return None
     approved = sum(1 for p in proposals if p["decision"] == "approved")
     return round(approved / len(proposals), 3)
+
+
+# --------------------------------------------------- D-030: 신뢰 폐루프(승급/강등)
+#
+# Lazzy_App_OS_Monorepo/server/core/orchestrators/confidence_calibrator.py를
+# 실제로 읽고 이식(2026-08-13) — 원본은 (kind, action) 조합별 AutoApplyTrust
+# DB 테이블 + ConfidenceJudgment 판정마다 outcome 역참조라는 훨씬 정교한
+# 구조지만, 핵심 메커니즘(연속 승인 스트릭 → 승급, 단 한 번의 거부로 즉시
+# 리셋+강등)만 root_label 단위로 축소 이식.
+
+def load_trust_state() -> dict:
+    """{rootLabel: {"trusted": bool, "streak": int}}"""
+    if not TRUST_STATE_PATH.exists():
+        return {}
+    try:
+        return json.loads(TRUST_STATE_PATH.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def is_trusted(root_label: str) -> bool:
+    """UI 배지 표시용 — trusted==True여도 실제 저장 승인 절차를 자동으로
+    생략하지 않는다(D-029에서 사용자가 확정한 "항상 사람 확인" 원칙 유지).
+    Lazzy 원본의 mark_trusted_auto(신뢰되면 리뷰 자체 생략)는 의도적으로
+    이식 안 함."""
+    return load_trust_state().get(root_label, {}).get("trusted", False)
+
+
+def _update_trust(root_label: str, decision: str) -> None:
+    state = load_trust_state()
+    entry = state.get(root_label, {"trusted": False, "streak": 0})
+    if decision == "approved":
+        entry["streak"] += 1
+        if entry["streak"] >= TRUST_PROMOTION_STREAK:
+            entry["trusted"] = True
+    else:  # cancelled — 단 한 번이라도 나오면 즉시 리셋+강등(보수적, Lazzy와 동일)
+        entry["streak"] = 0
+        entry["trusted"] = False
+    state[root_label] = entry
+    _atomic_write_json(TRUST_STATE_PATH, state)

@@ -585,6 +585,54 @@ CLAUDE.md/AGENTS.md에 '변경분 반영 필요' 표시". 루트가 지금 5개 
       동일 smoke-test 통과(router_*.py 3개 모두 PyInstaller가 로컬 import로
       자동 번들 — 추가 설정 불필요 확인).
 
+[D-030] router 다중신호 구조 + 신뢰 폐루프 실이식 + CLI 진입점
+결정: 사용자가 D-029 직후 세 가지 재요청 — (1) "Lazzy 인덱싱, 코드레벨로
+      본 거 맞냐"는 질문에 정직하게 확인한 결과 D-028/D-029 둘 다 실제
+      코드가 아니라 프로즈/비교문서 설명만 보고 이식한 것으로 드러남 →
+      실제로 `server/core/orchestrators/user_info_indexer.py`,
+      `confidence_calibrator.py`를 읽고 진짜 구조를 확인 (2) "폐루프는
+      이식하면 좋겠다" (3) "IDE 플러그인은 각 IDE가 이미 네이티브 지원하는데,
+      맥락/규칙을 확인해주는 앱이 따로 있냐" — WebSearch로 확인(별도
+      commercial-app 없음, "nearest file wins"로 IDE 자체가 처리하는 게
+      업계 표준이라 별도 앱이 오히려 불필요한 구조임을 확인) (4) 핵심 동기 —
+      "클로드코드 쓰다가 '이 대화 범용규칙으로 만들어줘' 해도 한마디로
+      안 됐다, 그 폴더 찾아서 규칙 참조까지 하는 게 목표였다".
+      구현:
+      - router_classifier.py: user_info_indexer.py의 "독립 신호 여러 개를
+        구해 id 기준 합집합(가중합 아님)" 구조를 2신호로 이식 — 신호1(label/
+        referenceCondition 키워드겹침), 신호2(scope 리터럴 매치, Lazzy의
+        서브카테고리 패턴매치 자리). 처음엔 scope를 신호1 해시택에도
+        같이 넣어서 두 신호가 사실상 안 독립적이었던 설계결함을 테스트
+        작성 중 발견해서 분리 수정.
+      - needs_clarification(): user_info_indexer.py 34~39행 "물어보기 원칙"
+        이식 — 후보 0개일 때 "무관"과 "정보부족(짧음/지시대명사)"을 구분.
+      - CLI 진입점(`python router_classifier.py --text "..."`) 신설 — 이게
+        사용자의 핵심 요구사항에 대한 직접 답. GUI 없이 Claude Code가 세션
+        중 아무 때나 직접 호출해서 JSON으로 후보를 받을 수 있음. 출력은
+        ensure_ascii=True(기본값)로 인코딩 사고(이 프로젝트에서 반복된
+        패턴) 원천봉쇄.
+      - router_proposals.py: confidence_calibrator.py의 신뢰승급/강등을
+        root_label 단위로 축소 이식(`_update_trust`, `is_trusted`,
+        `TRUST_PROMOTION_STREAK=5`) — 연속 5승인 시 승급, 단 1회 거부로
+        즉시 리셋+강등(보수적, Lazzy와 동일). trusted==True여도 승인
+        절차 자동 생략은 안 함(D-029 "항상 사람 확인" 원칙 유지 — Lazzy
+        원본의 mark_trusted_auto 리뷰생략은 의도적으로 이식 안 함) — UI에
+        "✅신뢰됨" 배지로만 노출.
+      [실측] CLI로 실제 레지스트리에 질의해보니 분류가 틀림(위 O-007
+      실측사례 참고) — 정직하게 그대로 보고하고 O-007에 근거로 남김.
+이유: "구조는 도메인 무관하게 재사용 가능"이라는 사용자 관찰이 맞았음 —
+      user_info_indexer.py는 대화기억 인덱싱이지만 "독립신호 합집합" 자체는
+      SSOT 문서 라우팅에도 그대로 옮겨졌다. CLI 진입점은 사용자가 실제로
+      겪은 마찰(GUI 뒤에 숨은 로직을 세션 중에 못 씀)을 직접 해소.
+검증: test_router_classifier.py에 다중신호 독립성(2개), 물어보기원칙(3개),
+      CLI(2개, subprocess로 실제 실행) 추가. test_router_proposals.py에
+      신뢰승급/강등/독립추적/원자적쓰기 5개 추가(TRUST_STATE_PATH도
+      isolated_proposals_log/isolated_router_proposals 픽스처에서 같이
+      격리 — 안 했으면 실사용자 파일 오염 위험 있었음, 코드리뷰 중 발견).
+      pytest 전체 67개 통과. CLI 실제 실행(진짜 레지스트리 대상)으로
+      end-to-end 확인 — 기술적으로는 정상 동작, 분류 정확도는 위 실측대로
+      한계 확인. 앱/exe smoke-test 통과.
+
 ================================================================
 PART 2 — TODO
 ================================================================
@@ -717,7 +765,17 @@ NotImplementedError, 분류는 휴리스틱(키워드 겹침) v1만. 사용자�
 재논의 조건: O-006과 마찬가지로 휴리스틱 v1의 정확도가 실사용상 부족함이
 데이터(acceptance_rate 낮음)로 확인되면. 그 전엔 새 의존성(kiwipiepy)을
 미리 넣지 않음 — 아직 문제로 확인 안 된 것을 앞서 고치지 않는다는 원칙.
-관련 D-번호: D-029.
+[실측 사례, D-030] CLI로 실제 등록 레지스트리에 "이 대화 내용을 범용 코드
+프로젝트 규칙으로 정리해서 만들어줘"를 넣어보니 정답(Coding_Nomal\코드_
+프로젝트_범용규칙)이 5순위(0.125점)로 밀리고, 그 폴더를 교차참조로
+"언급"만 한 flutter_App이 1순위(0.5점)로 나옴 — flutter_App의
+referenceCondition 프로즈 안에 정답 폴더 이름이 그대로 적혀 있어서
+키워드가 우연히 더 많이 겹친 것. 토크나이저 문제(조사 분리)보다는
+"언급 vs 실제 소유"를 구분 못 하는 더 근본적인 한계로 보임 — kiwipiepy
+만으론 안 풀릴 수 있고, 신호 가중치 재설계(예: referenceCondition 안에서
+그 루트 "자기 자신"을 가리키는 문장에 더 높은 가중치)가 같이 필요할 수
+있음. 재논의 판단에 참고할 것.
+관련 D-번호: D-029, D-030.
 
 ================================================================
 변경이력
