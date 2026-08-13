@@ -37,6 +37,7 @@ from PySide6.QtCore import Qt, QProcess, QThread, Signal, QSettings
 from PySide6.QtGui import QAction, QFont, QKeySequence
 
 import router_classifier
+import router_orchestrator
 import router_proposals
 
 SCRIPTS_DIR = Path.home() / ".claude" / "scripts"
@@ -912,31 +913,36 @@ class SaveDocumentDialog(QDialog):
         layout.addLayout(btn_row)
 
     def run_classification(self):
+        """D-032 — router_classifier 단독 대신 router_orchestrator를 통해
+        3단계(구조화 신호 + README 실시간 프로즈검색 + 신뢰폐루프 주석)를
+        전부 거친 결과를 쓴다 — CLI와 정확히 같은 결과(같은 함수 호출)라
+        GUI/세션 어느 쪽으로 물어도 답이 갈리지 않는다."""
         text = self.content_edit.toPlainText()
         if not text.strip():
             self.status_label.setText("⚠️ 내용을 먼저 입력하세요.")
             return
         self.classified_text = text
-        self.candidates = router_classifier.classify_content(text, self.roots)
+        result = router_orchestrator.orchestrate(text, self.roots)
+        self.candidates = result["candidates"]
         self.candidates_list.clear()
         if not self.candidates:
             # D-030: "물어보기 원칙" 이식 — 진짜 무관해서 후보가 없는 건지,
             # 내용 자체가 너무 짧아서/지시대명사 위주라 판단 근거가 부족한
             # 건지 구분해서 알려준다.
-            if router_classifier.needs_clarification(text):
+            if result["needsClarification"]:
                 self.status_label.setText(
                     "🤔 내용이 너무 짧거나 무엇을 가리키는지 애매해서 판단이 "
                     "어렵습니다 — 조금 더 구체적으로 적어서 다시 시도하세요."
                 )
             else:
                 self.status_label.setText(
-                    "😕 겹치는 키워드/scope가 없어 제안할 후보가 없습니다 — 이 "
-                    "버전(v1, 휴리스틱)은 자동제안 실패 시 대안이 없습니다. "
-                    "파일명을 직접 정하고 폴더는 트리에서 직접 관리하세요."
+                    "😕 겹치는 키워드/scope/README 내용이 없어 제안할 후보가 "
+                    "없습니다 — 이 버전(v1, 휴리스틱)은 자동제안 실패 시 대안이 "
+                    "없습니다. 파일명을 직접 정하고 폴더는 트리에서 직접 관리하세요."
                 )
             return
         for c in self.candidates:
-            trust_badge = " ✅신뢰됨" if router_proposals.is_trusted(c["rootLabel"]) else ""
+            trust_badge = " ✅신뢰됨" if c.get("trusted") else ""
             item = QListWidgetItem(f"{c['rootLabel']}{trust_badge}  (점수 {c['score']})\n   {c['reason']}")
             item.setData(Qt.UserRole, c)
             self.candidates_list.addItem(item)

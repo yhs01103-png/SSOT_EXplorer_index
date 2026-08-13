@@ -59,22 +59,31 @@ SSOT 인덱싱 트리 전용 탐색기 대체 뷰어 + 다중 AI 툴 규칙 동�
   ssot_explorer.log`에 기록되고 사용자에게 다이얼로그로 알림 — exe가
   `--windowed`(콘솔 없음)라 로그 파일 없이는 문제 진단이 불가능했음.
   버튼 클릭 같은 슬롯 안 예외는 알림만 뜨고 앱은 계속 실행됨.
-- **새 문서 저장**(툴바, 2026-08-13 D-029): 텍스트를 붙여넣으면
-  `router_classifier.py`가 등록 루트 중 맞는 곳을 제안(2026-08-13 D-030 —
-  Lazzy_App_OS_Monorepo의 user_info_indexer.py 구조를 실제로 읽고 이식한
-  다중신호(키워드겹침+scope매치) 휴리스틱, AI 없음). 사용자가 후보+파일명을
-  고르고 "저장" 버튼을 눌러야만 실제로 파일이 써짐 — 이 다이얼로그가
-  SSOT_Explorer 전체에서 새 파일을 쓰는 유일한 지점(P-01의 조건부 예외,
-  아래 참고). 승인/취소 결과는 `router_proposals.py`가 원자적 쓰기로
-  기록되고, confidence_calibrator.py를 이식한 신뢰 폐루프(연속 5승인 →
-  승급, 1회 거부로 즉시 강등)가 후보 목록에 "✅신뢰됨" 배지로 노출됨(단,
-  승급해도 승인 절차 자동 생략은 안 함). "새 파일이 생기면 자동 추적"
+- **새 문서 저장**(툴바, D-029~D-032): 텍스트를 붙여넣으면
+  `router_orchestrator.py`가 3단계 캐스케이드로 등록 루트 중 맞는 곳을
+  제안 — (1) `router_classifier.py`: 레지스트리 label/scope/
+  referenceCondition 키워드겹침(Lazzy_App_OS_Monorepo의
+  user_info_indexer.py 다중신호 구조를 실제로 읽고 이식) (2) 등록 루트
+  README.md를 그 자리에서 실시간 스캔(레지스트리로 복사 안 함 — README는
+  항상 그 폴더에만 있다는 원칙 유지) (3) `router_proposals.py`의 신뢰
+  폐루프(confidence_calibrator.py 이식, 연속 5승인→승급/1회거부로 즉시
+  강등) 주석. AI 없는 휴리스틱 v1. 사용자가 후보+파일명을 고르고 "저장"
+  버튼을 눌러야만 실제로 파일이 써짐 — SSOT_Explorer 전체에서 새 파일을
+  쓰는 유일한 지점(P-01의 조건부 예외, 아래 참고). 승인/취소는
+  `router_proposals.py`가 기록, 신뢰됨 후보는 "✅신뢰됨" 배지(승급해도
+  승인 절차 자동 생략은 안 함). "새 파일이 생기면 자동 추적"
   (`router_watcher.py`)은 아직 스켈레톤만(O-006).
-- **CLI 진입점**(D-030): `python router_classifier.py --text "..."`로 GUI
-  없이 아무 Claude Code 세션에서나 직접 호출 가능 — `--registry` 생략 시
-  기본 레지스트리 위치 사용, JSON으로 후보를 돌려줌. "대화 내용을 규칙으로
-  정리해줘" 같은 요청을 받았을 때 이걸로 목적지 후보를 먼저 조회하고,
-  그 루트의 `referenceCondition`을 읽어 기존 컨벤션에 맞춰 작성하는 용도.
+- **CLI 진입점**: `python router_orchestrator.py --text "..."`(3단계 전부
+  거친 최종 결과, D-032 권장) 또는 `router_classifier.py --text "..."`
+  (구조화 신호만, 더 빠름, D-030) — GUI 없이 아무 Claude Code 세션에서나
+  직접 호출 가능, `--registry` 생략 시 기본 레지스트리 위치. "대화 내용을
+  규칙으로 정리해줘" 같은 요청을 받았을 때 이걸로 목적지 후보를 먼저
+  조회하고, 그 루트의 `referenceCondition`을 읽어 기존 컨벤션에 맞춰
+  작성하는 용도. 매 오케스트레이터 실행은 `~/.claude/scripts/
+  ssot_orchestrator_log.json`에 단계별 이력으로 기록됨.
+- **SessionStart 훅 보강**(D-032): `ssot_session_context.py`가 발동할
+  때마다 relations 명시 여부와 무관하게 "다른 등록 루트 전체" 목록과
+  오케스트레이터 CLI 호출법을 항상 같이 안내.
 
 ## 이 앱이 안 하는 것
 

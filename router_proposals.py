@@ -40,7 +40,7 @@ def load_proposals() -> list[dict]:
         return []
 
 
-def _atomic_write_json(path: Path, data) -> None:
+def atomic_write_json(path: Path, data) -> None:
     """D-021과 같은 원자적 쓰기(temp+os.replace) 패턴 — proposals 로그와
     trust 상태 둘 다 이걸로 쓴다. 둘 다 단일 기기·단일 프로세스 전용이라
     (OneDrive로 여러 기기에 공유되는 레지스트리와 다름) 낙관적 동시성
@@ -60,7 +60,7 @@ def _atomic_write_json(path: Path, data) -> None:
 
 
 def _save_proposals(proposals: list[dict]) -> None:
-    _atomic_write_json(PROPOSALS_LOG_PATH, proposals)
+    atomic_write_json(PROPOSALS_LOG_PATH, proposals)
 
 
 def record_decision(candidate: dict, content_preview: str, decision: str) -> dict:
@@ -139,4 +139,4 @@ def _update_trust(root_label: str, decision: str) -> None:
         entry["streak"] = 0
         entry["trusted"] = False
     state[root_label] = entry
-    _atomic_write_json(TRUST_STATE_PATH, state)
+    atomic_write_json(TRUST_STATE_PATH, state)
