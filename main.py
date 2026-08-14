@@ -703,10 +703,31 @@ def get_available_drives() -> list[str]:
     return drives
 
 
+# 2026-08-14(D-041, H-003) — 대소문자만 다른 CLAUDE.md/claude.md가 한 폴더에
+# 동시에 존재하는 경우의 방어 코드. Windows는 파일시스템이 대소문자를 구분 안
+# 해서 이 상황 자체가 발생 안 하지만, 이 프로젝트는 크로스플랫폼을 표방하고
+# (D-019 순수 Python 스크립트, D-039 경로 이식성) 대소문자 구분 파일시스템
+# (Linux 등)에서는 실제로 둘 다 존재할 수 있음 — 실사용에서 재현된 적은
+# 없지만(H-003 원 결정문 그대로), 재현을 기다리지 않고 이번 라운드에서 미리
+# 방어. CANONICAL_INDEX_NAMES를 우선 채택, 그래도 안 갈리면(둘 다 비표준
+# 표기) 이름 사전순 — 실행마다 같은 선택이 나오게(OS 디렉토리 순회 순서에
+# 의존하던 기존 setdefault 방식은 결정적이지 않았음).
+CANONICAL_INDEX_NAMES = {"claude.md": "CLAUDE.md", "readme.md": "README.md"}
+
+
+def pick_canonical_index_file(key: str, paths: list[Path]) -> Path:
+    """같은 폴더에 대소문자만 다른 인덱스 파일이 여러 개일 때 어느 걸 쓸지
+    결정적으로 고른다 — find_index_files에서 분리한 순수 함수(디스크 접근
+    없이 테스트 가능, 실제 케이스-센서티브 파일시스템 없이도 회귀 검증)."""
+    canonical = CANONICAL_INDEX_NAMES.get(key)
+    chosen = next((p for p in paths if p.name == canonical), None)
+    return chosen if chosen is not None else sorted(paths, key=lambda p: p.name)[0]
+
+
 def find_index_files(folder: Path) -> dict:
     """folder 바로 밑, 그리고 folder\\.claude 밑 양쪽에서 CLAUDE.md/README.md를
-    찾는다 — 플랫 컨벤션(코드_프로젝트_범용규칙 등)과 .claude 하위 컨벤션
-    (flutter_App 등) 둘 다 지원. 바로 밑 파일이 있으면 그쪽을 우선한다."""
+    찾는다 — 플랫 컨벤션과 `.claude` 하위 컨벤션 둘 다 지원. 바로 밑 파일이
+    있으면 그쪽을 우선한다."""
     found = {}
     if not folder.is_dir():
         return found
@@ -716,11 +737,25 @@ def find_index_files(folder: Path) -> dict:
         candidates.append(claude_sub)
     for base in candidates:
         try:
+            matches: dict[str, list[Path]] = {}
             for entry in base.iterdir():
                 if entry.is_file() and entry.name.lower() in INDEX_FILENAMES:
-                    found.setdefault(entry.name.lower(), entry)
+                    matches.setdefault(entry.name.lower(), []).append(entry)
         except (PermissionError, OSError):
-            pass
+            continue
+        for key, paths in matches.items():
+            if key in found:
+                continue  # 상위 base(폴더 바로 밑)가 이미 채웠으면 유지 — 기존 우선순위
+            if len(paths) == 1:
+                found[key] = paths[0]
+                continue
+            chosen = pick_canonical_index_file(key, paths)
+            found[key] = chosen
+            others = ", ".join(p.name for p in paths if p != chosen)
+            log.warning(
+                f"{base}에 대소문자만 다른 인덱스 파일 {len(paths)}개 발견 — "
+                f"'{chosen.name}' 사용, 무시됨: {others}"
+            )
     return found
 
 
