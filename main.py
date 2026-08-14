@@ -350,24 +350,63 @@ def resolve_claude_md_target(folder: Path) -> Path:
 # 2026-08-13: CLAUDE.md 전용이던 걸 여러 AI 코딩 툴 포맷으로 확장. 같은
 # referenceCondition(레지스트리, 단일 소스)에서 툴별 규칙 파일을 각각 생성 —
 # "여러 AI 툴을 섞어 쓰는데 지침 파일이 서로 어긋난다"는 문제를 정면으로 겨냥.
+#
+# 2026-08-14(D-036, H-006): `.cursorrules`/`.windsurfrules`(플랫 단일파일)가
+# 실제로는 이미 폐기된 레거시 포맷임을 상용비교분석(D-027) 중 발견 — Cursor는
+# `.cursor/rules/*.mdc`(디렉토리, MDC 프론트매터), Windsurf는
+# `.windsurf/rules/*.md`(디렉토리)로 이전됨. 신규 생성은 디렉토리 포맷을
+# 우선하고, 레거시 플랫 파일은 "이미 있을 때만" 계속 동기화(legacy=True) —
+# 새로 만들지는 않되 과거에 만들어둔 파일이 낡은 채로 방치되지도 않게.
+# AGENTS.md는 30개+ 툴이 네이티브 지원하는 1차 공용 포맷으로 재포지셔닝.
 # 포맷을 추가하려면 FORMAT_TARGETS에 한 줄만 추가하면 됨(파일명 + 경로 함수).
 
-FORMAT_TARGETS: dict[str, "tuple[str, object]"] = {
-    "CLAUDE.md": ("Claude Code", lambda root: resolve_claude_md_target(root)),
-    "AGENTS.md": ("범용(Agents.md 표준)", lambda root: root / "AGENTS.md"),
-    ".cursorrules": ("Cursor", lambda root: root / ".cursorrules"),
-    ".windsurfrules": ("Windsurf", lambda root: root / ".windsurfrules"),
+FORMAT_TARGETS: dict[str, dict] = {
+    "CLAUDE.md": {
+        "tool": "Claude Code",
+        "resolver": lambda root: resolve_claude_md_target(root),
+    },
+    "AGENTS.md": {
+        "tool": "범용(AGENTS.md 표준 — 30개+ 툴 네이티브 지원)",
+        "resolver": lambda root: root / "AGENTS.md",
+    },
+    ".cursor/rules/ssot-index.mdc": {
+        "tool": "Cursor",
+        "resolver": lambda root: root / ".cursor" / "rules" / "ssot-index.mdc",
+        "frontmatter": "---\ndescription: SSOT 인덱스 포인터\nalwaysApply: true\n---\n\n",
+    },
+    ".windsurf/rules/ssot-index.md": {
+        "tool": "Windsurf",
+        "resolver": lambda root: root / ".windsurf" / "rules" / "ssot-index.md",
+        "frontmatter": "---\ntrigger: always_on\n---\n\n",
+    },
+    ".cursorrules": {
+        "tool": "Cursor(레거시 — 이미 있을 때만 동기화, 신규 생성 안 함)",
+        "resolver": lambda root: root / ".cursorrules",
+        "legacy": True,
+    },
+    ".windsurfrules": {
+        "tool": "Windsurf(레거시 — 이미 있을 때만 동기화, 신규 생성 안 함)",
+        "resolver": lambda root: root / ".windsurfrules",
+        "legacy": True,
+    },
+}
+
+_RESULT_ICONS = {
+    "ok": "✅",
+    "skip": "⏭ 건너뜀(손편집 보호)",
+    "skip-legacy": "⏭ 건너뜀(레거시, 신규생성 안 함)",
+    "fail": "❌ 실패",
 }
 
 
 def resolve_format_target(root: Path, format_name: str) -> Path:
-    return FORMAT_TARGETS[format_name][1](root)
+    return FORMAT_TARGETS[format_name]["resolver"](root)
 
 
 def generate_init_pointer(entry: dict, format_name: str) -> str:
-    """평소 모드 — 순수 포인터. 어떤 포맷(CLAUDE.md/AGENTS.md/.cursorrules/
-    .windsurfrules)이든 내용은 동일 — 파일명만 다르다. 레지스트리가 곧 SSOT라
-    내용을 여기 박아넣지 않는다(중복 없음)."""
+    """평소 모드 — 순수 포인터. 어떤 포맷(CLAUDE.md/AGENTS.md/Cursor/Windsurf 등)
+    이든 내용은 동일 — 파일명만 다르다. 레지스트리가 곧 SSOT라 내용을 여기
+    박아넣지 않는다(중복 없음)."""
     today = datetime.now().strftime("%Y-%m-%d")
     has_readme_cond = bool((entry.get("readmeReferenceCondition") or "").strip())
     readme_line = (
@@ -393,9 +432,9 @@ def generate_init_pointer(entry: dict, format_name: str) -> str:
         "손으로 고치지 말 것)\n\n"
         "이 폴더는 SSOT 레지스트리에 등록되어 있다. 실제 참조조건/인덱싱 규칙은 "
         "항상 아래 레지스트리 파일에서 확인한다 — 이 파일은 포인터일 뿐, 내용을 "
-        "여기 복붙하지 않는다. CLAUDE.md/AGENTS.md/.cursorrules/.windsurfrules "
-        "전부 같은 레지스트리 항목에서 나온 동일 내용이다 — 툴마다 따로 안 써도 "
-        "됨.\n\n"
+        "여기 복붙하지 않는다. CLAUDE.md/AGENTS.md/Cursor/Windsurf 등 여러 AI 툴 "
+        "포맷 전부 같은 레지스트리 항목에서 나온 동일 내용이다 — 툴마다 따로 안 "
+        "써도 됨.\n\n"
         f"레지스트리: `{REGISTRY_PATH}`\n"
         f"이 폴더의 항목: label == \"{entry['label']}\"\n"
         f"{web_line}"
@@ -749,9 +788,12 @@ class ManagementDialog(QDialog):
 # ------------------------------------------------------- AI 툴별 동기화 다이얼로그
 
 class SyncFormatsDialog(QDialog):
-    """레지스트리 참조조건 하나에서 CLAUDE.md/AGENTS.md/.cursorrules/
-    .windsurfrules를 툴별로 골라서(또는 한 번에) 동기화한다. 포맷마다 독립적으로
-    SYNC_MARKER 안전장치가 걸린다 — 손으로 쓴 파일은 확인 없이 안 덮어씀."""
+    """레지스트리 참조조건 하나에서 CLAUDE.md/AGENTS.md/Cursor(.cursor/rules)/
+    Windsurf(.windsurf/rules) — 그리고 이미 있는 레거시 .cursorrules/
+    .windsurfrules까지 — 툴별로 골라서(또는 한 번에) 동기화한다. 포맷마다
+    독립적으로 SYNC_MARKER 안전장치가 걸린다 — 손으로 쓴 파일은 확인 없이 안
+    덮어씀. 레거시 포맷(legacy=True)은 신규 생성은 안 하고 이미 있을 때만
+    갱신(H-006, D-036 — Cursor/Windsurf가 실제로 폐기한 포맷이라 새로 안 만듦)."""
 
     def __init__(self, root_path: Path, entry: dict, parent=None):
         super().__init__(parent)
@@ -778,12 +820,12 @@ class SyncFormatsDialog(QDialog):
             warn.setStyleSheet("color: #b45309; font-weight: bold;")
             layout.addWidget(warn)
 
-        for fmt, (tool_label, _resolver) in FORMAT_TARGETS.items():
-            btn = QPushButton(f"{fmt} 동기화 — {tool_label}")
+        for fmt, info in FORMAT_TARGETS.items():
+            btn = QPushButton(f"{fmt} 동기화 — {info['tool']}")
             btn.clicked.connect(lambda checked=False, f=fmt: self.sync_one(f))
             layout.addWidget(btn)
 
-        all_btn = QPushButton("전체 (4개 포맷 한 번에)")
+        all_btn = QPushButton(f"전체 ({len(FORMAT_TARGETS)}개 포맷 한 번에)")
         all_btn.clicked.connect(self.sync_all)
         layout.addWidget(all_btn)
 
@@ -802,13 +844,18 @@ class SyncFormatsDialog(QDialog):
         layout.addWidget(close_btn)
 
     def _write_one(self, format_name: str, force: bool) -> str:
-        target = resolve_format_target(self.root_path, format_name)
+        info = FORMAT_TARGETS[format_name]
+        target = info["resolver"](self.root_path)
+        if info.get("legacy") and not target.exists():
+            return "skip-legacy"  # 레거시 포맷은 이미 있을 때만 갱신, 신규 생성 안 함
         if target.exists() and not force:
             existing = target.read_text(encoding="utf-8", errors="replace")
             if SYNC_MARKER not in existing:
                 return "skip"
         try:
-            target.write_text(generate_init_pointer(self.entry, format_name), encoding="utf-8")
+            target.parent.mkdir(parents=True, exist_ok=True)  # .cursor/rules 등 신규 디렉토리
+            body = info.get("frontmatter", "") + generate_init_pointer(self.entry, format_name)
+            target.write_text(body, encoding="utf-8")
             return "ok"
         except OSError:
             return "fail"
@@ -830,15 +877,13 @@ class SyncFormatsDialog(QDialog):
                     return
                 force = True
         result = self._write_one(format_name, force)
-        icon = {"ok": "✅", "skip": "⏭", "fail": "❌"}[result]
-        self.status_label.setText(f"{icon} {format_name}: {result} → {target}")
+        self.status_label.setText(f"{_RESULT_ICONS[result]} {format_name}: {result} → {target}")
 
     def sync_all(self):
         lines = []
         for fmt in FORMAT_TARGETS:
             result = self._write_one(fmt, force=False)
-            icon = {"ok": "✅", "skip": "⏭ 건너뜀(손편집 보호)", "fail": "❌ 실패"}[result]
-            lines.append(f"{fmt}: {icon}")
+            lines.append(f"{fmt}: {_RESULT_ICONS[result]}")
         self.status_label.setText("\n".join(lines))
 
     def mark_reviewed(self):
@@ -1105,7 +1150,7 @@ class SSOTExplorer(QMainWindow):
         bar.addSeparator()
 
         sync_action = QAction(style.standardIcon(QStyle.SP_DialogApplyButton), "AI 툴별 동기화", self)
-        sync_action.setToolTip("선택한 루트를 CLAUDE.md/AGENTS.md/.cursorrules/.windsurfrules로 동기화")
+        sync_action.setToolTip("선택한 루트를 CLAUDE.md/AGENTS.md/Cursor/Windsurf 등으로 동기화")
         sync_action.triggered.connect(self.open_sync_dialog)
         bar.addAction(sync_action)
 

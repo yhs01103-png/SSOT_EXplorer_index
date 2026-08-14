@@ -213,6 +213,82 @@ def test_sync_dialog_warns_only_when_web_primary():
     assert not has_warning(m.SyncFormatsDialog(Path("C:\\b"), entry_local))
 
 
+# ------------------------------------------- D-036/H-006: 디렉토리 포맷 + 레거시 처리
+
+def test_format_targets_includes_new_directory_formats():
+    assert ".cursor/rules/ssot-index.mdc" in m.FORMAT_TARGETS
+    assert ".windsurf/rules/ssot-index.md" in m.FORMAT_TARGETS
+    assert not m.FORMAT_TARGETS[".cursor/rules/ssot-index.mdc"].get("legacy")
+    assert not m.FORMAT_TARGETS[".windsurf/rules/ssot-index.md"].get("legacy")
+
+
+def test_format_targets_flat_legacy_files_marked_legacy():
+    assert m.FORMAT_TARGETS[".cursorrules"]["legacy"] is True
+    assert m.FORMAT_TARGETS[".windsurfrules"]["legacy"] is True
+
+
+def test_resolve_format_target_directory_formats():
+    root = Path("C:\\proj")
+    assert m.resolve_format_target(root, ".cursor/rules/ssot-index.mdc") == (
+        root / ".cursor" / "rules" / "ssot-index.mdc"
+    )
+    assert m.resolve_format_target(root, ".windsurf/rules/ssot-index.md") == (
+        root / ".windsurf" / "rules" / "ssot-index.md"
+    )
+
+
+def test_sync_dialog_creates_directory_format_with_frontmatter(tmp_path):
+    entry = {"label": "a", "path": str(tmp_path)}
+    dlg = m.SyncFormatsDialog(tmp_path, entry)
+    result = dlg._write_one(".cursor/rules/ssot-index.mdc", force=False)
+    assert result == "ok"
+    target = tmp_path / ".cursor" / "rules" / "ssot-index.mdc"
+    assert target.exists()
+    text = target.read_text(encoding="utf-8")
+    assert text.startswith("---\n")
+    assert "alwaysApply: true" in text
+    assert m.SYNC_MARKER in text
+
+
+def test_sync_dialog_windsurf_directory_frontmatter(tmp_path):
+    entry = {"label": "a", "path": str(tmp_path)}
+    dlg = m.SyncFormatsDialog(tmp_path, entry)
+    result = dlg._write_one(".windsurf/rules/ssot-index.md", force=False)
+    assert result == "ok"
+    text = (tmp_path / ".windsurf" / "rules" / "ssot-index.md").read_text(encoding="utf-8")
+    assert "trigger: always_on" in text
+
+
+def test_sync_dialog_legacy_format_not_created_when_missing(tmp_path):
+    entry = {"label": "a", "path": str(tmp_path)}
+    dlg = m.SyncFormatsDialog(tmp_path, entry)
+    result = dlg._write_one(".cursorrules", force=False)
+    assert result == "skip-legacy"
+    assert not (tmp_path / ".cursorrules").exists()
+
+
+def test_sync_dialog_legacy_format_updated_when_already_exists(tmp_path):
+    entry = {"label": "a", "path": str(tmp_path)}
+    existing = tmp_path / ".cursorrules"
+    existing.write_text(f"old ({m.SYNC_MARKER})", encoding="utf-8")
+    dlg = m.SyncFormatsDialog(tmp_path, entry)
+    result = dlg._write_one(".cursorrules", force=False)
+    assert result == "ok"
+    assert "old" not in existing.read_text(encoding="utf-8")
+
+
+def test_sync_all_reports_every_format(tmp_path):
+    entry = {"label": "a", "path": str(tmp_path)}
+    dlg = m.SyncFormatsDialog(tmp_path, entry)
+    dlg.sync_all()
+    text = dlg.status_label.text()
+    for fmt in m.FORMAT_TARGETS:
+        assert fmt in text
+    # 레거시 2개는 아직 없으니 건너뜀으로, 나머지 4개는 새로 생성돼 ok로 보고돼야 함
+    assert text.count("✅") == 4
+    assert "레거시" in text
+
+
 # ---------------------------------------------------------- 기타 순수 로직 함수
 
 def test_review_age_days_handles_missing_and_bad_format():

@@ -2,7 +2,7 @@
 SSOT_Explorer — 최신 설계결정이력 + TODO
 ================================================================
 기준 버전: v1.0
-최종수정: 2026-08-14
+최종수정: 2026-08-14 (D-036)
 원칙: 가장 최근 라운드의 신규 결정(D-번호)과 전체 TODO(H-번호)만 담는다.
       더 오래된 결정은 레거시 파일로 이동.
 
@@ -866,6 +866,42 @@ CLAUDE.md/AGENTS.md에 '변경분 반영 필요' 표시". 루트가 지금 5개 
       실제 사용처(377/417/498/508/767/1557행) 확인 후 루트 단위 스코프임을
       코드로 재확인하고 스키마 변경 안 하기로 판단.
 
+[D-036] .cursorrules/.windsurfrules 최신 포맷 갱신 — H-006 구현
+결정: D-027 상용비교분석에서 발견한 문제(H-006) 해결 — 사용자가 "P1으로 가자"
+      요청. FORMAT_TARGETS를 튜플에서 딕셔너리(tool/resolver/legacy/
+      frontmatter)로 확장하고, 새 항목 2개 추가:
+      - `.cursor/rules/ssot-index.mdc`(Cursor 신포맷, MDC 프론트매터
+        `alwaysApply: true` — 예전 플랫 `.cursorrules`가 항상 포함되던 동작과
+        동등하게 유지)
+      - `.windsurf/rules/ssot-index.md`(Windsurf 신포맷, 프론트매터
+        `trigger: always_on`)
+      기존 `.cursorrules`/`.windsurfrules`는 `legacy: True`로 남겨 완전 폐기는
+      안 함(안(3) 채택) — `_write_one()`이 legacy 포맷은 파일이 이미 있을
+      때만 갱신하고 신규 생성은 안 함(`skip-legacy` 결과). 디렉토리 포맷은
+      `target.parent.mkdir(parents=True, exist_ok=True)`로 `.cursor/rules/`
+      등 없는 디렉토리도 자동 생성. AGENTS.md는 코멘트/tool 라벨에서
+      "30개+ 툴 네이티브 지원" 문구로 1차 공용 포맷 재포지셔닝(안(2), 코드
+      구조 변경은 불필요 — 이미 딕셔너리 순서상 CLAUDE.md 다음이라 UI
+      노출 순서는 그대로 유지).
+      SyncFormatsDialog._write_one/sync_one/sync_all, 헤더 텍스트,
+      툴팁까지 전부 갱신 — `.cursorrules`/`.windsurfrules` 하드코딩된
+      언급을 전부 "Cursor/Windsurf 등"으로 일반화(포맷이 또 바뀌어도 문서
+      텍스트가 안 낡게).
+이유: 있는 기능이 이미 낡아서 실제로 최신 Cursor/Windsurf에서 안 읽힐 수
+      있는 상태(H-006 원인)를 그대로 두면 "AI 툴별 동기화" 기능 자체가
+      무의미해짐 — 우선순위 P1에 맞게 바로 진행. 레거시 완전 삭제 대신
+      "있으면 유지, 신규는 안 만듦"으로 조율한 건 과거에 이미 만들어둔
+      실사용 파일(있다면)을 갑자기 방치하지 않으면서도, 새 루트에는 낡은
+      포맷을 안 심는 절충안.
+검증: 신규 pytest 8개 추가(FORMAT_TARGETS에 신포맷 키 존재+legacy 아님 2개,
+      레거시 2개 legacy=True 확인 1개, resolve_format_target 디렉토리 경로
+      해석 2개, 실제 파일쓰기로 mdc 프론트매터/alwaysApply 확인 1개,
+      windsurf trigger 확인 1개, 레거시 미존재시 skip-legacy+파일미생성
+      확인 1개, 레거시 존재시 정상 갱신 확인 1개, sync_all 6개 포맷 전부
+      보고+레거시 2개만 건너뜀 확인 1개) — pytest 전체 94개 통과. 앱
+      smoke-test(`python main.py` 4초 실행 후 종료, ssot_explorer.log
+      0바이트로 크래시 없음 확인) 통과.
+
 ================================================================
 PART 2 — TODO
 ================================================================
@@ -906,22 +942,12 @@ H-005  GitHub 원격 저장소 연결 + CI(.github/workflows/tests.yml, Lazzy �
         CI(push/PR마다 pytest -q 자동 실행)도 원격 없인 불가능.
   완료 조건: 사용자가 원격 연결 요청 시 진행
 
-🔴 P1
-H-006  .cursorrules/.windsurfrules 최신 포맷으로 갱신 + AGENTS.md 1차 포맷화
-  대상: main.py의 FORMAT_TARGETS, generate_init_pointer/generate_full_export_pointer
-  원인: D-027 상용비교분석 조사 중 발견 — `.cursorrules`(단일파일)는 Cursor에서
-        이미 폐기, `.cursor/rules/*.mdc` 디렉토리로 이전됨. `.windsurfrules`도
-        Windsurf 쪽에서 `.windsurf/rules/`가 권장이고 구버전은 과도기 지원만.
-        지금 SSOT_Explorer가 만드는 두 파일이 최신 버전 Cursor에서 아예 안
-        읽힐 수 있음 — 우선순위 높음(단순 기능추가가 아니라 있는 기능이 이미
-        낡은 상태).
-  수정 방향(안): (1) `.cursor/rules/*.mdc`, `.windsurf/rules/*.md` 디렉토리
-        타깃 추가 (2) AGENTS.md를 "여러 툴이 네이티브로 읽는 1차 공용 포맷"
-        으로 격상, 나머지는 하위호환용 부가 포맷으로 재포지셔닝 (3) 레거시
-        플랫 파일(.cursorrules/.windsurfrules)은 존재 시 계속 동기화하되
-        신규 생성은 디렉토리 포맷 우선 — 구체 설계는 별도 라운드에서 확정.
-  완료 조건: 사용자 확인 후 진행(이번 라운드는 분석까지만 — 사용자가 "분석
-        먼저"라고 명시)
+✅ H-006  .cursorrules/.windsurfrules 최신 포맷으로 갱신 + AGENTS.md 1차 포맷화  | 2026-08-14
+  대상: main.py의 FORMAT_TARGETS, SyncFormatsDialog
+  D-036에서 구현 완료 — 안(1)(2)(3) 전부 반영. `.cursor/rules/ssot-index.mdc`
+  (alwaysApply 프론트매터) + `.windsurf/rules/ssot-index.md`(always_on
+  프론트매터) 신설, 레거시 `.cursorrules`/`.windsurfrules`는 "있을 때만
+  동기화, 신규 생성 안 함"으로 유지. pytest 94개 통과, smoke-test 통과.
 
 🟡 P2
 H-007  SSOT_Explorer_실행규격서.md 전면 재작성 — v1.0 MVP 시절 그대로 방치됨
