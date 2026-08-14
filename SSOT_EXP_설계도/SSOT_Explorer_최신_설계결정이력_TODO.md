@@ -1112,12 +1112,9 @@ PART 2 — TODO
   대상: Local_APP\CLAUDE.md
   표에 SSOT_Explorer 행 추가 완료, 전용 규칙 "있음"으로 표시.
 
-🟡 P2
-H-004  exe 실제 더블클릭 실행 확인(사용자)
-  대상: dist\SSOT_Explorer.exe
-  원인: 개발측은 백그라운드 실행+크래시 없음까지만 검증(python main.py와 exe
-        둘 다). 실제 탐색기에서 더블클릭 실행 + 창 정상 표시는 사용자 확인 필요.
-  완료 조건: 사용자 "확인했다" 피드백
+✅ H-004  exe 실제 더블클릭 실행 확인(사용자)  | 2026-08-14
+  대상: dist\SSOT_Explorer.exe (D-040 재빌드본, 160.9MB)
+  사용자가 GitHub 공개 전환과 함께 직접 더블클릭 실행 확인 완료.
 
 🔵 P3
 H-003  대소문자 중복 방지(같은 폴더에 CLAUDE.md와 claude.md가 동시에 있는 경우)
