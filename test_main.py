@@ -70,6 +70,22 @@ def isolated_watcher_log(tmp_path, monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def isolated_orchestrator_state(tmp_path, monkeypatch):
+    """[실수 발견+수정, D-044] SaveDocumentDialog.run_classification()이
+    router_orchestrator.orchestrate()를 log_path 없이 호출하고 있어서,
+    이 파일의 기존 테스트들이 그동안 계속 실제 사용자 로그(~/.claude/
+    scripts/ssot_orchestrator_log.json)에 "플러터 앱 개발 메모" 같은 테스트
+    문자열을 남기고 있었다(D-032 이후 누적 131건 확인, 이번에 D-044 작업
+    중 키워드 레지스트리를 같이 격리하다가 발견). 둘 다 여기서 한 번에
+    격리."""
+    import router_keyword_registry
+    import router_orchestrator
+    monkeypatch.setattr(router_orchestrator, "ORCHESTRATION_LOG_PATH", tmp_path / "orch-log.json")
+    monkeypatch.setattr(router_keyword_registry, "KEYWORD_REGISTRY_PATH", tmp_path / "keywords.json")
+    yield
+
+
 @pytest.fixture
 def isolated_qsettings(tmp_path, monkeypatch):
     """SSOTExplorer 인스턴스화 테스트가 실제 Windows 레지스트리
@@ -401,6 +417,14 @@ def test_management_dialog_shows_schema_validation(isolated_registry, isolated_q
     m.save_roots([{"label": "a", "path": "C:\\a"}])
     dlg = m.ManagementDialog()
     assert "통과" in dlg.schema_view.toPlainText()
+
+
+def test_management_dialog_shows_keyword_registry(isolated_registry, isolated_qsettings):
+    """D-044 — 빈 상태에서도 안내 문구가 뜨는지(크래시 없이)만 확인, 채워진
+    상태 렌더링은 test_router_keyword_registry.py의 format 함수 테스트가 커버."""
+    m.save_roots([{"label": "a", "path": "C:\\a"}])
+    dlg = m.ManagementDialog()
+    assert "없음" in dlg.keyword_registry_view.toPlainText()
 
 
 # ---------------------------------------------- D-041(H-003): 대소문자 중복 방지

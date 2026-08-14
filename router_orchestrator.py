@@ -34,6 +34,9 @@ CLI와 같은 계약(JSON 입출력)이지만 3단계를 전부 거친 최종 �
 루트 전체(레지스트리 텍스트 + README 실시간 스캔)를 합친 corpus로 IDF를
 한 번 계산해서 1단계(classify_content)와 2단계(프로즈검색) 둘 다 같은
 가중치 기준을 쓰게 하고, 병합도 max()(floor) 대신 +=(additive)로 바꿨다.
+
+**D-044(2026-08-14) — 키워드 레지스트리(3.5단계) + 시맨틱 스켈레톤(4단계)
+추가**: orchestrate()의 docstring 참고. 파이프라인이 이제 5단계.
 """
 from __future__ import annotations
 
@@ -43,6 +46,8 @@ from datetime import datetime
 from pathlib import Path
 
 import router_classifier
+import router_embeddings
+import router_keyword_registry
 import router_proposals
 
 ORCHESTRATION_LOG_PATH = Path.home() / ".claude" / "scripts" / "ssot_orchestrator_log.json"
@@ -79,10 +84,26 @@ def _read_readme(root_path: Path) -> tuple[str, str] | None:
         return None
 
 
-def orchestrate(text: str, roots: list[dict], log_path: Path | None = None) -> dict:
-    """3단계를 순서대로 실행하고 병합 결과 + 단계별 로그를 반환한다.
-    log_path를 지정하면 그쪽에 기록(테스트 격리용) — 생략 시 기본
-    ORCHESTRATION_LOG_PATH."""
+def orchestrate(
+    text: str,
+    roots: list[dict],
+    log_path: Path | None = None,
+    keyword_registry_path: Path | None = None,
+) -> dict:
+    """단계를 순서대로 실행하고 병합 결과 + 단계별 로그를 반환한다.
+    log_path/keyword_registry_path를 지정하면 그쪽에 기록(테스트 격리용) —
+    생략 시 각각 기본 ORCHESTRATION_LOG_PATH/router_keyword_registry.
+    KEYWORD_REGISTRY_PATH.
+
+    2026-08-14(D-044) — 원래 3단계였던 파이프라인에 2단계 추가(사용자가
+    "맥락형 인덱싱으로 발전"을 요청, Lazzy_App_OS_Monorepo의 keyword_
+    registry.py/embeddings.py 확인 후 이식):
+      3.5단계 키워드 레지스트리 — 실제 매치에 쓰인 키워드의 관측 이력을
+        쌓고, 반복 관측(hitCount≥5 AND 관측기간≥3일)되면 active로 승급 —
+        승급된 키워드가 다시 매치되면 점수 보너스(router_keyword_
+        registry.py 참고).
+      4단계 시맨틱(임베딩) — 아직 틀만(router_embeddings.py, O-009) —
+        프로바이더 미연결이라 항상 스킵으로 기록되고 결과엔 영향 없음."""
     steps = []
     text_words = router_classifier.tokenize(text)
 
@@ -136,7 +157,43 @@ def orchestrate(text: str, roots: list[dict], log_path: Path | None = None) -> d
             }
     steps.append({"stage": "prose_scan", "candidateCount": prose_hit_count})
 
-    # 3단계 — 신뢰 폐루프 주석(순위는 안 바꿈, 참고 정보만 붙임)
+    # 3.5단계(D-044) — 키워드 레지스트리: 실제 매치에 쓰인 키워드만(모든
+    # 단어가 아니라 matchedKeywords — "판단에 실제로 쓰인 단어"만) 관측
+    # 기록에 반영. record 직후 바로 승급 체크하는 건 Lazzy 원본과 동일 —
+    # 이번 실행에서 임계값을 막 넘겼으면 이번 실행 자체에서 바로 active로
+    # 취급돼 점수 보너스가 붙는다.
+    all_matched: set[str] = set()
+    for cand in merged.values():
+        all_matched.update(cand.get("matchedKeywords", []))
+    touched = router_keyword_registry.record_keyword_hits(sorted(all_matched), keyword_registry_path)
+    promoted = [kw for kw in touched if router_keyword_registry.try_promote(kw, keyword_registry_path)]
+    router_keyword_registry.sweep_stale_candidates(keyword_registry_path)  # 저비용 — 매 실행 opportunistic
+
+    active_kw = router_keyword_registry.active_keywords(keyword_registry_path)
+    bonus_applied = 0
+    for cand in merged.values():
+        hit_active = active_kw & set(cand.get("matchedKeywords", []))
+        if hit_active:
+            cand["score"] = round(min(cand["score"] + router_keyword_registry.ACTIVE_KEYWORD_BONUS, 1.0), 3)
+            cand["signals"].append("활성키워드")
+            cand["reason"] += f" / 활성 키워드 보너스: {', '.join(sorted(hit_active))}"
+            bonus_applied += 1
+    steps.append({
+        "stage": "keyword_registry",
+        "promotedCount": len(promoted),
+        "bonusAppliedCount": bonus_applied,
+    })
+
+    # 4단계(D-044, O-009) — 시맨틱(임베딩) 매칭: 아직 틀만(router_embeddings.py)
+    # — 프로바이더가 안 붙어 있으면 항상 스킵으로 기록만 하고 결과엔 영향
+    # 없음. 나중에 프로바이더가 붙으면 이 자리에서 실제 랭킹 신호로 확장.
+    try:
+        router_embeddings.embed_query_text(text)
+        steps.append({"stage": "semantic", "skipped": False})
+    except router_embeddings.EmbeddingProviderNotConfigured:
+        steps.append({"stage": "semantic", "skipped": True, "reason": "provider_not_configured"})
+
+    # 5단계 — 신뢰 폐루프 주석(순위는 안 바꿈, 참고 정보만 붙임)
     trusted_count = 0
     for label, cand in merged.items():
         cand["trusted"] = router_proposals.is_trusted(label)
@@ -199,11 +256,16 @@ def _run_cli() -> int:
         "--log-path", default=None,
         help="오케스트레이션 로그 파일 경로(생략 시 기본 위치 — 테스트 등에서 격리용)",
     )
+    parser.add_argument(
+        "--keyword-registry-path", default=None,
+        help="키워드 레지스트리 파일 경로(D-044, 생략 시 기본 위치 — 테스트 등에서 격리용)",
+    )
     args = parser.parse_args()
 
     text = sys.stdin.read() if args.text == "-" else args.text
     registry_path = Path(args.registry) if args.registry else router_classifier._default_registry_path()
     log_path = Path(args.log_path) if args.log_path else None
+    keyword_registry_path = Path(args.keyword_registry_path) if args.keyword_registry_path else None
 
     try:
         data = json.loads(registry_path.read_text(encoding="utf-8-sig"))
@@ -212,7 +274,7 @@ def _run_cli() -> int:
         return 1
 
     roots = data.get("roots", [])
-    result = orchestrate(text, roots, log_path=log_path)
+    result = orchestrate(text, roots, log_path=log_path, keyword_registry_path=keyword_registry_path)
     print(json.dumps(result, indent=2))  # ensure_ascii=True(기본) — 인코딩 사고 방지(D-030과 동일 이유)
     return 0
 

@@ -38,6 +38,7 @@ from PySide6.QtCore import Qt, QProcess, QThread, Signal, QSettings
 from PySide6.QtGui import QAction, QFont, QKeySequence
 
 import router_classifier
+import router_keyword_registry
 import router_orchestrator
 import router_proposals
 import router_watcher
@@ -934,6 +935,14 @@ class ManagementDialog(QDialog):
         self.watcher_log_view.setMaximumHeight(90)
         layout.addWidget(self.watcher_log_view)
 
+        # 2026-08-14(D-044) — 키워드 레지스트리(맥락형 인덱싱 1단계, Lazzy
+        # keyword_registry.py 경량 이식) — 반복 관측된 키워드가 active로
+        # 승급되면 다음 분류부터 점수 보너스를 받는다.
+        layout.addWidget(QLabel("키워드 레지스트리 (반복 관측→자동 승급)"))
+        self.keyword_registry_view = QTextBrowser()
+        self.keyword_registry_view.setMaximumHeight(90)
+        layout.addWidget(self.keyword_registry_view)
+
         layout.addWidget(QLabel("드리프트 진행상황(실시간) / 로그"))
         self.log_view = QTextBrowser()
         layout.addWidget(self.log_view)
@@ -960,6 +969,9 @@ class ManagementDialog(QDialog):
         errors = validate_registry(load_registry_raw())
         self.schema_view.setPlainText(format_schema_validation_text(errors))
         self.watcher_log_view.setPlainText(format_watcher_log_text(router_watcher.load_watcher_log()))
+        self.keyword_registry_view.setPlainText(
+            router_keyword_registry.format_keyword_registry_text(router_keyword_registry.load_keyword_registry())
+        )
         if DRIFT_LOG_PATH.exists():
             text = DRIFT_LOG_PATH.read_text(encoding="utf-8", errors="replace")
             self.log_view.setPlainText(text[-5000:])

@@ -6,10 +6,12 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 
+import router_keyword_registry as kr
 import router_orchestrator as ro
 import router_proposals as rp
 
@@ -18,6 +20,11 @@ import router_proposals as rp
 def isolated_router_state(tmp_path, monkeypatch):
     monkeypatch.setattr(rp, "PROPOSALS_LOG_PATH", tmp_path / "proposals.json")
     monkeypatch.setattr(rp, "TRUST_STATE_PATH", tmp_path / "trust.json")
+    # D-044 — orchestrate()가 이제 키워드 레지스트리도 매 실행마다 건드림
+    # (record_keyword_hits/try_promote/sweep) — 기본 경로를 그대로 두면
+    # keyword_registry_path를 명시 안 하는 기존 테스트들이 실제 사용자
+    # 파일(~/.claude/scripts/ssot_keyword_registry.json)을 건드리게 된다.
+    monkeypatch.setattr(kr, "KEYWORD_REGISTRY_PATH", tmp_path / "keywords.json")
     yield
 
 
@@ -80,11 +87,60 @@ def test_orchestrate_combines_signals_for_same_root(tmp_path):
     assert set(cand["signals"]) == {"키워드겹침", "프로즈검색"}
 
 
-def test_orchestrate_reports_three_steps(tmp_path):
+def test_orchestrate_reports_five_steps(tmp_path):
+    """D-044 — 키워드 레지스트리(3.5단계)+시맨틱 스켈레톤(4단계) 추가로
+    3단계였던 파이프라인이 5단계가 됨."""
     roots = [{"label": "x", "path": str(tmp_path), "scope": "", "referenceCondition": ""}]
     result = ro.orchestrate("아무 내용", roots, log_path=tmp_path / "log.json")
     stage_names = [s["stage"] for s in result["steps"]]
-    assert stage_names == ["structured", "prose_scan", "trust_annotation"]
+    assert stage_names == [
+        "structured", "prose_scan", "keyword_registry", "semantic", "trust_annotation",
+    ]
+    semantic_step = next(s for s in result["steps"] if s["stage"] == "semantic")
+    assert semantic_step["skipped"] is True  # 임베딩 프로바이더 미연결(O-009)
+
+
+# -------------------------------------------------- D-044: 키워드 레지스트리
+
+def test_orchestrate_records_matched_keywords_as_candidates(tmp_path):
+    root_dir = tmp_path / "root"
+    root_dir.mkdir()
+    roots = [{"label": "root", "path": str(root_dir), "scope": "", "referenceCondition": "보안 정책"}]
+    kw_path = tmp_path / "keywords.json"
+
+    ro.orchestrate("보안 정책 문서", roots, log_path=tmp_path / "log.json", keyword_registry_path=kw_path)
+    registry = kr.load_keyword_registry(kw_path)
+    assert registry["보안"]["status"] == "candidate"
+    assert registry["정책"]["status"] == "candidate"
+
+
+def test_orchestrate_promotes_keyword_and_applies_score_bonus(tmp_path):
+    """관측 임계값(hitCount/기간)을 이미 채운 candidate가 있으면, 이번
+    실행에서 바로 active로 승급되고 그 실행 자체의 점수에도 보너스가
+    붙는다(Lazzy 원본과 동일 — record 직후 바로 promote 체크)."""
+    root_dir = tmp_path / "root"
+    root_dir.mkdir()
+    roots = [{"label": "root", "path": str(root_dir), "scope": "", "referenceCondition": "보안 정책"}]
+    kw_path = tmp_path / "keywords.json"
+
+    now = datetime.now()
+    seeded = {
+        "보안": {
+            "status": "candidate",
+            "hitCount": kr.PROMOTION_HIT_THRESHOLD - 1,  # 이번 관측 한 번 더하면 임계 도달
+            "firstSeenAt": (now - timedelta(days=kr.PROMOTION_MIN_SPAN_DAYS)).strftime("%Y-%m-%d %H:%M:%S"),
+            "lastSeenAt": (now - timedelta(days=1)).strftime("%Y-%m-%d %H:%M:%S"),
+        }
+    }
+    kr._save(seeded, kw_path)
+
+    result = ro.orchestrate("보안 정책 문서", roots, log_path=tmp_path / "log.json", keyword_registry_path=kw_path)
+    kw_step = next(s for s in result["steps"] if s["stage"] == "keyword_registry")
+    assert kw_step["promotedCount"] == 1
+    assert kw_step["bonusAppliedCount"] == 1
+    cand = result["candidates"][0]
+    assert "활성키워드" in cand["signals"]
+    assert kr.load_keyword_registry(kw_path)["보안"]["status"] == "active"
 
 
 def test_orchestrate_no_candidates_reports_needs_clarification(tmp_path):
@@ -128,7 +184,7 @@ def test_orchestrate_logs_run(tmp_path):
     assert len(runs) == 1
     assert runs[0]["candidateCount"] == 1
     assert runs[0]["topCandidate"]["rootLabel"] == "x"
-    assert len(runs[0]["steps"]) == 3
+    assert len(runs[0]["steps"]) == 5  # D-044 — 5단계 파이프라인
 
 
 def test_orchestrate_logs_accumulate_across_runs(tmp_path):
@@ -164,6 +220,7 @@ def test_cli_end_to_end(tmp_path):
         "roots": [{"label": "flutter_App", "path": str(root_dir), "scope": "플러터 앱 개발", "referenceCondition": ""}],
     }), encoding="utf-8")
     log_path = tmp_path / "log.json"
+    keyword_registry_path = tmp_path / "keywords.json"  # 서브프로세스라 monkeypatch가 안 먹음 — CLI 플래그로 격리
 
     result = subprocess.run(
         [
@@ -171,11 +228,13 @@ def test_cli_end_to_end(tmp_path):
             "--text", "플러터 앱 개발 메모",
             "--registry", str(registry),
             "--log-path", str(log_path),
+            "--keyword-registry-path", str(keyword_registry_path),
         ],
         capture_output=True, text=True, encoding="utf-8", timeout=15,
     )
     assert result.returncode == 0
     payload = json.loads(result.stdout)
     assert payload["candidates"][0]["rootLabel"] == "flutter_App"
-    assert len(payload["steps"]) == 3
+    assert len(payload["steps"]) == 5  # D-044 — 5단계 파이프라인
+    assert keyword_registry_path.exists()  # --keyword-registry-path가 실제로 거기에 씀
     assert log_path.exists()  # --log-path로 지정한 파일에 기록됐는지(실제 사용자 로그 안 건드림)

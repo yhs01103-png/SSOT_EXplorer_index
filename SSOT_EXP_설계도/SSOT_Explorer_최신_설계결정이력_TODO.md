@@ -2,7 +2,7 @@
 SSOT_Explorer — 최신 설계결정이력 + TODO
 ================================================================
 기준 버전: v1.0
-최종수정: 2026-08-14 (D-043)
+최종수정: 2026-08-14 (D-044)
 원칙: 가장 최근 라운드의 신규 결정(D-번호)과 전체 TODO(H-번호)만 담는다.
       더 오래된 결정은 레거시 파일로 이동.
 
@@ -1213,6 +1213,86 @@ MIT LICENSE
       앱 smoke-test(크래시로그 0바이트) + CLI smoke-test(`router_
       orchestrator.py --text` 정상 JSON 출력) 통과.
 
+[D-044] "맥락형 인덱싱으로 발전" 1단계 — 키워드/태그 자동승급 레지스트리
+이식 + 임베딩 스켈레톤 + 서버/클라이언트 분리 여부 답변
+결정: 사용자가 "IDE 플러그인처럼 서버/클라이언트 안 나눠도 되나? + 다음
+      스텝(맥락형 인덱싱으로 발전)" 질문 → 먼저 정직한 현황 답변(아래
+      "서버/클라이언트" 문단), 이어서 "1번(세션 컨텍스트 로깅)에 임베딩/
+      키워드/우선순위/태그까지 얹는 방식 어떤가, Lazzy_App_OS_Monorepo에
+      이식할 인덱싱 시스템 있는지 확인해달라" 요청 → 실제로 `server/core/
+      embeddings.py`, `server/core/orchestrators/context_indexer.py`,
+      `server/core/orchestrators/keyword_registry.py`를 직접 읽고 확인.
+      **서버/클라이언트 분리 답변**: 지금 규모(등록 루트 5개, 개인용)에선
+      불필요 — 유일한 실비용은 CLI 호출마다 kiwipiepy Kiwi() 콜드인잇
+      (~1.4초, D-034에 이미 기록)을 매번 새로 지불하는 것뿐. GUI는 세션
+      내내 1회만 내므로 안 겪음. "맥락형 인덱싱"이 쿼리 빈도를 크게
+      늘리면 이 비용이 실제 병목이 될 수 있고, 그때가 서버 분리를
+      정당화하는 지점이라고 명시.
+      **코드 확인 결과**: `context_indexer.py`는 SQLAlchemy DB+비동기
+      팬아웃 구조로 Lazzy 채팅 세션 도메인에 강결합돼 있어 이식 불가
+      (자기 docstring도 "성능상 꼭 필요한 병렬화 아님, 아키텍처 취향"이라
+      밝힘 — SSOT_Explorer 규모엔 안 맞음). `embeddings.py`는 순수
+      코사인유사도는 재사용 가능하지만 임베딩 생성 자체가 Gemini API
+      호출(키+네트워크+비용) 전제라 D-034부터 지켜온 완전 오프라인
+      원칙과 충돌 — 사용자에게 명시적으로 확인받음. `keyword_registry.py`
+      는 DB 의존이지만 **핵심 메커니즘(candidate→active→dormant, hitCount
+      ≥5 AND 관측기간≥3일 승급)이 JSON 파일로 그대로 옮길 수 있는 패턴**
+      이라 이식 가치가 높다고 판단, AskUserQuestion으로 확인 후 승인받음.
+      사용자가 재확인: "1번으로 하되 임베딩도 틀만 만들어줘(API 나중에
+      붙일 경우 대비)".
+      구현:
+      - `router_keyword_registry.py`(신규) — keyword_registry.py 경량
+        이식. `record_keyword_hits()`(matchedKeywords만 관측 — "아무
+        단어나"가 아니라 실제 판단에 쓰인 단어만, 원본과 동일 원칙)/
+        `try_promote()`(원본과 동일 임계값 hitCount≥5, span≥3일)/
+        `sweep_stale_candidates()`(14일 초과 candidate→dormant, 삭제 아님)/
+        `active_keywords()`. DB/비동기/dev_alert/TOCTOU 방어는 의도적으로
+        이식 안 함(단일 프로세스 개인용 도구라 원본이 우려하는 동시성
+        경쟁 자체가 없음). router_proposals.atomic_write_json 재사용
+        (D-043 중복 지적과 같은 이유로 신규 원자적쓰기 재구현 안 함).
+      - `router_embeddings.py`(신규, 틀만) — `cosine_similarity()`/
+        `rank_by_similarity()`는 지금 완성(순수 계산, 프로바이더 무관).
+        `embed_text()`/`embed_query_text()`는 `EmbeddingProviderNotConfigured`
+        예외만 던짐(D-029 InboxWatcher 스켈레톤과 같은 패턴) — 색인용/
+        질의용 임베딩을 처음부터 별도 함수로 나눠둠(Lazzy 실측: 질의용은
+        다른 task_type으로 임베딩해야 짧은 키워드형 질의의 유사도가
+        부당하게 낮아지는 문제가 줄어든다는 근거 반영).
+      - `router_orchestrator.orchestrate()`: 3단계였던 파이프라인을 5단계로
+        확장 — 3.5단계(키워드 레지스트리: 관측+승급체크+활성키워드
+        보너스 0.15점 additive) + 4단계(시맨틱: 프로바이더 없으면 항상
+        "스킵"으로 기록, 결과엔 영향 없음). CLI에 `--keyword-registry-path`
+        플래그 추가(테스트/격리용, `--log-path`와 같은 패턴).
+      - 관리자 패널에 "키워드 레지스트리" 뷰 추가(active/candidate(hitCount
+        순)/dormant 개수 요약).
+      [실수 발견+수정] test_router_orchestrator.py/test_main.py의 기존
+      테스트들이 `orchestrate()`를 `log_path`만 격리하고 있었는데, 이번에
+      `keyword_registry_path`를 격리 안 하면 실제 사용자 파일을 건드리게
+      되는 걸 알아채는 과정에서 **더 오래된 문제**를 발견: SaveDocumentDialog
+      경유 테스트들이 D-032부터 계속 `ORCHESTRATION_LOG_PATH`(실제 사용자
+      로그, `~/.claude/scripts/ssot_orchestrator_log.json`)를 한 번도 격리
+      안 하고 있어서 "플러터 앱 개발 메모" 같은 테스트 문자열이 131건
+      누적돼 있었음(실측 확인) — 이번에 `isolated_orchestrator_state`
+      autouse fixture로 로그+키워드레지스트리 둘 다 한 번에 격리해서 수정.
+      기존 오염된 로그 파일 자체는 안 건드림(진단용 이력이라 위험도 낮고,
+      섞여있는 실제 기록까지 잘못 지울 위험이 더 큼 — 사용자에게 발견
+      사실만 투명하게 보고).
+이유: 서버 분리는 지금 규모에서 근거가 없다는 게 사실이라 그대로 답함
+      (과잉엔지니어링 방지 원칙 일관 유지). 임베딩은 이 프로젝트가
+      처음부터 지켜온 오프라인 원칙을 깨는 결정이라 임의로 진행 안 하고
+      확인받음 — 확인 결과 "틀만"으로 절충(나중에 실제 프로바이더 연결
+      시 마찰 최소화, 지금은 비용/의존성 0). 키워드 레지스트리는 이미
+      있는 router_proposals.py의 신뢰승급 패턴과 구조적으로 동일해서
+      낮은 비용으로 검증된 패턴을 재사용할 수 있었음.
+검증: pytest 신규 24개(router_keyword_registry 13개, router_embeddings
+      9개 — embed_text/embed_query_text가 예외를 던지는 게 "정상"임을
+      확인하는 D-029식 스켈레톤 테스트 포함, router_orchestrator 통합 2개
+      — 키워드 관측+승급 실제 동작 확인) — 전체 129→154개 통과(관리자
+      패널 렌더링 1개 추가 포함하면 154). 실제 CLI로도 검증(SSOT_
+      REGISTRY_PATH로 실제 레지스트리 조회) — `ssot_keyword_registry.json`
+      에 실제 관측 데이터("개발"/"플러터" 등)가 정상 누적됨을 실측 확인.
+      앱 smoke-test(크래시로그 0바이트, 오케스트레이터 로그 추가 오염
+      없음 재확인) 통과.
+
 ================================================================
 PART 2 — TODO
 ================================================================
@@ -1311,6 +1391,26 @@ H-011  main.py save_roots()와 router_proposals.atomic_write_json()의
 Lazzy_App_OS_Monorepo(프로젝트_설계도_SSot\Jarvis_결정이력_TODO.md)의 O-번호
 관례를 이식(D-023) — "알지만 지금은 실행 안 하기로 한 것"을 형식 갖춰 기록.
 형식: [O-번호] 제목 / 임시결정 / 재논의 조건 / 관련 D-번호.
+
+[O-009] router_embeddings.py의 실제 임베딩 프로바이더 연결(Gemini 등 API
+키+네트워크 호출).
+임시결정: 순수 계산부(cosine_similarity/rank_by_similarity)만 구현하고
+embed_text()/embed_query_text()는 EmbeddingProviderNotConfigured만 던지는
+틀 상태로 유지(D-044). 사용자가 "임베딩도 틀만 만들어줘(API 나중에 붙일
+경우 대비)"로 명시 — 지금은 API 키/비용/네트워크 의존 없이 인터페이스만
+고정.
+재논의 조건: (1) 키워드 레지스트리(D-044)+IDF+kiwipiepy 조합의 휴리스틱
+정확도가 실사용 승인율(router_proposals.acceptance_rate())로 데이터화된
+뒤에도 한계가 뚜렷하면(예: "언급 vs 소유" 문제, O-008과 동일 계열) 그때
+임베딩(진짜 의미 이해)이 필요해짐 (2) 사용자가 프로바이더(Gemini/OpenAI/
+로컬 모델)를 명시적으로 정하고 API 키 발급+네트워크 호출을 이 완전
+오프라인 프로젝트에 처음 들이는 데 동의할 때. 붙일 때 참고할 것(router_
+embeddings.py 상단 주석에 이미 적어둠): Lazzy 실측상 무관한 문장 쌍도
+코사인 유사도 0.55~0.6대가 나오는 경향이 있어 MIN_SIMILARITY=0.7 근처가
+안전선이었음(다른 임베딩 모델은 재보정 필요), 색인용/질의용을 다른
+task_type으로 임베딩해야 짧은 키워드형 질의의 정확도가 올라간다는 근거도
+이미 인터페이스에 반영돼 있음(embed_text vs embed_query_text 분리).
+관련 D-번호: D-034(오프라인 원칙 확립), D-044.
 
 [O-003] 등록 스코프를 "루트 바로 밑 프로젝트 폴더"에서 서브프로젝트(레포 안
 레포, 예: Lazzy_App_OS_Monorepo의 server/.claude, client/.claude)까지 확장할지.
