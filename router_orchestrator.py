@@ -119,7 +119,7 @@ def orchestrate(text: str, roots: list[dict], log_path: Path | None = None) -> d
         prose_hit_count += 1
         matched_keywords = sorted(overlap)
         preview = ", ".join(matched_keywords[:5])
-        prose_score = router_classifier._weighted_overlap_score(overlap, text_words, idf) * PROSE_MATCH_WEIGHT
+        prose_score = router_classifier.weighted_overlap_score(overlap, text_words, idf) * PROSE_MATCH_WEIGHT
         if label in merged:
             merged[label]["signals"].append("프로즈검색")
             merged[label]["matchedKeywords"] = sorted(set(merged[label]["matchedKeywords"]) | overlap)

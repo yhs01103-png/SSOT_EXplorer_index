@@ -31,6 +31,19 @@ TRUST_STATE_PATH = Path.home() / ".claude" / "scripts" / "ssot_router_trust.json
 TRUST_PROMOTION_STREAK = 5  # Lazzy confidence_calibrator.py의 _REVIEW_PROMOTION_THRESHOLD와 동일 값
 
 
+def resolve_registry_path() -> Path:
+    """레지스트리(ssot-roots.json) 위치 — main.py와 router_classifier.py 둘 다
+    같은 로직이 필요해서(D-039) 각자 따로 갖고 있었는데(code-review 발견,
+    D-043) 여기 하나로 모았다. `SSOT_REGISTRY_PATH` 환경변수 우선, 없으면
+    범용 기본값(`~/.claude/ssot-roots.json`, D-014 이전에 실제로 쓰던 전역
+    위치). 이 파일은 Qt를 import하지 않아서(모듈 docstring 참고) main.py/
+    router_classifier.py 양쪽에서 안전하게 재사용 가능."""
+    return Path(
+        os.environ.get("SSOT_REGISTRY_PATH")
+        or (Path.home() / ".claude" / "ssot-roots.json")
+    )
+
+
 def load_proposals() -> list[dict]:
     if not PROPOSALS_LOG_PATH.exists():
         return []

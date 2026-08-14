@@ -364,6 +364,20 @@ def test_validate_registry_allows_unknown_extra_fields():
     assert errors == []
 
 
+def test_validate_registry_flags_duplicate_labels():
+    """D-043(code-review 발견) — label이 중복되면 router_orchestrator에서
+    한쪽 루트가 조용히 사라지는 실제 버그로 이어짐, 스키마 검증이 잡아야 함."""
+    errors = m.validate_registry({
+        "roots": [
+            {"label": "dup", "path": "C:\\a"},
+            {"label": "dup", "path": "C:\\b"},
+            {"label": "unique", "path": "C:\\c"},
+        ]
+    })
+    assert any("dup" in e and "중복" in e for e in errors)
+    assert not any("unique" in e for e in errors)
+
+
 def test_format_schema_validation_text_ok_and_errors():
     assert "통과" in m.format_schema_validation_text([])
     text = m.format_schema_validation_text(["roots/0: 'path' is a required property"])
@@ -733,6 +747,55 @@ def test_save_document_dialog_save_writes_file_and_records_approved(tmp_path, mo
         assert len(proposals) == 1
         assert proposals[0]["decision"] == "approved"
         assert proposals[0]["rootLabel"] == "flutter_App"
+    finally:
+        dlg.close()
+
+
+def test_save_document_dialog_save_uses_live_text_after_edit(tmp_path, monkeypatch):
+    """D-043(code-review 발견) — 분류 제안을 본 뒤 내용을 더 고치면, 저장은
+    화면에 지금 보이는 내용을 써야 한다(예전엔 분류 시점 스냅샷을 써서
+    수정분이 조용히 사라졌음)."""
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: None))
+    root_dir = tmp_path / "flutter_App"
+    root_dir.mkdir()
+    roots = [{"label": "flutter_App", "path": str(root_dir), "scope": "플러터 앱 개발", "referenceCondition": ""}]
+    dlg = m.SaveDocumentDialog(roots)
+    try:
+        dlg.content_edit.setPlainText("플러터 앱 개발 메모 초안")
+        dlg.run_classification()
+        dlg.candidates_list.setCurrentRow(0)
+        dlg.content_edit.setPlainText("플러터 앱 개발 메모 — 수정된 최종본")  # 분류 후 추가 편집
+        dlg.filename_edit.setText("메모.md")
+        dlg.save_to_selected()
+
+        saved_file = root_dir / "메모.md"
+        assert saved_file.read_text(encoding="utf-8") == "플러터 앱 개발 메모 — 수정된 최종본"
+    finally:
+        dlg.close()
+
+
+def test_save_document_dialog_rejects_path_traversal_filename(tmp_path):
+    """D-043(code-review 발견) — 파일명에 '..'나 절대경로가 섞이면 등록된
+    루트 밖에 쓰기가 새는 결함이었음(Path(root)/filename이 절대경로 우변을
+    그대로 채택). 지금은 거절하고 아무것도 안 써야 한다."""
+    root_dir = tmp_path / "flutter_App"
+    root_dir.mkdir()
+    outside_target = tmp_path / "evil.md"
+    roots = [{"label": "flutter_App", "path": str(root_dir), "scope": "플러터 앱 개발", "referenceCondition": ""}]
+    dlg = m.SaveDocumentDialog(roots)
+    try:
+        dlg.content_edit.setPlainText("플러터 앱 개발 메모")
+        dlg.run_classification()
+        dlg.candidates_list.setCurrentRow(0)
+
+        dlg.filename_edit.setText("../evil.md")
+        dlg.save_to_selected()
+        assert not outside_target.exists()
+        assert "루트" in dlg.status_label.text() or "절대경로" in dlg.status_label.text()
+
+        dlg.filename_edit.setText(str(outside_target))  # 절대경로 자체
+        dlg.save_to_selected()
+        assert not outside_target.exists()
     finally:
         dlg.close()
 

@@ -20,6 +20,21 @@ def test_load_proposals_missing_file_returns_empty():
     assert rp.load_proposals() == []
 
 
+# --------------------------------------------- D-043: 공유 레지스트리 경로 해석
+
+def test_resolve_registry_path_env_var_and_fallback(monkeypatch, tmp_path):
+    """D-043(code-review 발견) — main.py/router_classifier.py가 각자 들고
+    있던 동일 로직을 여기 하나로 모음. 두 파일 다 이 함수로 위임하는지는
+    test_main.py의 D-039 테스트가 계속 커버."""
+    custom = tmp_path / "custom-roots.json"
+    monkeypatch.setenv("SSOT_REGISTRY_PATH", str(custom))
+    assert rp.resolve_registry_path() == custom
+
+    monkeypatch.delenv("SSOT_REGISTRY_PATH", raising=False)
+    from pathlib import Path
+    assert rp.resolve_registry_path() == Path.home() / ".claude" / "ssot-roots.json"
+
+
 def test_record_decision_appends_and_persists():
     candidate = {"rootLabel": "a", "rootPath": "C:\\a", "score": 0.5, "reason": "테스트"}
     entry = rp.record_decision(candidate, "내용 미리보기", "approved")

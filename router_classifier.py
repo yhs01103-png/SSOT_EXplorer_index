@@ -187,11 +187,18 @@ def compute_idf(corpora: dict[str, str]) -> dict[str, float]:
     return {token: math.log((doc_count + 1) / (freq + 1)) + 1 for token, freq in df.items()}
 
 
-def _weighted_overlap_score(matched: set[str], text_words: set[str], idf: dict[str, float]) -> float:
+def weighted_overlap_score(matched: set[str], text_words: set[str], idf: dict[str, float]) -> float:
     """겹친 단어들의 IDF 합 / 질의 전체 단어의 IDF 합 — "질의 중 얼마나
     의미있게(흔하지 않은 단어 위주로) 겹쳤는지" 비율. idf에 없는 토큰은
     기본 가중치 1.0(중립) — compute_idf에 안 쓰인 corpus 밖 단어일 수
-    있어서 0 취급하면 부당하게 불리해짐."""
+    있어서 0 취급하면 부당하게 불리해짐.
+
+    2026-08-14(D-043, code-review 발견) — 원래 `_weighted_overlap_score`
+    (언더스코어 프리픽스, "이 파일 내부 전용"이라는 뜻)였는데
+    router_orchestrator.py가 이미 이 함수를 직접 가져다 쓰고 있어서 이름과
+    실제 계약이 어긋나 있었다 — 계약대로 공개 이름으로 승격(동작은 그대로,
+    이름만). classify_content()의 반환 shape뿐 아니라 이 함수도 이제
+    안정된 공개 계약이다."""
     if not text_words:
         return 0.0
     total = sum(idf.get(w, 1.0) for w in text_words)
@@ -208,7 +215,7 @@ def classify_content(text: str, roots: list[dict], idf: dict[str, float] | None 
     """신호1(키워드겹침)과 신호2(scope리터럴매치)를 독립적으로 구해 합집합—
     하나만 걸려도 채택, 둘 다 걸리면 순위가 위로 간다.
 
-    D-033 점수 산정: 키워드 겹침은 IDF 가중 비율(_weighted_overlap_score),
+    D-033 점수 산정: 키워드 겹침은 IDF 가중 비율(weighted_overlap_score),
     scope 신호는 그 위에 SCOPE_MATCH_BONUS를 **더한다**(예전엔 max()로
     고정값 0.5를 강제해서, "코드"/"규칙"처럼 거의 모든 루트에 있는 흔한
     단어만 걸려도 서로 다른 루트들이 전부 똑같이 0.5점 동점이 되는 문제가
@@ -245,7 +252,7 @@ def classify_content(text: str, roots: list[dict], idf: dict[str, float] | None 
         signals = []
         reasons = []
         matched = sorted(keyword_overlap) if keyword_overlap else []
-        score = _weighted_overlap_score(set(matched), text_words, idf) if matched else 0.0
+        score = weighted_overlap_score(set(matched), text_words, idf) if matched else 0.0
 
         if keyword_overlap:
             signals.append("키워드겹침")
@@ -275,14 +282,12 @@ def classify_content(text: str, roots: list[dict], idf: dict[str, float] | None 
 # 로직을 호출할 수 있게. GUI(SaveDocumentDialog)를 열 필요 없음.
 
 def _default_registry_path() -> Path:
-    """main.py의 REGISTRY_PATH와 같은 규칙(2026-08-14 공개 준비 — 환경변수
-    우선, 없으면 범용 기본값) — 이 함수와 main.py 둘 다 같은 파일을 봐야
-    CLI/GUI 결과가 어긋나지 않는다."""
-    import os
-    return Path(
-        os.environ.get("SSOT_REGISTRY_PATH")
-        or (Path.home() / ".claude" / "ssot-roots.json")
-    )
+    """main.py의 REGISTRY_PATH와 같은 규칙 — 실제 로직은 router_proposals.
+    resolve_registry_path()로 옮겨서(D-043, code-review가 이 함수와 main.py
+    쪽이 로직을 각자 따로 들고 있던 걸 발견) 이젠 위임만 한다. 함수 이름은
+    기존 호출부(router_orchestrator.py, 테스트)와의 호환을 위해 유지."""
+    from router_proposals import resolve_registry_path
+    return resolve_registry_path()
 
 
 def _run_cli() -> int:

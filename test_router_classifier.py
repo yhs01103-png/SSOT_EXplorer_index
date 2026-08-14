@@ -12,6 +12,15 @@ import pytest
 import router_classifier as rc
 
 
+def test_weighted_overlap_score_is_public_contract():
+    """D-043(code-review 발견) — router_orchestrator.py가 이미 이 함수를
+    직접 가져다 쓰고 있어서 언더스코어 프리픽스(내부 전용 표시)가 실제
+    계약과 안 맞았음 — 공개 이름으로 승격됐다는 걸 잠가둠."""
+    idf = {"흔한": 0.5, "특이한": 3.0}
+    score = rc.weighted_overlap_score({"특이한"}, {"흔한", "특이한"}, idf)
+    assert 0.0 < score <= 1.0
+
+
 def test_tokenize_lowercases_and_filters_short_tokens():
     words = rc.tokenize("Hello 안 a AI 프로젝트")
     assert "hello" in words

@@ -2,7 +2,7 @@
 SSOT_Explorer — 최신 설계결정이력 + TODO
 ================================================================
 기준 버전: v1.0
-최종수정: 2026-08-14 (D-042)
+최종수정: 2026-08-14 (D-043)
 원칙: 가장 최근 라운드의 신규 결정(D-번호)과 전체 TODO(H-번호)만 담는다.
       더 오래된 결정은 레거시 파일로 이동.
 
@@ -1163,6 +1163,56 @@ MIT LICENSE
       알림 상태바 표시, 로그 텍스트 포맷팅) — 전체 112→124개 통과. 앱
       smoke-test(크래시로그 0바이트, 로그오염 재발 없음 재확인) 통과.
 
+[D-043] 코드리뷰(cd8c9e6..HEAD, D-029~D-042 전체) 결과 반영 — "코드적으로
+다음 스텝" 1번 항목 마무리
+결정: 1번(코드리뷰)을 백그라운드로 먼저 돌려두고 2번(H-003)/3번(O-006
+      경량화)을 진행한 뒤, 돌아와 결과 10건을 실제로 триage — 즉시 고칠
+      가치가 있는 것/백로그로 미룰 것/기록만 하고 안 고칠 것을 구분해서
+      처리(받아만 놓고 안 쓰는 리뷰가 되지 않게).
+      **즉시 수정(4건)**:
+      1. `SaveDocumentDialog.save_to_selected()`가 저장 시 `self.
+         classified_text`(분류 시점 스냅샷)를 쓰고 있어서, "분류 제안 보기"
+         이후 내용을 더 고치면 그 수정분이 저장 파일에서 조용히 사라지는
+         실제 버그였음 — 저장 시점에 `content_edit.toPlainText()`를 다시
+         읽도록 수정.
+      2. 같은 함수의 `Path(rootPath) / filename`이 filename에 절대경로나
+         `..`가 섞이면 그대로 등록 루트 밖으로 새는 결함 — `is_absolute()`/
+         `".." in parts` 1차 거절 + `resolve().relative_to()` 2차 확인(심볼릭
+         링크 우회까지 방어)으로 등록 루트 밖 쓰기를 원천 차단.
+      3. `router_orchestrator.py`가 `corpora`/`merged` 딕셔너리를 label로
+         키잉 — 레지스트리가 label 유일성을 강제 안 해서, 중복 label이면
+         한쪽 루트가 결과에서 조용히 사라짐. `validate_registry()`에
+         `Counter` 기반 중복 label 검사 추가(JSON Schema로 표현 안 되는
+         제약이라 별도 파이썬 체크로 보강) — 관리자 패널 스키마뷰에 노출.
+      4. `main.py`의 `resolve_registry_path()`와 `router_classifier.py`의
+         `_default_registry_path()`가 D-039에서 동일 로직을 각자 중복
+         구현 — `router_proposals.resolve_registry_path()`(Qt 미의존 공유
+         모듈, 이미 D-032부터 이런 용도로 써온 자리) 하나로 모으고 둘 다
+         위임만 하게 정리. `router_classifier._weighted_overlap_score`도
+         `router_orchestrator`가 이미 직접 갖다 쓰고 있어서 언더스코어
+         (내부전용) 표기가 실제 계약과 안 맞았음 — `weighted_overlap_score`
+         공개 이름으로 승격(동작 불변, 이름만).
+      **백로그로 등록(4건, TODO PART 2에 H-008~H-011)**: SaveDocumentDialog
+      분류 동기 실행이 UI를 블로킹(Kiwi 콜드인잇 ~1.4초), 앱 시작 시 전체
+      루트 초기화가 동기 블로킹, router_classifier/orchestrator CLI 코드
+      중복, main.py save_roots와 router_proposals.atomic_write_json의
+      원자적쓰기 패턴 중복 — 전부 "지금은 안 죽지만 유지보수 부담" 성격이라
+      즉시 안 고치고 우선순위만 매겨 기록.
+      **기록만, 조치 안 함(1건)**: D-032/D-034 커밋이 신규파일+기존수정
+      (또는 신규의존성+기존수정)을 한 커밋에 묶은 걸 발견 — 이미 공개
+      저장소에 푸시된 과거 이력이라 재작성은 득보다 실이 큼(포크/클론 깨짐).
+      앞으로(D-038부터는 이미 그랬듯) 커밋 단위를 계속 지키는 걸로 대응.
+이유: 리뷰를 돌리기만 하고 결과를 안 쓰면 리뷰 자체가 낭비 — 그렇다고
+      10건을 전부 지금 다 고치는 것도 과함(일부는 실제 버그, 일부는 순수
+      유지보수 비용). 정직성 조건 그대로: 실사용에 영향 주는 결함(1~4)은
+      바로, 스타일/구조 개선(5~8)은 백로그로, 이미 벌어진 과거 이력(9)은
+      건드리지 않는다로 세 갈래를 분명히 구분해서 기록.
+검증: pytest 신규 5개(수정된 내용 저장 확인, path traversal 두 가지 케이스
+      거절 확인, 중복 label 스키마 오류 확인, weighted_overlap_score 공개
+      계약 확인, resolve_registry_path 위임 확인) — 전체 126→129개 통과.
+      앱 smoke-test(크래시로그 0바이트) + CLI smoke-test(`router_
+      orchestrator.py --text` 정상 JSON 출력) 통과.
+
 ================================================================
 PART 2 — TODO
 ================================================================
@@ -1209,6 +1259,51 @@ PART 2 — TODO
   D-037에서 완료 — main.py/router_*.py 직접 재확인 후 D-001~D-036 전체
   반영해 전면 재작성(레지스트리 스키마/원자성+동시성/클래스구조/CLI계약/
   훅3종/pytest94개 breakdown까지).
+
+🟡 P2
+H-008  SaveDocumentDialog.run_classification()이 GUI 스레드를 블로킹
+  대상: main.py의 run_classification()
+  원인: D-043 코드리뷰 발견 — router_orchestrator.orchestrate()를 동기
+        호출하는데, kiwipiepy Kiwi() 콜드인잇(~1.4초)+전체 등록 루트
+        README 읽기가 전부 UI 스레드에서 돔 — SearchWorker(D-013)가 이미
+        정립한 "느린 작업은 QThread로" 관례와 불일치.
+  수정 방향(안): SearchWorker와 같은 패턴으로 QThread + Signal(dict)로
+        분리, 다이얼로그는 "분류 중..." 표시 후 결과 신호로 채움.
+  완료 조건: 별도 라운드에서 구현(지금 라운드는 범위 밖)
+
+🔵 P3
+H-009  _ensure_all_roots_initialized()가 앱 시작 시 전체 루트를 동기 블로킹
+  대상: main.py의 _ensure_all_roots_initialized()
+  원인: D-043 코드리뷰 발견 — 루트 개수만큼 순차 is_dir()/exists()/쓰기를
+        UI 스레드(__init__)에서 돔. 등록 루트가 몇 개 안 되거나(현재 5개)
+        전부 로컬/OneDrive 경로면 체감 안 되지만, 네트워크 드라이브나 오프라인
+        경로가 섞이면 앱 시작 자체가 그 경로 하나 때문에 멎을 수 있음.
+  수정 방향(안): 루트 개수/경로 접근성에 따라 체감 지연이 실제로 확인되면
+        QThread로 분리(지금은 이론적 우려, 실측 없음 — H-003과 비슷한
+        "재현 전 보류" 케이스에 가까움).
+  완료 조건: 실제 지연 체감/재현 시 진행
+
+🔵 P3
+H-010  router_classifier/router_orchestrator CLI(_run_cli) 구현 중복
+  대상: router_classifier.py, router_orchestrator.py의 _run_cli()
+  원인: D-043 코드리뷰 발견 — argparse 설정/레지스트리 읽기/에러처리/JSON
+        출력을 두 파일이 거의 그대로 중복 구현. 이미 서로 다른 인코딩
+        안전장치(ensure_ascii)가 미묘하게 갈려 있어(발견 당시), 한쪽만
+        고치고 다른 쪽을 잊기 쉬운 상태.
+  수정 방향(안): 공통 부분(argparse 골격+레지스트리 로드+에러처리)을
+        `_cli_common()` 같은 헬퍼로 뽑아 두 파일이 공유.
+  완료 조건: 별도 라운드에서 구현
+
+🔵 P3
+H-011  main.py save_roots()와 router_proposals.atomic_write_json()의
+원자적쓰기 패턴 중복
+  대상: main.py의 save_roots(), router_proposals.py의 atomic_write_json()
+  원인: D-043 코드리뷰 발견 — temp파일+os.replace() 시퀀스가 독립적으로
+        두 번 구현돼 있음. save_roots()는 그 위에 낙관적 동시성 검사까지
+        얹혀 있어 단순 치환은 아님 — 저수준 "temp 쓰고 replace" 부분만
+        공유 헬퍼로 뽑고, 동시성 검사는 save_roots() 쪽에만 유지하는 형태가
+        필요.
+  완료 조건: 별도 라운드에서 구현(위험도 낮은 리팩터라 우선순위는 낮음)
 
 ================================================================
 === 미결 (O-번호, OPEN) ===

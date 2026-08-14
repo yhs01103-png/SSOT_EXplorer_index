@@ -24,6 +24,7 @@ import hashlib
 import logging
 import subprocess
 import traceback
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -121,17 +122,15 @@ def find_python_interpreter() -> str:
     found = shutil.which("python") or shutil.which("python3")
     return found or "python"
 
-# 2026-08-14(공개 준비) — 레지스트리 경로를 개인 폴더 하드코딩에서 환경변수로.
-# 이 저장소를 공개하면서 특정 사용자의 실제 OneDrive 경로를 코드에서 뺐다 —
-# `SSOT_REGISTRY_PATH` 환경변수가 있으면 그걸 쓰고, 없으면 범용 기본값
-# (`~/.claude/ssot-roots.json`, D-014 이전에 실제로 쓰던 전역 위치)으로
-# 폴백한다. 자기 컴퓨터에 맞는 위치를 쓰려면 이 환경변수를 지정하면 된다
-# (README "레지스트리 위치" 참고).
+# 2026-08-14(공개 준비, D-039) — 레지스트리 경로를 개인 폴더 하드코딩에서
+# 환경변수로. `SSOT_REGISTRY_PATH`가 있으면 그걸 쓰고, 없으면 범용 기본값
+# (`~/.claude/ssot-roots.json`, D-014 이전 전역 위치)으로 폴백 — README
+# "레지스트리 위치" 참고. 실제 로직은 router_proposals.resolve_registry_path()
+# 로 옮겨서(D-043, code-review 발견 — 이 함수와 router_classifier.py의
+# `_default_registry_path()`가 로직을 각자 중복으로 들고 있었음) 이젠 위임만
+# 한다. 함수 이름/시그니처는 기존 호출부·테스트와의 호환을 위해 유지.
 def resolve_registry_path() -> Path:
-    return Path(
-        os.environ.get("SSOT_REGISTRY_PATH")
-        or (Path.home() / ".claude" / "ssot-roots.json")
-    )
+    return router_proposals.resolve_registry_path()
 
 
 REGISTRY_PATH = resolve_registry_path()
@@ -385,6 +384,20 @@ def validate_registry(data: dict) -> list[str]:
     for err in sorted(validator.iter_errors(data), key=lambda e: list(e.path)):
         loc = "/".join(str(p) for p in err.path) or "(최상위)"
         errors.append(f"{loc}: {err.message}")
+    # 2026-08-14(D-043, code-review 발견) — "배열 안에서 label이 유일해야
+    # 한다"는 JSON Schema로 표현하기 어려운 제약이라 별도 체크로 보강.
+    # router_orchestrator.orchestrate()/classify_content() 등 여러 곳이
+    # label을 암묵적 딕셔너리 키로 쓰고 있어서, 중복되면 한쪽 루트가 결과에서
+    # 조용히 사라지는 실제 버그로 이어짐 — 방어선을 여기 하나로 모아둔다.
+    label_counts = Counter(
+        r.get("label") for r in data.get("roots", []) if isinstance(r, dict) and r.get("label")
+    )
+    for label, count in label_counts.items():
+        if count > 1:
+            errors.append(
+                f"roots: label '{label}'이(가) {count}번 중복됨 — 등록 루트의 "
+                "label은 유일해야 함(중복되면 분류 결과에서 한쪽이 사라짐)"
+            )
     return errors
 
 
@@ -1204,16 +1217,35 @@ class SaveDocumentDialog(QDialog):
         self.status_label.setText(f"✅ 후보 {len(self.candidates)}개 — 하나를 선택하고 파일명을 입력한 뒤 저장하세요.")
 
     def save_to_selected(self):
+        """2026-08-14(D-043, code-review 발견 반영) — 예전엔 run_classification()
+        시점에 캡처한 self.classified_text를 그대로 썼는데, "분류 제안 보기"를
+        누른 뒤 내용을 더 고쳤다면 화면엔 새 내용이 보이는데 저장은 옛 내용으로
+        조용히 되는 버그였음 — 저장은 항상 지금 이 순간의 텍스트박스 내용을
+        읽는다."""
         items = self.candidates_list.selectedItems()
         if not items:
             self.status_label.setText("⚠️ 먼저 후보 목록에서 하나를 선택하세요.")
             return
         candidate = items[0].data(Qt.UserRole)
-        filename = self.filename_edit.text().strip()
-        if not filename:
+        raw_filename = self.filename_edit.text().strip()
+        if not raw_filename:
             self.status_label.setText("⚠️ 파일명을 입력하세요.")
             return
-        target = Path(candidate["rootPath"]) / filename
+        # 절대경로나 '..'가 섞인 파일명이면 등록된 루트 밖으로 쓰기가 샐 수
+        # 있음(code-review 발견) — 두 단계로 막는다: (1) 파츠 검사로 명백한
+        # 케이스 즉시 거절 (2) resolve() 기반으로 최종 목적지가 실제로 루트
+        # 밑인지 재확인(심볼릭 링크 등 우회까지 방어).
+        name_path = Path(raw_filename)
+        root_path = Path(candidate["rootPath"])
+        if name_path.is_absolute() or ".." in name_path.parts:
+            self.status_label.setText("⚠️ 파일명에 절대경로나 '..'는 쓸 수 없습니다.")
+            return
+        target = root_path / name_path
+        try:
+            target.resolve().relative_to(root_path.resolve())
+        except ValueError:
+            self.status_label.setText("⚠️ 파일명이 등록된 루트 밖을 가리킵니다.")
+            return
         if target.exists():
             resp = QMessageBox.question(
                 self, "덮어쓰기 확인",
@@ -1222,13 +1254,14 @@ class SaveDocumentDialog(QDialog):
             )
             if resp != QMessageBox.Yes:
                 return
+        content = self.content_edit.toPlainText()
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(self.classified_text, encoding="utf-8")
+            target.write_text(content, encoding="utf-8")
         except OSError as e:
             self.status_label.setText(f"❌ 저장 실패: {e}")
             return
-        router_proposals.record_decision(candidate, self.classified_text, "approved")
+        router_proposals.record_decision(candidate, content, "approved")
         QMessageBox.information(self, "저장 완료", f"저장됨: {target}")
         self.accept()
 
