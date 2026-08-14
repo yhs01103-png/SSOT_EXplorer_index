@@ -115,6 +115,12 @@ Windsurf(`.windsurf/rules/`)로 동시에 맞출 수 있다(레거시 `.cursorru
 - **SessionStart 훅 보강**(D-032): `ssot_session_context.py`가 발동할
   때마다 relations 명시 여부와 무관하게 "다른 등록 루트 전체" 목록과
   오케스트레이터 CLI 호출법을 항상 같이 안내.
+- **세션 컨텍스트 로깅**(D-045 — "맥락형 인덱싱" 기반 단계): 위 훅이 실제로
+  컨텍스트를 주입할 때마다 어떤 루트가 매치됐는지를 `~/.claude/scripts/
+  ssot_session_context_log.json`에 가볍게 기록(이 앱은 관리자 패널에서
+  읽기만 함). router_proposals(제안 승인율)/router_keyword_registry(키워드
+  활성화)와 함께 "실사용 데이터를 먼저 모아서 다음 투자를 결정한다"는
+  원칙의 세 번째 축.
 
 ## 이 앱이 안 하는 것
 

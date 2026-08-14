@@ -56,6 +56,9 @@ SCRIPTS_DIR = Path.home() / ".claude" / "scripts"
 DRIFT_LOG_PATH = SCRIPTS_DIR / "ssot-index-drift.log"
 # 2026-08-13: 순수 Python으로 교체(크로스플랫폼) — PS1 버전은 레거시 보존만.
 DRIFT_SCRIPT_PATH = SCRIPTS_DIR / "ssot_index_drift_check.py"
+# 2026-08-14(D-045) — ~/.claude/hooks/ssot_session_context.py(이 레포 밖,
+# SessionStart 훅)가 쌓는 로그. 이 앱은 읽기만 함(관리자 패널 뷰).
+SESSION_CONTEXT_LOG_PATH = SCRIPTS_DIR / "ssot_session_context_log.json"
 
 # --------------------------------------------------------------------- 로깅
 #
@@ -713,6 +716,30 @@ def format_watcher_log_text(events: list[dict], limit: int = 20) -> str:
     return "\n".join(reversed(lines))
 
 
+def load_session_context_log(path: Path | None = None) -> list[dict]:
+    """D-045 — SessionStart 훅이 쌓는 "어떤 루트가 언제 매치됐는지" 로그를
+    읽기만 한다(이 앱은 안 씀, 훅 스크립트 전용 쓰기)."""
+    p = path or SESSION_CONTEXT_LOG_PATH
+    if not p.exists():
+        return []
+    try:
+        return json.loads(p.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def format_session_context_log_text(entries: list[dict], limit: int = 20) -> str:
+    """관리자 패널용 — 최신이 위로, 최근 limit개만."""
+    if not entries:
+        return "(로그 없음 — 등록 루트 안에서 Claude Code 세션을 열면 쌓임)"
+    recent = entries[-limit:]
+    lines = [
+        f"{e['timestamp']}  {e['matchedLabel']}  (관련폴더 {e['relatedCount']}개, 다른루트 {e['otherRootsCount']}개)"
+        for e in recent
+    ]
+    return "\n".join(reversed(lines))
+
+
 def get_available_drives() -> list[str]:
     """존재하는 Windows 드라이브 문자 목록(C:\\, D:\\ 등) — 외부 의존성 없이
     알파벳을 순회하며 확인한다. 2026-08-13(D-028) — "앱을 켜면 전체 탐색기가
@@ -943,6 +970,13 @@ class ManagementDialog(QDialog):
         self.keyword_registry_view.setMaximumHeight(90)
         layout.addWidget(self.keyword_registry_view)
 
+        # 2026-08-14(D-045) — SessionStart 훅(이 레포 밖)이 쌓는 로그. 이
+        # 앱은 읽기만("어떤 루트가 실제로 세션에서 쓰였는지" 가시화).
+        layout.addWidget(QLabel("세션 컨텍스트 로그 (최근 20건 — SessionStart 훅)"))
+        self.session_context_log_view = QTextBrowser()
+        self.session_context_log_view.setMaximumHeight(90)
+        layout.addWidget(self.session_context_log_view)
+
         layout.addWidget(QLabel("드리프트 진행상황(실시간) / 로그"))
         self.log_view = QTextBrowser()
         layout.addWidget(self.log_view)
@@ -971,6 +1005,9 @@ class ManagementDialog(QDialog):
         self.watcher_log_view.setPlainText(format_watcher_log_text(router_watcher.load_watcher_log()))
         self.keyword_registry_view.setPlainText(
             router_keyword_registry.format_keyword_registry_text(router_keyword_registry.load_keyword_registry())
+        )
+        self.session_context_log_view.setPlainText(
+            format_session_context_log_text(load_session_context_log())
         )
         if DRIFT_LOG_PATH.exists():
             text = DRIFT_LOG_PATH.read_text(encoding="utf-8", errors="replace")

@@ -83,6 +83,10 @@ def isolated_orchestrator_state(tmp_path, monkeypatch):
     import router_orchestrator
     monkeypatch.setattr(router_orchestrator, "ORCHESTRATION_LOG_PATH", tmp_path / "orch-log.json")
     monkeypatch.setattr(router_keyword_registry, "KEYWORD_REGISTRY_PATH", tmp_path / "keywords.json")
+    # D-045 — ManagementDialog가 SESSION_CONTEXT_LOG_PATH를 읽는다(이 앱은
+    # 안 쓰지만, 격리 안 하면 테스트가 실제 사용자 로그 내용에 따라 결과가
+    # 갈리는 비결정적 테스트가 된다).
+    monkeypatch.setattr(m, "SESSION_CONTEXT_LOG_PATH", tmp_path / "session-context-log.json")
     yield
 
 
@@ -425,6 +429,28 @@ def test_management_dialog_shows_keyword_registry(isolated_registry, isolated_qs
     m.save_roots([{"label": "a", "path": "C:\\a"}])
     dlg = m.ManagementDialog()
     assert "없음" in dlg.keyword_registry_view.toPlainText()
+
+
+# --------------------------------------------------- D-045: 세션 컨텍스트 로그
+
+def test_load_session_context_log_missing_file_returns_empty(tmp_path):
+    assert m.load_session_context_log(tmp_path / "no-such.json") == []
+
+
+def test_format_session_context_log_text_empty_and_recent_first():
+    assert "없음" in m.format_session_context_log_text([])
+    entries = [
+        {"timestamp": "2026-08-14 10:00:00", "matchedLabel": "a", "relatedCount": 0, "otherRootsCount": 4},
+        {"timestamp": "2026-08-14 10:05:00", "matchedLabel": "b", "relatedCount": 1, "otherRootsCount": 4},
+    ]
+    text = m.format_session_context_log_text(entries)
+    assert text.index("b") < text.index("a")  # 최신이 위로
+
+
+def test_management_dialog_shows_session_context_log(isolated_registry, isolated_qsettings):
+    m.save_roots([{"label": "a", "path": "C:\\a"}])
+    dlg = m.ManagementDialog()
+    assert "없음" in dlg.session_context_log_view.toPlainText()
 
 
 # ---------------------------------------------- D-041(H-003): 대소문자 중복 방지
