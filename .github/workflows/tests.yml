@@ -1,0 +1,22 @@
+name: tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    env:
+      # PySide6는 GUI 프레임워크라 디스플레이가 필요 — CI 러너엔 화면이 없으므로
+      # Qt를 오프스크린 모드로 띄운다(xvfb 없이 QApplication 인스턴스화 가능).
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - run: pytest -q
