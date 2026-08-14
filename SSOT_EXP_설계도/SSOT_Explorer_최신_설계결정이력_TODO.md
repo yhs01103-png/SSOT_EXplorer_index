@@ -2,7 +2,7 @@
 SSOT_Explorer — 최신 설계결정이력 + TODO
 ================================================================
 기준 버전: v1.0
-최종수정: 2026-08-14 (D-037)
+최종수정: 2026-08-14 (D-038)
 원칙: 가장 최근 라운드의 신규 결정(D-번호)과 전체 TODO(H-번호)만 담는다.
       더 오래된 결정은 레거시 파일로 이동.
 
@@ -963,6 +963,52 @@ CLAUDE.md/AGENTS.md에 '변경분 반영 필요' 표시". 루트가 지금 5개 
       pytest는 이번 라운드에서 코드 변경이 없어 재실행 생략(문서/README
       변경만).
 
+[D-038] GitHub 원격 연결(H-005) + CI + 레지스트리 스키마 검증(잠재력 갱신
+방향 #2/#3 실행)
+결정: 직전 라운드에서 "잠재력을 올리려면 뭐가 필요한지" 질문에 4개 저비용
+      항목(라우터 데이터축적/CI연결/스키마검증/포지셔닝)을 제시 → 사용자가
+      "3번부터 진행해, 그사이에 깃허브 연결하고 올테니까"로 3번(스키마
+      검증)을 지시하며 병행으로 GitHub 저장소를 직접 생성 → URL
+      (`github.com/yhs01103-png/SSOT_EXplorer_index`)을 대화 중 전달받아
+      원격 연결까지 같이 처리(2번도 자연스럽게 완료).
+      (1) H-005 완료: `git remote add origin` + `git push -u origin master`
+      로 로컬 D-001~D-037 전체 이력 푸시. `.github/workflows/tests.yml`
+      신설(Lazzy_App_OS_Monorepo/server 패턴과 동일 구조) — push/PR마다
+      ubuntu-latest에서 `pytest -q` 자동 실행. PySide6는 GUI 프레임워크라
+      CI 러너에 디스플레이가 없어서 `QT_QPA_PLATFORM=offscreen`으로 xvfb
+      없이 QApplication 인스턴스화(세션 스코프 qapp 픽스처가 이미 이렇게
+      한 번만 만듦). Python 3.12 고정(3.14는 로컬 기준이나 kiwipiepy 등
+      일부 의존성의 최신 CPython 휠 지원이 아직 안 늦을 수 있어 더 넓게
+      지원되는 버전으로 낮춰 CI 실패 위험을 줄임). 저장소는 GitHub API로
+      확인 시도했으나 404(비공개 저장소로 추정, WebFetch는 미인증이라
+      확인 불가 — `gh` CLI도 이 환경에 미설치) — 실제 Actions 실행 결과는
+      사용자가 GitHub 웹에서 직접 확인 필요.
+      (2) 레지스트리 스키마 검증: `REGISTRY_SCHEMA`(JSON Schema draft-07)
+      신설 — roots[]/sharedDocs[]/relations[] 각각의 필수 필드(label+path,
+      fromPath+toPath)와 타입만 강제, `additionalProperties: True`로 미지
+      필드는 항상 허용(실측: main.py가 안 읽는 `matchToken` 필드를 외부
+      스크립트가 이미 쓰고 있음을 실제 레지스트리에서 확인 — 스키마가 이걸
+      막으면 안 됨). scope는 D-018이 예시로 든 4개 값이 있었지만 enum 강제
+      안 함(자유 프로즈 원칙 유지, D-018 하이브리드 그대로) — primarySource
+      (local/web 2개 값만 코드가 실제로 분기)와 lastReviewed(YYYY-MM-DD
+      패턴)만 형식을 강제. `validate_registry(data)`/`load_registry_raw()`/
+      `format_schema_validation_text()` 신설, jsonschema는 kiwipiepy와 같은
+      선택적 의존성 원칙(미설치 시 "검증 건너뜀" 문구만, 앱은 안 죽음).
+      관리자 패널에 "스키마 검증" 뷰 신설(registry_view와 드리프트 로그
+      사이) — `refresh()`가 매번 재검증해서 표시.
+이유: 직전 라운드 잠재력 분석이 권고한 우선순위(1 라우터검증 > 2 CI >
+      3 스키마 > 4 포지셔닝)를 사용자가 그대로 승인하고 실행 지시 —
+      "안 낡게 유지"가 아니라 "격차를 실제로 좁히는" 라운드. CI/스키마
+      둘 다 상용비교분석(D-027/D-037)이 "격차 큼"으로 지적한 항목을
+      직접 겨냥.
+검증: pytest 신규 9개 추가(스키마 정상케이스/필수필드누락/타입오류/
+      enum+날짜형식오류/미지필드허용/텍스트포맷팅/raw로더 파일없음+
+      라운드트립/관리자패널 통합) — 전체 94→103개 통과. 실제 사용자
+      레지스트리(`flutter_App\.claude\ssot-roots.json`)로 `validate_
+      registry()`를 직접 실행해 "✅ 검증 통과" 확인(추측 아닌 실측).
+      git push 성공 확인(`* [new branch] master -> master`), 앱
+      smoke-test(4초 실행, 크래시로그 0바이트) 통과.
+
 ================================================================
 PART 2 — TODO
 ================================================================
@@ -995,13 +1041,12 @@ H-003  대소문자 중복 방지(같은 폴더에 CLAUDE.md와 claude.md가 동
   수정: (보류 — 실제 문제 재현 시)
   완료 조건: 해당 없음(관찰용 항목)
 
-🟡 P2
-H-005  GitHub 원격 저장소 연결 + CI(.github/workflows/tests.yml, Lazzy 패턴)
+✅ H-005  GitHub 원격 저장소 연결 + CI(.github/workflows/tests.yml, Lazzy 패턴)  | 2026-08-14
   대상: 저장소 전체
-  원인: D-026에서 로컬 git만 초기화 — 사용자가 원격 연결은 나중으로 미룸
-        (2026-08-13). 컴퓨터 하나 죽으면 커밋 이력도 같이 사라지는 상태이고,
-        CI(push/PR마다 pytest -q 자동 실행)도 원격 없인 불가능.
-  완료 조건: 사용자가 원격 연결 요청 시 진행
+  D-038에서 완료 — origin=github.com/yhs01103-png/SSOT_EXplorer_index,
+  push 성공(D-001~D-037 전체 이력) + tests.yml 신설. Actions 실제 실행결과는
+  비공개 저장소로 추정(API 404, gh CLI 미설치라 이 환경에서 미확인) — 사용자
+  GitHub 웹에서 최초 실행 결과 확인 필요.
 
 ✅ H-006  .cursorrules/.windsurfrules 최신 포맷으로 갱신 + AGENTS.md 1차 포맷화  | 2026-08-14
   대상: main.py의 FORMAT_TARGETS, SyncFormatsDialog

@@ -1,5 +1,7 @@
 # SSOT Explorer
 
+[![tests](https://github.com/yhs01103-png/SSOT_EXplorer_index/actions/workflows/tests.yml/badge.svg)](https://github.com/yhs01103-png/SSOT_EXplorer_index/actions/workflows/tests.yml)
+
 SSOT 인덱싱 트리 전용 탐색기 대체 뷰어 + 다중 AI 툴 규칙 동기화 도구. Windows
 탐색기 대신, 각 폴더의 CLAUDE.md/README.md 내용을 트리 옆에서 바로 볼 수 있고,
 등록된 루트의 규칙을 CLAUDE.md/AGENTS.md/Cursor(`.cursor/rules/`)/
@@ -59,7 +61,9 @@ Windsurf(`.windsurf/rules/`)로 동시에 맞출 수 있다(레거시 `.cursorru
   실행**(cd 후 `claude` 바로 실행) / 경로 복사 / 웹 아티팩트 열기(등록돼
   있으면) — 결과는 하단 상태바에 표시
 - **관리자 패널**(툴바): 루트별 owner/scope/리뷰 경과일(180일 초과 시 ⚠️)
-  포함 정리된 레지스트리 뷰, "지금 드리프트 체크 실행"(실시간 진행상황 스트리밍)
+  포함 정리된 레지스트리 뷰, **스키마 검증**(D-038 — 필수 필드 누락/타입
+  오류를 JSON Schema로 검증해서 표시, jsonschema 미설치 시 건너뜀 안내),
+  "지금 드리프트 체크 실행"(실시간 진행상황 스트리밍)
 - 창 크기/좌우 분할 비율/마지막 선택 위치를 다음 실행 때 그대로 복원(QSettings)
 - **오류 로깅**(2026-08-13, D-025): 미처리 예외는 `~/.claude/scripts/
   ssot_explorer.log`에 기록되고 사용자에게 다이얼로그로 알림 — exe가

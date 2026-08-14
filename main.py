@@ -40,6 +40,15 @@ import router_classifier
 import router_orchestrator
 import router_proposals
 
+# 2026-08-14(D-038, H-005 다음 항목) — 레지스트리 스키마 검증. jsonschema는
+# 진단용 부가기능이라 kiwipiepy(D-034)와 같은 선택적 의존성 원칙 — 미설치
+# 환경에서도 앱 자체는 그대로 동작하고, 검증만 "건너뜀"으로 표시한다.
+try:
+    import jsonschema
+    _JSONSCHEMA_AVAILABLE = True
+except ImportError:
+    _JSONSCHEMA_AVAILABLE = False
+
 SCRIPTS_DIR = Path.home() / ".claude" / "scripts"
 DRIFT_LOG_PATH = SCRIPTS_DIR / "ssot-index-drift.log"
 # 2026-08-13: 순수 Python으로 교체(크로스플랫폼) — PS1 버전은 레거시 보존만.
@@ -271,6 +280,109 @@ def review_age_days(entry: dict) -> int | None:
     except ValueError:
         return None
     return (datetime.now() - last).days
+
+
+# ------------------------------------------------------------ 스키마 검증
+#
+# 2026-08-14(D-038) — 상용비교분석(D-027/D-037)이 지적한 격차 중 하나:
+# Backstage의 catalog-info.yaml은 정식 스키마+검증이 있는데 이 레지스트리는
+# `.setdefault()`로 필드 오타/타입 오류를 조용히 무시했다. 전부 강제하진
+# 않는다 — D-018의 "프로즈+경량스키마 하이브리드" 원칙 그대로, 타입/필수
+# 필드만 검증하고 scope 등 자유 프로즈 값은 여전히 자유(엄격한 enum 강제는
+# 실제 값이 늘어날 때마다 오탐을 만들 위험이 더 큼). additionalProperties를
+# 전부 허용하는 것도 의도적 — 실측(matchToken 필드, main.py는 안 읽지만
+# 외부 훅 스크립트가 채워 쓰는 것으로 확인)처럼 이 코드가 모르는 필드를
+# 다른 스크립트가 협조적으로 더 쓸 수 있다는 걸 이미 알고 있어서, 스키마가
+# 이유 없이 그걸 막지 않게 한다.
+REGISTRY_SCHEMA = {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "SSOT Explorer Registry",
+    "type": "object",
+    "additionalProperties": True,
+    "properties": {
+        "roots": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["label", "path"],
+                "additionalProperties": True,
+                "properties": {
+                    "label": {"type": "string", "minLength": 1},
+                    "path": {"type": "string", "minLength": 1},
+                    "referenceCondition": {"type": "string"},
+                    "readmeReferenceCondition": {"type": "string"},
+                    "webArtifactUrl": {"type": "string"},
+                    "primarySource": {"type": "string", "enum": ["local", "web"]},
+                    "owner": {"type": "string"},
+                    "scope": {"type": "string"},
+                    "lastReviewed": {"type": "string", "pattern": r"^$|^\d{4}-\d{2}-\d{2}$"},
+                    "dependsOnDocs": {"type": "array", "items": {"type": "string"}},
+                },
+            },
+        },
+        "sharedDocs": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["label", "path"],
+                "additionalProperties": True,
+                "properties": {
+                    "label": {"type": "string", "minLength": 1},
+                    "path": {"type": "string", "minLength": 1},
+                },
+            },
+        },
+        "relations": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["fromPath", "toPath"],
+                "additionalProperties": True,
+                "properties": {
+                    "fromPath": {"type": "string", "minLength": 1},
+                    "toPath": {"type": "string", "minLength": 1},
+                    "reason": {"type": "string"},
+                    "bidirectional": {"type": "boolean"},
+                },
+            },
+        },
+    },
+}
+
+
+def load_registry_raw() -> dict:
+    """검증용 — load_roots()와 달리 setdefault로 필드를 채우지 않은 원본
+    그대로 반환한다(스키마가 "빠진 필드"까지 정확히 봐야 하므로). load_
+    shared_docs/load_relations과 같은 파일 읽기 규칙(존재/파싱 실패 시
+    빈 dict)을 공유."""
+    if not REGISTRY_PATH.exists():
+        return {}
+    try:
+        return json.loads(REGISTRY_PATH.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def validate_registry(data: dict) -> list[str]:
+    """레지스트리 원본 JSON(dict)을 스키마와 대조해 사람이 읽을 문제 목록을
+    반환한다(빈 리스트 = 문제 없음). jsonschema 미설치 시에도 앱은 그대로
+    동작해야 하므로 그 경우 안내 문구 1줄만 반환(예외로 앱을 막지 않음)."""
+    if not _JSONSCHEMA_AVAILABLE:
+        return ["jsonschema 패키지가 설치돼 있지 않아 검증을 건너뜁니다 (pip install jsonschema)"]
+    validator = jsonschema.Draft7Validator(REGISTRY_SCHEMA)
+    errors = []
+    for err in sorted(validator.iter_errors(data), key=lambda e: list(e.path)):
+        loc = "/".join(str(p) for p in err.path) or "(최상위)"
+        errors.append(f"{loc}: {err.message}")
+    return errors
+
+
+def format_schema_validation_text(errors: list[str]) -> str:
+    if not errors:
+        return "✅ 스키마 검증 통과 — 문제 없음"
+    lines = [f"⚠️ 스키마 문제 {len(errors)}건:"]
+    lines += [f"  - {e}" for e in errors]
+    return "\n".join(lines)
 
 
 def save_roots(roots: list[dict]) -> None:
@@ -714,6 +826,14 @@ class ManagementDialog(QDialog):
         self.registry_view.setMaximumHeight(160)
         layout.addWidget(self.registry_view)
 
+        # 2026-08-14(D-038) — 필드 오타/타입 오류를 앱이 조용히 무시하지 않고
+        # 여기서 눈에 띄게 보여준다(Backstage catalog-info.yaml 스키마 검증
+        # 대비 격차를 좁히는 낮은 비용 항목).
+        layout.addWidget(QLabel("스키마 검증"))
+        self.schema_view = QTextBrowser()
+        self.schema_view.setMaximumHeight(90)
+        layout.addWidget(self.schema_view)
+
         layout.addWidget(QLabel("드리프트 진행상황(실시간) / 로그"))
         self.log_view = QTextBrowser()
         layout.addWidget(self.log_view)
@@ -737,6 +857,8 @@ class ManagementDialog(QDialog):
         docs_text = format_shared_docs_text(load_shared_docs())
         roots_text = format_registry_text(load_roots())
         self.registry_view.setPlainText(f"[공용문서(sharedDocs)]\n{docs_text}\n\n[루트]\n{roots_text}")
+        errors = validate_registry(load_registry_raw())
+        self.schema_view.setPlainText(format_schema_validation_text(errors))
         if DRIFT_LOG_PATH.exists():
             text = DRIFT_LOG_PATH.read_text(encoding="utf-8", errors="replace")
             self.log_view.setPlainText(text[-5000:])

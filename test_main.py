@@ -297,6 +297,66 @@ def test_review_age_days_handles_missing_and_bad_format():
     assert m.review_age_days({"lastReviewed": "2020-01-01"}) is not None
 
 
+# --------------------------------------------------- D-038: 레지스트리 스키마 검증
+
+def test_validate_registry_accepts_well_formed_data():
+    data = {
+        "roots": [{"label": "a", "path": "C:\\a", "primarySource": "local",
+                   "lastReviewed": "2026-08-14", "dependsOnDocs": ["x"]}],
+        "sharedDocs": [{"label": "doc", "path": "C:\\doc.md"}],
+        "relations": [{"fromPath": "C:\\a", "toPath": "C:\\b", "bidirectional": True}],
+    }
+    assert m.validate_registry(data) == []
+
+
+def test_validate_registry_flags_missing_required_fields():
+    errors = m.validate_registry({"roots": [{"label": "a"}]})  # path 없음
+    assert any("path" in e for e in errors)
+
+
+def test_validate_registry_flags_wrong_type():
+    errors = m.validate_registry({"roots": [{"label": "a", "path": "C:\\a", "dependsOnDocs": "not-a-list"}]})
+    assert errors  # dependsOnDocs는 배열이어야 함
+
+
+def test_validate_registry_flags_bad_enum_and_date_format():
+    errors = m.validate_registry({
+        "roots": [{"label": "a", "path": "C:\\a", "primarySource": "cloud", "lastReviewed": "2026/08/14"}]
+    })
+    assert len(errors) == 2  # primarySource enum 위반 + lastReviewed 날짜형식 위반
+
+
+def test_validate_registry_allows_unknown_extra_fields():
+    # 실측: matchToken처럼 main.py가 안 읽는 필드를 외부 스크립트가 쓸 수 있음 — 막지 않는다
+    errors = m.validate_registry({"roots": [{"label": "a", "path": "C:\\a", "matchToken": "C:\\a"}]})
+    assert errors == []
+
+
+def test_format_schema_validation_text_ok_and_errors():
+    assert "통과" in m.format_schema_validation_text([])
+    text = m.format_schema_validation_text(["roots/0: 'path' is a required property"])
+    assert "1건" in text and "roots/0" in text
+
+
+def test_load_registry_raw_missing_file_returns_empty_dict(isolated_registry):
+    assert m.load_registry_raw() == {}
+
+
+def test_load_registry_raw_roundtrips_actual_content(isolated_registry):
+    m.save_roots([{"label": "a", "path": "C:\\a"}])
+    raw = m.load_registry_raw()
+    assert raw["roots"][0]["label"] == "a"
+    # load_registry_raw는 setdefault로 채우지 않은 원본 — primarySource 같은
+    # load_roots() 전용 기본값이 여기엔 없어야 함(검증이 "빠진 필드"를 봐야 하므로)
+    assert "primarySource" not in raw["roots"][0]
+
+
+def test_management_dialog_shows_schema_validation(isolated_registry, isolated_qsettings):
+    m.save_roots([{"label": "a", "path": "C:\\a"}])
+    dlg = m.ManagementDialog()
+    assert "통과" in dlg.schema_view.toPlainText()
+
+
 # -------------------------------------------------------------------- D-022: UI
 
 def test_toolbar_icons_resolve(qapp):

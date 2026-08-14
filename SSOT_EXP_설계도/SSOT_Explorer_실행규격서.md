@@ -2,7 +2,7 @@
 SSOT_Explorer — 실행규격서
 ================================================================
 기준 버전: v1.0
-최종수정: 2026-08-14 (H-007 — D-005~D-036 전체 반영한 전면 재작성)
+최종수정: 2026-08-14 (D-038 — GitHub 원격+CI, 레지스트리 스키마 검증 반영)
 원칙: 지금 코드가 정확히 어떻게 동작하는지만 기록한다. "왜"는 결정이력
       파일(D-번호)에, 계획/예정 항목은 넣지 않는다(구현 완료분만).
 
@@ -135,6 +135,12 @@ main.py:
   스캔 없음).
 - `find_relations_for_path(target, relations) -> list[dict]` — prefix
   매치로 관계 역조회.
+- `load_registry_raw() -> dict` / `validate_registry(data) -> list[str]` /
+  `format_schema_validation_text(errors) -> str`(D-038) — 레지스트리 원본을
+  `REGISTRY_SCHEMA`(JSON Schema draft-07)와 대조. roots[]는 label+path만
+  필수, `additionalProperties: True`로 미지 필드(실측: `matchToken`, main.py
+  는 안 읽지만 외부 스크립트가 씀)는 항상 허용. jsonschema 미설치 시
+  안내문 1줄만 반환(앱은 안 죽음, kiwipiepy와 같은 선택적 의존성 원칙).
 
 router_classifier.py:
 - `tokenize(text) -> list[str]` — kiwipiepy 설치돼 있으면 형태소 분석
@@ -261,10 +267,10 @@ excepthook도 호출. 슬롯(버튼 클릭 등) 안 예외는 이벤트 루프�
   ... && claude"`, O-002) / 경로 복사 / 웹 아티팩트 열기(webArtifactUrl
   있을 때만 노출).
 - 다이얼로그 4개: `SearchDialog`(검색 결과 리스트), `ManagementDialog`
-  (레지스트리+sharedDocs 정리뷰 800x600, 드리프트 로그 실시간 스트리밍,
-  "지금 드리프트 체크 실행" 버튼), `SyncFormatsDialog`(440x300, 포맷별
-  버튼 6개+전체 버튼+리뷰완료 버튼), `SaveDocumentDialog`(텍스트 입력→
-  분류결과→저장).
+  (레지스트리+sharedDocs 정리뷰 800x600, **스키마 검증 뷰**(D-038), 드리프트
+  로그 실시간 스트리밍, "지금 드리프트 체크 실행" 버튼), `SyncFormatsDialog`
+  (440x300, 포맷별 버튼 6개+전체 버튼+리뷰완료 버튼), `SaveDocumentDialog`
+  (텍스트 입력→분류결과→저장).
 
 [7] 자동 실행/스케줄러 명세
 - 앱 자체는 백그라운드 상시 감시 없음(수동 실행, `python main.py` 또는
@@ -284,6 +290,10 @@ excepthook도 호출. 슬롯(버튼 클릭 등) 안 예외는 이벤트 루프�
      범위 전파) + 리뷰 신선도(180일) 체크. 앱의 "지금 드리프트 체크 실행"
      버튼은 이 스크립트를 QProcess로 대신 실행해줄 뿐(보너스 기능,
      `find_python_interpreter()`로 exe 상태에서도 진짜 python 탐색).
+  4. **GitHub Actions CI**(`.github/workflows/tests.yml`, D-038) — 이
+     레포가 원격(`github.com/yhs01103-png/SSOT_EXplorer_index`)에 push/PR
+     될 때마다 `pytest -q` 자동 실행. 위 3개와 달리 로컬 스케줄러가 아니라
+     GitHub 쪽 트리거.
 
 [8] API/CLI 명세
 - GUI 네트워크 API 없음. 대신 router 모듈 2개가 독립 CLI로 동작:
@@ -307,7 +317,11 @@ excepthook도 호출. 슬롯(버튼 클릭 등) 안 예외는 이벤트 루프�
   main.py`(D-034 — `--collect-all` 2개 필수, 없으면 kiwipiepy 모델이 안
   담겨 조용히 정규식 폴백으로 빠짐).
 - 회귀 테스트: `pip install -r requirements-dev.txt` 후 `pytest -q` —
-  94개(test_main.py 50 + test_router_classifier.py 15 +
+  103개(test_main.py 59 + test_router_classifier.py 15 +
   test_router_orchestrator.py 14 + test_router_proposals.py 13 +
   test_router_watcher.py 2), 전부 실제 사용자 레지스트리/QSettings/로그
   파일을 안 건드리는 격리된 임시 경로에서 실행(autouse fixture).
+- GitHub 원격(D-038): `origin` = `github.com/yhs01103-png/
+  SSOT_EXplorer_index`. `.github/workflows/tests.yml`이 push/PR마다
+  ubuntu-latest에서 위 pytest를 자동 실행(`QT_QPA_PLATFORM=offscreen`으로
+  디스플레이 없이 PySide6 QApplication 인스턴스화, Python 3.12 고정).
