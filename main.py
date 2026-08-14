@@ -39,6 +39,7 @@ from PySide6.QtGui import QAction, QFont, QKeySequence
 import router_classifier
 import router_orchestrator
 import router_proposals
+import router_watcher
 
 # 2026-08-14(D-038, H-005 다음 항목) — 레지스트리 스키마 검증. jsonschema는
 # 진단용 부가기능이라 kiwipiepy(D-034)와 같은 선택적 의존성 원칙 — 미설치
@@ -688,6 +689,16 @@ def format_shared_docs_text(shared_docs: list[dict]) -> str:
     return "\n\n".join(lines)
 
 
+def format_watcher_log_text(events: list[dict], limit: int = 20) -> str:
+    """D-042 — Inbox 감시 로그를 관리자 패널에 보여줄 텍스트로. 최신 항목이
+    위로 오게(다른 로그뷰들과 통일된 관례) 최근 limit개만."""
+    if not events:
+        return "(로그 없음 — 아직 감지된 파일 없음, Inbox 감시를 시작하면 쌓임)"
+    recent = events[-limit:]
+    lines = [f"{e['timestamp']}  {e['fileName']}  ({e['watchDir']})" for e in recent]
+    return "\n".join(reversed(lines))
+
+
 def get_available_drives() -> list[str]:
     """존재하는 Windows 드라이브 문자 목록(C:\\, D:\\ 등) — 외부 의존성 없이
     알파벳을 순회하며 확인한다. 2026-08-13(D-028) — "앱을 켜면 전체 탐색기가
@@ -757,6 +768,31 @@ def find_index_files(folder: Path) -> dict:
                 f"'{chosen.name}' 사용, 무시됨: {others}"
             )
     return found
+
+
+# ---------------------------------------------------------------- Inbox 감시
+#
+# 2026-08-14(D-042) — O-006 경량화(자동분류 연결 없이 감지+로그+알림만).
+# router_watcher.InboxWatcher.start()는 블로킹 폴링 루프라 SearchWorker와
+# 같은 이유로 QThread에서 돌린다(Qt 이벤트 루프를 안 막기 위해).
+
+class InboxWatcherThread(QThread):
+    new_file_detected = Signal(str, str)  # (watch_dir, file_name)
+
+    def __init__(self, watch_dir: Path):
+        super().__init__()
+        self.watch_dir = watch_dir
+        self._watcher = router_watcher.InboxWatcher(watch_dir, on_new_file=self._on_new_file)
+
+    def _on_new_file(self, file_name: str):
+        router_watcher.record_new_file_event(self.watch_dir, file_name)
+        self.new_file_detected.emit(str(self.watch_dir), file_name)
+
+    def run(self):
+        self._watcher.start()
+
+    def stop(self):
+        self._watcher.stop()
 
 
 # --------------------------------------------------------------------- 검색
@@ -879,6 +915,12 @@ class ManagementDialog(QDialog):
         self.schema_view.setMaximumHeight(90)
         layout.addWidget(self.schema_view)
 
+        # 2026-08-14(D-042) — Inbox 감시 로그(경량 O-006, 감지+기록만).
+        layout.addWidget(QLabel("Inbox 감시 로그 (최근 20건)"))
+        self.watcher_log_view = QTextBrowser()
+        self.watcher_log_view.setMaximumHeight(90)
+        layout.addWidget(self.watcher_log_view)
+
         layout.addWidget(QLabel("드리프트 진행상황(실시간) / 로그"))
         self.log_view = QTextBrowser()
         layout.addWidget(self.log_view)
@@ -904,6 +946,7 @@ class ManagementDialog(QDialog):
         self.registry_view.setPlainText(f"[공용문서(sharedDocs)]\n{docs_text}\n\n[루트]\n{roots_text}")
         errors = validate_registry(load_registry_raw())
         self.schema_view.setPlainText(format_schema_validation_text(errors))
+        self.watcher_log_view.setPlainText(format_watcher_log_text(router_watcher.load_watcher_log()))
         if DRIFT_LOG_PATH.exists():
             text = DRIFT_LOG_PATH.read_text(encoding="utf-8", errors="replace")
             self.log_view.setPlainText(text[-5000:])
@@ -1209,6 +1252,7 @@ class SSOTExplorer(QMainWindow):
 
         self.roots = load_roots()
         self.current_folder: Path | None = None
+        self.inbox_watcher_thread: InboxWatcherThread | None = None
         # 2026-08-13: 창 크기/스플리터 비율/마지막 선택 위치 기억(QSettings,
         # Windows에서는 레지스트리 HKCU\Software\SSOT_Explorer\SSOT_Explorer에
         # 저장 — 별도 설정파일 없음).
@@ -1285,6 +1329,9 @@ class SSOTExplorer(QMainWindow):
         selected = self.tree.selectedItems()
         if selected:
             self.settings.setValue("lastSelectedPath", selected[0].data(0, Qt.UserRole))
+        if self.inbox_watcher_thread is not None:
+            self.inbox_watcher_thread.stop()
+            self.inbox_watcher_thread.wait(3000)
         super().closeEvent(event)
 
     # ------------------------------------------------------------ 툴바
@@ -1349,6 +1396,17 @@ class SSOTExplorer(QMainWindow):
         save_doc_action.triggered.connect(self.open_save_document_dialog)
         bar.addAction(save_doc_action)
 
+        # 2026-08-14(D-042) — Inbox 감시(경량 O-006): 자동분류 없이 감지+알림만.
+        self.inbox_watch_action = QAction(
+            style.standardIcon(QStyle.SP_MediaPlay), "Inbox 감시 시작", self
+        )
+        self.inbox_watch_action.setToolTip(
+            "폴더 하나를 골라 새 파일이 생기면 상태바 알림 + 로그 기록"
+            "(자동 분류/저장 없음, 순수 감지)"
+        )
+        self.inbox_watch_action.triggered.connect(self.toggle_inbox_watcher)
+        bar.addAction(self.inbox_watch_action)
+
     def _build_shortcuts(self):
         """전역 단축키. Ctrl+F는 창 어디서든(WindowShortcut, 기본값), Delete는
         트리가 포커스 있을 때만(WidgetShortcut) — 검색창에서 텍스트 지울 때
@@ -1377,6 +1435,31 @@ class SSOTExplorer(QMainWindow):
         if dlg.exec() == QDialog.Accepted:
             self.refresh_tree()
             self.statusBar().showMessage("📥 새 문서 저장됨 — 트리 새로고침함", 4000)
+
+    def toggle_inbox_watcher(self):
+        """D-042 — 감시 중이 아니면 폴더를 골라 시작, 감시 중이면 중지.
+        자동 분류/저장은 전혀 안 함 — 새 파일이 보이면 상태바 알림 +
+        ssot_watcher_log.json에 기록만 한다(router_watcher.py 참고)."""
+        if self.inbox_watcher_thread is not None:
+            self.inbox_watcher_thread.stop()
+            self.inbox_watcher_thread.wait(3000)
+            self.inbox_watcher_thread = None
+            self.inbox_watch_action.setText("Inbox 감시 시작")
+            self.inbox_watch_action.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
+            self.statusBar().showMessage("⏹ Inbox 감시 중지됨", 3000)
+            return
+        folder = QFileDialog.getExistingDirectory(self, "감시할 Inbox 폴더 선택")
+        if not folder:
+            return
+        self.inbox_watcher_thread = InboxWatcherThread(Path(folder))
+        self.inbox_watcher_thread.new_file_detected.connect(self._on_inbox_file_detected)
+        self.inbox_watcher_thread.start()
+        self.inbox_watch_action.setText("Inbox 감시 중지")
+        self.inbox_watch_action.setIcon(self.style().standardIcon(QStyle.SP_MediaStop))
+        self.statusBar().showMessage(f"📥 Inbox 감시 시작: {folder}", 4000)
+
+    def _on_inbox_file_detected(self, watch_dir: str, file_name: str):
+        self.statusBar().showMessage(f"🔔 새 파일 감지: {file_name} ({watch_dir})", 8000)
 
     def refresh_tree(self):
         """레지스트리+파일시스템을 다시 읽어 트리를 재구성한다(F5). 예전엔

@@ -60,6 +60,16 @@ def isolated_router_proposals(tmp_path, monkeypatch):
     yield
 
 
+@pytest.fixture(autouse=True)
+def isolated_watcher_log(tmp_path, monkeypatch):
+    """D-042 — InboxWatcherThread가 새 파일을 감지하면 router_watcher.
+    record_new_file_event()를 호출해 실제 사용자 로그(~/.claude/scripts/
+    ssot_watcher_log.json)에 쓸 수 있다 — 항상 격리."""
+    import router_watcher
+    monkeypatch.setattr(router_watcher, "WATCHER_LOG_PATH", tmp_path / "watcher-log.json")
+    yield
+
+
 @pytest.fixture
 def isolated_qsettings(tmp_path, monkeypatch):
     """SSOTExplorer 인스턴스화 테스트가 실제 Windows 레지스트리
@@ -426,6 +436,9 @@ def test_find_index_files_deterministic_on_case_duplicate(tmp_path, monkeypatch)
 
     monkeypatch.setattr(Path, "iterdir", fake_iterdir)
     monkeypatch.setattr(Path, "is_file", lambda self: self in (upper, lower))
+    # 이 분기가 실제 사용자 로그 파일(~/.claude/scripts/ssot_explorer.log)에
+    # 쓰지 않게 log.warning 자체를 목업(D-025 기존 테스트와 같은 관례).
+    monkeypatch.setattr(m.log, "warning", lambda *a, **k: None)
 
     result = m.find_index_files(tmp_path)
     assert result["claude.md"] == upper
@@ -460,6 +473,52 @@ def test_ssot_explorer_instantiates_with_expected_shortcuts(isolated_registry, i
         win.refresh_tree()  # 예외 없어야 함
     finally:
         win.close()  # closeEvent가 isolated_qsettings로 저장 — 실제 레지스트리 안 건드림
+
+
+# ------------------------------------------------------------- D-042: Inbox 감시
+
+def test_toggle_inbox_watcher_starts_and_stops(isolated_registry, isolated_qsettings, tmp_path, monkeypatch):
+    win = m.SSOTExplorer()
+    try:
+        monkeypatch.setattr(m.QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(tmp_path)))
+        win.toggle_inbox_watcher()
+        assert win.inbox_watcher_thread is not None
+        assert win.inbox_watch_action.text() == "Inbox 감시 중지"
+
+        win.toggle_inbox_watcher()
+        assert win.inbox_watcher_thread is None
+        assert win.inbox_watch_action.text() == "Inbox 감시 시작"
+    finally:
+        win.close()
+
+
+def test_toggle_inbox_watcher_cancelled_dialog_does_nothing(isolated_registry, isolated_qsettings, monkeypatch):
+    win = m.SSOTExplorer()
+    try:
+        monkeypatch.setattr(m.QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: ""))
+        win.toggle_inbox_watcher()
+        assert win.inbox_watcher_thread is None
+    finally:
+        win.close()
+
+
+def test_on_inbox_file_detected_shows_status_message(isolated_registry, isolated_qsettings):
+    win = m.SSOTExplorer()
+    try:
+        win._on_inbox_file_detected("C:\\inbox", "new.md")
+        assert "new.md" in win.statusBar().currentMessage()
+    finally:
+        win.close()
+
+
+def test_format_watcher_log_text_empty_and_recent_first():
+    assert "없음" in m.format_watcher_log_text([])
+    events = [
+        {"timestamp": "2026-08-14 10:00:00", "watchDir": "C:\\in", "fileName": "a.md"},
+        {"timestamp": "2026-08-14 10:00:05", "watchDir": "C:\\in", "fileName": "b.md"},
+    ]
+    text = m.format_watcher_log_text(events)
+    assert text.index("b.md") < text.index("a.md")  # 최신이 위로
 
 
 # ----------------------------------------------------------- O-002: 컨텍스트메뉴

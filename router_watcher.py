@@ -1,48 +1,121 @@
-"""SSOT_Explorer 라우터 — 파일 감시자 스켈레톤(2026-08-13 D-029, 틀만).
+"""SSOT_Explorer 라우터 — 파일 감시자(2026-08-13 D-029 스켈레톤 →
+2026-08-14 D-042 경량 구현).
 
-"새 파일이 생기면 추적해서 자동으로 분류 제안" 요구의 3단계 부분. 이번
-라운드는 사용자가 명시적으로 "앱 내장 API는 틀만 구축"을 요청했고, 이
-감시자는 그 요청이 가장 크게 걸리는 조각이라 실제 백그라운드 감시는
-아직 안 붙였다 — 인터페이스만 먼저 고정해서, 다음 라운드에 내부만
-채우면 되게 해둔다.
+**경량화 결정(D-042)**: O-006 원래 비전("새 파일 생기면 자동으로 분류 제안
+까지")은 여전히 보류(재논의 조건 그대로 — router_proposals.acceptance_rate()
+로 휴리스틱 분류기 정확도가 실사용 데이터로 검증될 때까지). 사용자가 이번엔
+그 절반만 떼어서 요청: **"새 파일 자동감지 → 로그 쌓이듯 알려주기"** —
+classify_content()/router_proposals와는 아예 연결하지 않는다. 감지된 파일이
+누구 손도 안 타고 그대로 남는다 — 순수 알림/기록 기능.
 
-의도한 흐름(다음 라운드 구현 예정): InboxWatcher가 감시 대상 폴더에 새
-파일이 생기면 on_new_file 콜백을 부르고, 그 콜백이
-router_classifier.classify_content()로 제안을 만들어
-router_proposals에 "pending" 상태로 쌓는다 — GUI가 그 대기열을 보여주고
-사용자가 승인/취소를 누르면 router_proposals.record_decision()으로 넘어간다.
+**의존성 없음**: watchdog 같은 새 패키지를 추가하는 대신 폴링만으로 구현
+(개인용 도구 규모에서 충분, D-029 스켈레톤 메모의 우려였던 "디바운스"도
+poll_interval 자체가 자연스럽게 흡수 — 짧은 시간에 같은 파일이 여러 번
+바뀌어도 다음 폴링 시점에 한 번만 관찰됨).
 
-실제로 붙일 때 고려할 것(설계만 미리 적어둠 — O-007 참고):
-- 감시 대상은 "전체 드라이브"가 아니라 지정된 Inbox 폴더 1~2개로 한정해야
-  함 — 전체 파일시스템 감시는 노이즈가 너무 큼(다운로드/빌드산출물/
-  임시파일까지 전부 걸림).
-- watchdog 패키지가 신규 의존성으로 필요(requirements.txt에 아직 없음).
-- Qt 이벤트루프를 막지 않도록 별도 스레드(QThread, SearchWorker와 같은
-  패턴)나 별도 프로세스로 돌아야 함.
-- 디바운스 필요(파일 하나가 저장 중 여러 번 변경 이벤트를 낼 수 있음 —
-  에디터가 임시파일→원본파일 순으로 쓰는 경우 등).
+**감시 범위**: 지정된 폴더 1개, **비재귀**(바로 밑 파일만) — D-029 스켈레톤
+메모의 "전체 드라이브 감시는 노이즈가 너무 크다" 원칙 그대로 유지.
+
+**Qt 미의존**: router_classifier.py/router_proposals.py와 같은 원칙 — 이
+파일은 순수 로직만 갖고 있고, `InboxWatcher.start()`는 블로킹 폴링 루프라
+GUI에서는 반드시 별도 스레드(main.py의 QThread 래퍼)에서 돌려야 한다.
+`poll_once()`로 한 번의 스캔 단위를 분리해둬서 sleep 없이도 단위 테스트
+가능.
 """
 from __future__ import annotations
 
+import json
+import time
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+from router_proposals import atomic_write_json
+
+WATCHER_LOG_PATH = Path.home() / ".claude" / "scripts" / "ssot_watcher_log.json"
+DEFAULT_POLL_INTERVAL = 2.0  # 초
+
+
+def snapshot_dir(folder: Path) -> set[str]:
+    """폴더 바로 밑(비재귀) 파일 이름 집합. 하위 폴더는 안 봄 — 감시 범위를
+    좁게 유지하는 게 노이즈를 줄이는 핵심(위 모듈 docstring 참고)."""
+    if not folder.is_dir():
+        return set()
+    try:
+        return {entry.name for entry in folder.iterdir() if entry.is_file()}
+    except (PermissionError, OSError):
+        return set()
+
+
+def diff_new_files(before: set[str], after: set[str]) -> list[str]:
+    """before에는 없고 after에만 있는 파일 이름(정렬됨) — 삭제/이름변경은
+    무시(그건 이 기능의 관심사가 아님, "새 파일 감지"만)."""
+    return sorted(after - before)
+
+
+def load_watcher_log(log_path: Path | None = None) -> list[dict]:
+    path = log_path or WATCHER_LOG_PATH
+    if not path.exists():
+        return []
+    try:
+        return json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def record_new_file_event(watch_dir: Path, file_name: str, log_path: Path | None = None) -> dict:
+    """감지된 파일 하나를 로그에 원자적으로 추가(D-021/D-032와 같은
+    atomic_write_json 재사용) — "로그 쌓이듯" 계속 append. 분류 제안이나
+    승인 절차와는 무관, 순수 기록."""
+    path = log_path or WATCHER_LOG_PATH
+    event = {
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "watchDir": str(watch_dir),
+        "fileName": file_name,
+    }
+    events = load_watcher_log(path)
+    events.append(event)
+    atomic_write_json(path, events)
+    return event
+
 
 class InboxWatcher:
-    """스켈레톤 — start()/stop() 인터페이스만 정의, 실제 파일시스템 감시는
-    아직 구현 안 됨(NotImplementedError). 호출부(main.py)가 이 클래스를
-    미리 가정하고 짜여도 되게, 나중에 내부만 채우면 되는 모양으로 고정."""
+    """지정 폴더를 폴링으로 감시하다 새 파일이 보이면 on_new_file(파일명)을
+    호출한다. 시작 시점에 이미 있던 파일은 "새 파일"로 안 잡음(기준 스냅샷을
+    __init__에서 먼저 떠 둠) — 앱 켤 때마다 기존 파일들이 전부 알림으로
+    쏟아지는 걸 방지."""
 
-    def __init__(self, watch_dir: Path, on_new_file: Callable[[Path], None]):
+    def __init__(
+        self,
+        watch_dir: Path,
+        on_new_file: Callable[[str], None],
+        poll_interval: float = DEFAULT_POLL_INTERVAL,
+    ):
         self.watch_dir = watch_dir
         self.on_new_file = on_new_file
+        self.poll_interval = poll_interval
         self._running = False
+        self._known = snapshot_dir(watch_dir)
+
+    def poll_once(self) -> list[str]:
+        """한 번 스캔 — 새 파일 이름 목록을 반환하고 콜백도 각각 호출한다.
+        sleep 없이 즉시 실행되므로 이 메서드만 따로 단위 테스트 가능."""
+        current = snapshot_dir(self.watch_dir)
+        new_names = diff_new_files(self._known, current)
+        for name in new_names:
+            self.on_new_file(name)
+        self._known = current
+        return new_names
 
     def start(self) -> None:
-        raise NotImplementedError(
-            "D-029 — 아직 틀만 구축된 상태. 실제 감시(watchdog 등)는 "
-            "다음 라운드 과제(O-007 참고)."
-        )
+        """블로킹 폴링 루프 — GUI에서는 반드시 QThread 등 별도 스레드에서
+        호출해야 Qt 이벤트 루프를 안 막는다(SearchWorker와 같은 원칙)."""
+        self._running = True
+        while self._running:
+            time.sleep(self.poll_interval)
+            if not self._running:
+                break
+            self.poll_once()
 
     def stop(self) -> None:
         self._running = False
