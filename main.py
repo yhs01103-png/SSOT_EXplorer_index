@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QTextBrowser, QTextEdit, QToolBar, QLineEdit, QInputDialog, QFileDialog,
     QMessageBox, QMenu, QListWidget, QListWidgetItem, QDialog, QVBoxLayout,
     QDialogButtonBox, QWidget, QPushButton, QLabel, QHBoxLayout, QStyle,
+    QTabWidget,
 )
 from PySide6.QtCore import Qt, QProcess, QThread, Signal, QSettings
 from PySide6.QtGui import QAction, QFont, QKeySequence
@@ -930,15 +931,21 @@ class SearchDialog(QDialog):
 
 # -------------------------------------------------------------------- 관리
 
-class ManagementDialog(QDialog):
-    """레지스트리(JSON) + 드리프트 로그를 보여주고, 드리프트 체크를 즉시
-    실행할 수 있게 한다. 전부 앱 자신의 제어 파일이라 P-01(읽기전용 원칙)
-    범위 밖 — 프로젝트 파일 자체는 여전히 안 건드린다."""
+class ManagementPanel(QWidget):
+    """레지스트리(JSON)+스키마검증+Inbox감시로그+키워드레지스트리+세션
+    컨텍스트로그+드리프트 로그를 보여주고, 드리프트 체크를 즉시 실행할 수
+    있게 한다. 전부 앱 자신의 제어 파일이라 P-01(읽기전용 원칙) 범위 밖 —
+    프로젝트 파일 자체는 여전히 안 건드린다.
+
+    2026-08-14(D-047) — 모달 QDialog였다가(D-038 최초 도입 당시 이름
+    ManagementDialog) 사용자 요청으로 메인 창의 상시 탭("개발자")으로
+    승격 — Lazzy_App_OS_Monorepo의 사이드바 "개발자" 대분류와 같은 발상
+    (D-046 로컬 웹콘솔의 "환경 세팅 전 임시 대안"). QDialog 전용 기능
+    (.exec() 모달)을 안 쓰므로 QWidget으로 베이스를 바꿨을 뿐 내부 로직은
+    전부 그대로."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("SSOT 인덱싱 관리")
-        self.resize(800, 600)
         self.process: QProcess | None = None
 
         layout = QVBoxLayout(self)
@@ -1385,7 +1392,20 @@ class SSOTExplorer(QMainWindow):
         self.splitter.addWidget(right_panel)
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 2)
-        self.setCentralWidget(self.splitter)
+
+        # 2026-08-14(D-047) — 상단 "탐색기"/"개발자" 대분류 탭(Lazzy
+        # 사이드바의 사용자/개발자 대분류와 같은 발상, 사용자 요청 —
+        # "일단은 클라이언트에 개발자탭 추가해서 거기서 보여지고, 나머지
+        # 환경(D-046 로컬 웹콘솔의 포트/보안/exe패키징, O-010)이 세팅되면
+        # HTML 서빙으로 바꿔줘"). 관리자 패널이 모달 다이얼로그였다가
+        # 상시 탭으로 승격 — 항상 최신 상태를 보여주려고 탭이 활성화될
+        # 때마다 refresh().
+        self.management_panel = ManagementPanel(self)
+        self.tabs = QTabWidget()
+        self.tabs.addTab(self.splitter, "탐색기")
+        self.tabs.addTab(self.management_panel, "개발자")
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+        self.setCentralWidget(self.tabs)
 
         self._build_shortcuts()
         self.populate_roots()
@@ -1465,8 +1485,8 @@ class SSOTExplorer(QMainWindow):
 
         bar.addSeparator()
 
-        manage_action = QAction(style.standardIcon(QStyle.SP_FileDialogDetailedView), "관리자 패널", self)
-        manage_action.setToolTip("레지스트리/공용문서 뷰 + 드리프트 체크 실행")
+        manage_action = QAction(style.standardIcon(QStyle.SP_FileDialogDetailedView), "개발자 탭으로", self)
+        manage_action.setToolTip("개발자 탭으로 전환(레지스트리/스키마검증/로그 뷰 + 드리프트 체크)")
         manage_action.triggered.connect(self.open_management)
         bar.addAction(manage_action)
 
@@ -1508,9 +1528,17 @@ class SSOTExplorer(QMainWindow):
         self.search_box.setFocus()
         self.search_box.selectAll()
 
+    def _on_tab_changed(self, index: int):
+        """개발자 탭으로 전환할 때마다 최신 상태로(D-047) — 뒤에서 Inbox
+        감시/라우터가 계속 데이터를 쌓고 있을 수 있어, 탭 자체를 볼 때마다
+        새로고침해야 방금 쌓인 걸 놓치지 않는다."""
+        if self.tabs.widget(index) is self.management_panel:
+            self.management_panel.refresh()
+
     def open_management(self):
-        dlg = ManagementDialog(self)
-        dlg.exec()
+        """툴바 버튼 하위호환 — 이제 모달 대신 상시 탭(D-047)이라 그
+        탭으로 전환만 한다."""
+        self.tabs.setCurrentWidget(self.management_panel)
 
     def open_save_document_dialog(self):
         dlg = SaveDocumentDialog(self.roots, self)

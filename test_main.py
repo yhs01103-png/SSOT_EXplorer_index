@@ -83,9 +83,10 @@ def isolated_orchestrator_state(tmp_path, monkeypatch):
     import router_orchestrator
     monkeypatch.setattr(router_orchestrator, "ORCHESTRATION_LOG_PATH", tmp_path / "orch-log.json")
     monkeypatch.setattr(router_keyword_registry, "KEYWORD_REGISTRY_PATH", tmp_path / "keywords.json")
-    # D-045 — ManagementDialog가 SESSION_CONTEXT_LOG_PATH를 읽는다(이 앱은
-    # 안 쓰지만, 격리 안 하면 테스트가 실제 사용자 로그 내용에 따라 결과가
-    # 갈리는 비결정적 테스트가 된다).
+    # D-045 — ManagementPanel(D-047 전 이름 ManagementDialog)이
+    # SESSION_CONTEXT_LOG_PATH를 읽는다(이 앱은 안 쓰지만, 격리 안 하면
+    # 테스트가 실제 사용자 로그 내용에 따라 결과가 갈리는 비결정적
+    # 테스트가 된다).
     monkeypatch.setattr(m, "SESSION_CONTEXT_LOG_PATH", tmp_path / "session-context-log.json")
     yield
 
@@ -417,18 +418,18 @@ def test_load_registry_raw_roundtrips_actual_content(isolated_registry):
     assert "primarySource" not in raw["roots"][0]
 
 
-def test_management_dialog_shows_schema_validation(isolated_registry, isolated_qsettings):
+def test_management_panel_shows_schema_validation(isolated_registry, isolated_qsettings):
     m.save_roots([{"label": "a", "path": "C:\\a"}])
-    dlg = m.ManagementDialog()
-    assert "통과" in dlg.schema_view.toPlainText()
+    panel = m.ManagementPanel()
+    assert "통과" in panel.schema_view.toPlainText()
 
 
-def test_management_dialog_shows_keyword_registry(isolated_registry, isolated_qsettings):
+def test_management_panel_shows_keyword_registry(isolated_registry, isolated_qsettings):
     """D-044 — 빈 상태에서도 안내 문구가 뜨는지(크래시 없이)만 확인, 채워진
     상태 렌더링은 test_router_keyword_registry.py의 format 함수 테스트가 커버."""
     m.save_roots([{"label": "a", "path": "C:\\a"}])
-    dlg = m.ManagementDialog()
-    assert "없음" in dlg.keyword_registry_view.toPlainText()
+    panel = m.ManagementPanel()
+    assert "없음" in panel.keyword_registry_view.toPlainText()
 
 
 # --------------------------------------------------- D-045: 세션 컨텍스트 로그
@@ -447,10 +448,10 @@ def test_format_session_context_log_text_empty_and_recent_first():
     assert text.index("b") < text.index("a")  # 최신이 위로
 
 
-def test_management_dialog_shows_session_context_log(isolated_registry, isolated_qsettings):
+def test_management_panel_shows_session_context_log(isolated_registry, isolated_qsettings):
     m.save_roots([{"label": "a", "path": "C:\\a"}])
-    dlg = m.ManagementDialog()
-    assert "없음" in dlg.session_context_log_view.toPlainText()
+    panel = m.ManagementPanel()
+    assert "없음" in panel.session_context_log_view.toPlainText()
 
 
 # ---------------------------------------------- D-041(H-003): 대소문자 중복 방지
@@ -537,6 +538,46 @@ def test_ssot_explorer_instantiates_with_expected_shortcuts(isolated_registry, i
         win.refresh_tree()  # 예외 없어야 함
     finally:
         win.close()  # closeEvent가 isolated_qsettings로 저장 — 실제 레지스트리 안 건드림
+
+
+# ------------------------------------------------------- D-047: 개발자 탭 승격
+
+def test_management_panel_is_a_persistent_tab(isolated_registry, isolated_qsettings):
+    """모달 다이얼로그였다가 상시 탭으로 승격(D-047, 사용자 요청) — 탭
+    2개("탐색기"/"개발자")가 항상 존재하고, 개발자 탭 내용이 ManagementPanel
+    인스턴스인지 확인."""
+    win = m.SSOTExplorer()
+    try:
+        assert win.tabs.count() == 2
+        assert win.tabs.tabText(0) == "탐색기"
+        assert win.tabs.tabText(1) == "개발자"
+        assert win.tabs.widget(1) is win.management_panel
+    finally:
+        win.close()
+
+
+def test_switching_to_developer_tab_refreshes_panel(isolated_registry, isolated_qsettings, monkeypatch):
+    """탭을 볼 때마다 최신 상태를 보여줘야 한다(뒤에서 Inbox 감시/라우터가
+    계속 데이터를 쌓을 수 있으므로) — refresh()가 실제로 호출되는지."""
+    win = m.SSOTExplorer()
+    try:
+        calls = []
+        monkeypatch.setattr(win.management_panel, "refresh", lambda: calls.append(1))
+        win.tabs.setCurrentIndex(1)
+        assert calls == [1]
+    finally:
+        win.close()
+
+
+def test_open_management_switches_to_developer_tab(isolated_registry, isolated_qsettings):
+    """툴바 버튼 하위호환 — 이제 모달을 안 열고 탭 전환만 한다."""
+    win = m.SSOTExplorer()
+    try:
+        win.tabs.setCurrentIndex(0)
+        win.open_management()
+        assert win.tabs.currentWidget() is win.management_panel
+    finally:
+        win.close()
 
 
 # ------------------------------------------------------------- D-042: Inbox 감시
