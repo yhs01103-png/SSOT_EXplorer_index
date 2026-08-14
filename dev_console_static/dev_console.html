@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SSOT_Explorer 개발자 콘솔</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f5; --surface: #ffffff; --border: #dde1db; --ink: #1c211f;
+    --ink-soft: #5a635b; --accent: #3f7268; --accent-soft: #d9e6e1;
+    --bad: #a84a2f; --bad-soft: #f1ddd3;
+    --mono: ui-monospace, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Pretendard, "Malgun Gothic", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171a; --surface: #1c211f; --border: #333a34; --ink: #e9ede8;
+      --ink-soft: #b7c0b6; --accent: #6fada0; --accent-soft: #1f322d;
+      --bad: #e08a6b; --bad-soft: #3a241c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); line-height: 1.55; }
+  header {
+    padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--surface);
+    display: flex; align-items: center; gap: 12px;
+  }
+  header h1 { font-size: 16px; margin: 0; }
+  header .meta { font-size: 12px; color: var(--ink-soft); margin-left: auto; font-family: var(--mono); }
+  nav { display: flex; gap: 6px; padding: 12px 20px; flex-wrap: wrap; border-bottom: 1px solid var(--border); background: var(--surface); }
+  button {
+    font-family: var(--sans); font-size: 13px; padding: 6px 12px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--surface); color: var(--ink); cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.active { background: var(--accent); color: white; border-color: var(--accent); }
+  main { max-width: 860px; margin: 0 auto; padding: 20px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 12px; }
+  .meta { font-family: var(--mono); font-size: 12px; color: var(--ink-soft); }
+  .badge {
+    display: inline-block; font-family: var(--mono); font-size: 11px; font-weight: 700;
+    padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); margin-left: 6px;
+  }
+  .badge.bad { background: var(--bad-soft); color: var(--bad); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--ink-soft); font-weight: 600; font-size: 12px; }
+  .mono { font-family: var(--mono); }
+  .empty { color: var(--ink-soft); padding: 40px 0; text-align: center; }
+  .error-box { background: var(--bad-soft); color: var(--bad); border-radius: 8px; padding: 12px 14px; font-size: 13px; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🛠 SSOT_Explorer 개발자 콘솔</h1>
+  <span class="meta">로컬 전용 — 이 기기(또는 같은 네트워크)에서만 접근됨</span>
+</header>
+<nav id="tabs"></nav>
+<main id="content"></main>
+
+<script>
+const TABS = [
+  { id: "schema", label: "스키마 검증" },
+  { id: "watcher-log", label: "Inbox 감시 로그" },
+  { id: "keyword-registry", label: "키워드 레지스트리" },
+  { id: "session-log", label: "세션 컨텍스트 로그" },
+];
+let currentTab = "schema";
+
+function el(tag, attrs, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") node.className = v; else node.setAttribute(k, v);
+  }
+  for (const child of children) {
+    if (child == null) continue;
+    node.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  }
+  return node;
+}
+
+function fmtTime(s) { return s || ""; }
+
+async function apiGet(path) {
+  const res = await fetch(path);
+  if (!res.ok) {
+    let detail = `HTTP ${res.status}`;
+    try { detail = (await res.json()).detail || detail; } catch (_) {}
+    throw new Error(detail);
+  }
+  return res.json();
+}
+
+function renderTabs() {
+  const nav = document.getElementById("tabs");
+  nav.innerHTML = "";
+  for (const tab of TABS) {
+    const btn = el("button", { class: tab.id === currentTab ? "active" : "" }, tab.label);
+    btn.addEventListener("click", () => { currentTab = tab.id; renderTabs(); loadTab(); });
+    nav.append(btn);
+  }
+}
+
+async function loadTab() {
+  const main = document.getElementById("content");
+  main.innerHTML = "";
+  main.append(el("p", { class: "empty" }, "불러오는 중..."));
+  try {
+    switch (currentTab) {
+      case "schema": return renderSchema(await apiGet("/api/schema"));
+      case "watcher-log": return renderWatcherLog(await apiGet("/api/watcher-log"));
+      case "keyword-registry": return renderKeywordRegistry(await apiGet("/api/keyword-registry"));
+      case "session-log": return renderSessionLog(await apiGet("/api/session-log"));
+    }
+  } catch (e) {
+    main.innerHTML = "";
+    main.append(el("div", { class: "error-box" }, String(e.message || e)));
+  }
+}
+
+function renderSchema(data) {
+  const main = document.getElementById("content");
+  main.innerHTML = "";
+  if (!data.errors.length) {
+    main.append(el("div", { class: "card" }, "✅ 스키마 검증 통과 — 문제 없음"));
+    return;
+  }
+  const card = el("div", { class: "card" }, el("strong", {}, `⚠️ 문제 ${data.errors.length}건`));
+  for (const e of data.errors) card.append(el("div", { class: "meta" }, "— " + e));
+  main.append(card);
+}
+
+function renderWatcherLog(data) {
+  const main = document.getElementById("content");
+  main.innerHTML = "";
+  if (!data.events.length) { main.append(el("div", { class: "empty" }, "감지된 파일 없음")); return; }
+  const table = el("table", {}, el("thead", {}, el("tr", {},
+    el("th", {}, "시각"), el("th", {}, "파일명"), el("th", {}, "감시 폴더"))));
+  const tbody = el("tbody");
+  for (const ev of [...data.events].reverse()) {
+    tbody.append(el("tr", {},
+      el("td", { class: "mono" }, fmtTime(ev.timestamp)),
+      el("td", { class: "mono" }, ev.fileName),
+      el("td", { class: "mono" }, ev.watchDir)));
+  }
+  table.append(tbody);
+  main.append(table);
+}
+
+function renderKeywordRegistry(data) {
+  const main = document.getElementById("content");
+  main.innerHTML = "";
+  const entries = Object.entries(data.keywords || {});
+  if (!entries.length) { main.append(el("div", { class: "empty" }, "등록된 키워드 없음")); return; }
+  const table = el("table", {}, el("thead", {}, el("tr", {},
+    el("th", {}, "키워드"), el("th", {}, "상태"), el("th", {}, "관측횟수"), el("th", {}, "최근관측"))));
+  const tbody = el("tbody");
+  for (const [kw, v] of entries.sort((a, b) => b[1].hitCount - a[1].hitCount)) {
+    tbody.append(el("tr", {},
+      el("td", { class: "mono" }, kw),
+      el("td", {}, el("span", { class: "badge" + (v.status === "active" ? "" : "") }, v.status)),
+      el("td", { class: "mono" }, String(v.hitCount)),
+      el("td", { class: "mono" }, fmtTime(v.lastSeenAt))));
+  }
+  table.append(tbody);
+  main.append(table);
+}
+
+function renderSessionLog(data) {
+  const main = document.getElementById("content");
+  main.innerHTML = "";
+  if (!data.entries.length) { main.append(el("div", { class: "empty" }, "로그 없음")); return; }
+  const table = el("table", {}, el("thead", {}, el("tr", {},
+    el("th", {}, "시각"), el("th", {}, "매치된 루트"), el("th", {}, "관련폴더"), el("th", {}, "다른루트"))));
+  const tbody = el("tbody");
+  for (const e of [...data.entries].reverse()) {
+    tbody.append(el("tr", {},
+      el("td", { class: "mono" }, fmtTime(e.timestamp)),
+      el("td", { class: "mono" }, e.matchedLabel),
+      el("td", { class: "mono" }, String(e.relatedCount)),
+      el("td", { class: "mono" }, String(e.otherRootsCount))));
+  }
+  table.append(tbody);
+  main.append(table);
+}
+
+renderTabs();
+loadTab();
+</script>
+</body>
+</html>

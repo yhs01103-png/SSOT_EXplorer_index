@@ -121,6 +121,13 @@ Windsurf(`.windsurf/rules/`)로 동시에 맞출 수 있다(레거시 `.cursorru
   읽기만 함). router_proposals(제안 승인율)/router_keyword_registry(키워드
   활성화)와 함께 "실사용 데이터를 먼저 모아서 다음 투자를 결정한다"는
   원칙의 세 번째 축.
+- **개발자 콘솔**(D-046, 스켈레톤): `python dev_console_server.py`로 로컬
+  웹서버 실행(`http://127.0.0.1:8765/`) — 관리자 패널과 같은 4개 데이터
+  (스키마 검증/Inbox 감시 로그/키워드 레지스트리/세션 컨텍스트 로그)를
+  브라우저로도 볼 수 있음. Lazzy_App_OS_Monorepo의 개발자 콘솔(D-SERVER-092)
+  과 같은 발상이지만 서버 배포가 없는 로컬 데스크톱 앱이라 새 의존성 없이
+  stdlib `http.server`만 사용, 인증 없음(기본 `127.0.0.1` 전용). **아직
+  main.py UI에 시작 버튼은 없음**(O-010 — 코드는 동작하지만 통합은 보류).
 
 ## 이 앱이 안 하는 것
 

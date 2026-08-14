@@ -2,7 +2,7 @@
 SSOT_Explorer — 최신 설계결정이력 + TODO
 ================================================================
 기준 버전: v1.0
-최종수정: 2026-08-14 (D-045)
+최종수정: 2026-08-14 (D-046)
 원칙: 가장 최근 라운드의 신규 결정(D-번호)과 전체 TODO(H-번호)만 담는다.
       더 오래된 결정은 레거시 파일로 이동.
 
@@ -1333,6 +1333,60 @@ MIT LICENSE
       포맷팅 최신순, 관리자패널 렌더링) — 전체 154→157개 통과. 앱
       smoke-test(크래시로그 0바이트, 기존 로그들 추가 오염 없음) 통과.
 
+[D-046] 개발자 콘솔 — 로컬 HTTP 서버 스켈레톤(Lazzy D-SERVER-092 짝)
+결정: Lazzy_App_OS_Monorepo에 개발자 콘솔(정적 HTML+FastAPI 라우트, D-SERVER-
+      092)을 만든 직후, 사용자가 "SSOT도 만들어준거야?"로 확인 → 아직
+      안 했음을 정직하게 답하고(Lazzy 전용이었음, SSOT_Explorer는 서버가
+      없어 그대로는 이식 불가라는 구조적 차이도 같이 설명) → 사용자가
+      "웹콘솔 필요하고 코드만 만들어주고(임포트만 하면 서빙할 수 있게)
+      나중에 채워넣을것만 설계도에 반영해줘"로 명시적 스코프 확정 — 이번
+      라운드는 **동작하는 스켈레톤까지만**, main.py UI 통합은 O-010으로
+      미룸.
+      Lazzy와 결정적으로 다른 점: SSOT_Explorer는 Railway 같은 공개 배포가
+      없는 로컬 데스크톱 앱 — 그래서 새 웹 프레임워크(FastAPI 등) 안 들이고
+      **stdlib `http.server`만으로 구현**(D-034 kiwipiepy 판단기준과 동일:
+      필요할 때만 무거운 의존성). 인증도 없음 — 기본 바인드 주소가
+      `127.0.0.1`(이 기기 전용)이라 Lazzy식 토큰 게이팅이 당장 불필요한
+      위협모델(외부 인터넷에 노출된 적 없음). LAN의 폰/태블릿에서 열고
+      싶어지면 `host="0.0.0.0"`로 바꾸면 되지만, 그 순간 인증을 다시
+      고려해야 함 — O-010에 기록.
+      **구조**: 이미 관리자 패널(ManagementDialog)이 쓰는 4개 데이터소스
+      (validate_registry/load_registry_raw, router_watcher.load_watcher_log,
+      router_keyword_registry.load_keyword_registry, load_session_context_log)
+      를 그대로 JSON으로 감싸기만 함 — 새 로직 없음, 프록시 없음. 정적
+      HTML(`dev_console_static/dev_console.html`)이 그 4개 API를 fetch()로
+      호출해 탭별 렌더링(Lazzy dev_console.html과 같은 무빌드 바닐라 JS
+      패턴).
+      **구현**: `dev_console_server.py`(신규) — `BaseHTTPRequestHandler`
+      서브클래스, `/`·`/dev-console`은 정적 페이지, `/api/schema`·
+      `/api/watcher-log`·`/api/keyword-registry`·`/api/session-log`는
+      JSON. `start(host, port)`(인스턴스만 생성, blocking 여부는 호출부
+      책임 — 나중에 QThread로 감쌀 걸 염두에 둔 설계, InboxWatcherThread
+      D-042와 동일 패턴)/`serve_forever()`(CLI 직접 실행용) 둘 다 공개.
+      `dev_console_static/dev_console.html`(신규).
+      [알려진 절충, 의도적으로 기록만 하고 안 고침] `main.py`에서
+      `load_registry_raw`/`validate_registry`를 가져오는데, main.py가
+      PySide6를 top-level import해서 이 서버를 단독 실행해도 Qt까지 같이
+      로드됨 — D-043이 이미 한 번 고친 것과 같은 종류의 "Qt 미의존 모듈로
+      옮겨야 하는" 부채지만, 이번엔 "일단 동작하는 스켈레톤"이 우선이라
+      의도적으로 미룸(O-010).
+이유: "코드만, 나중에 채워넣을 것만 문서화"라는 사용자의 명시적 스코프
+      제한을 그대로 존중 — UI 버튼 배선/포트결정/보안모델/exe패키징까지
+      전부 지금 결정하면 스코프를 벗어난 추측성 작업이 된다. Lazzy와
+      아키텍처가 근본적으로 다르다는 사실(서버 없음)을 얼버무리지 않고
+      먼저 명확히 하고 시작한 것도 "안 되는 걸 된다고 안 한다"는 이
+      프로젝트 정직성 원칙 그대로.
+검증: pytest 신규 9개(`test_dev_console_server.py`, conftest 없이 파일
+      하나로 — D-024 관례) — 실제 ephemeral 포트로 서버를 띄워 진짜 HTTP
+      요청으로 검증(라우팅 딕셔너리 직접 확인 아님, Lazzy test_dev_track_
+      gating.py와 같은 이유): 루트/`/dev-console`별칭 200, 미등록 경로
+      404, 4개 API 각각 실제 기록된 데이터 반환, 스키마 중복라벨 오류
+      반영, HTML이 4개 API 경로를 전부 참조하는지(배선 누락 회귀 방지).
+      전체 157→166개 통과. **실제 프로세스로 재확인**(pytest만으로 안
+      끝냄) — `python dev_console_server.py` 단독 실행 후 `curl`로 `/`와
+      `/api/schema` 둘 다 정상 응답 확인, 실제 등록 레지스트리로 스키마
+      검증 통과(`{"errors": []}`) 확인.
+
 ================================================================
 PART 2 — TODO
 ================================================================
@@ -1451,6 +1505,28 @@ embeddings.py 상단 주석에 이미 적어둠): Lazzy 실측상 무관한 문�
 task_type으로 임베딩해야 짧은 키워드형 질의의 정확도가 올라간다는 근거도
 이미 인터페이스에 반영돼 있음(embed_text vs embed_query_text 분리).
 관련 D-번호: D-034(오프라인 원칙 확립), D-044.
+
+[O-010] 개발자 콘솔(dev_console_server.py, D-046)을 실제로 main.py에 통합.
+임시결정: 이번엔 "임포트만 하면 서빙되는" 코드까지만(사용자 명시 스코프) —
+아래는 전부 아직 안 정한 것:
+- **UI 트리거**: 툴바에 "개발자 콘솔 시작/중지" 버튼을 추가할지, 추가한다면
+  InboxWatcherThread(D-042)처럼 QThread로 감싸서 `start()`가 반환한 서버
+  인스턴스의 `serve_forever()`를 그 안에서 돌릴지.
+- **포트/바인드 주소**: 기본값(127.0.0.1:8765)을 그대로 쓸지, 사용자가
+  바꿀 수 있게 할지. LAN의 폰/태블릿에서 열고 싶어지면 `0.0.0.0`으로
+  바꿔야 하는데, 그 순간부터 인증 없이 같은 Wi-Fi의 누구나 레지스트리
+  경로/키워드 데이터를 볼 수 있다는 뜻이라 최소한의 인증(Lazzy처럼 토큰,
+  또는 더 가벼운 방식)을 같이 검토해야 함.
+- **exe 패키징**: `dev_console_static/dev_console.html`을 PyInstaller가
+  기본으로 안 담는다(D-034에서 kiwipiepy 모델 파일이 조용히 빠졌던 것과
+  같은 함정 — `--add-data` 플래그 필요, README 빌드 명령에 반영 안 함).
+- **Qt 의존성 절충**(D-046 본문 참고): `load_registry_raw`/`validate_
+  registry`를 main.py에서 Qt 미의존 모듈로 옮기는 리팩터(D-043과 같은
+  종류) — 지금은 안 함.
+재논의 조건: 실제로 웹 콘솔을 켜서 써보고 싶어질 때(그때 위 4개를 한 번에
+결정). 그 전엔 코드는 있지만 아무도 자동으로 안 켜는 상태 그대로 둠.
+관련 D-번호: D-042(InboxWatcherThread 패턴), D-043(Qt 미의존 리팩터 선례),
+D-046.
 
 [O-003] 등록 스코프를 "루트 바로 밑 프로젝트 폴더"에서 서브프로젝트(레포 안
 레포, 예: Lazzy_App_OS_Monorepo의 server/.claude, client/.claude)까지 확장할지.
