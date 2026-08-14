@@ -74,6 +74,28 @@ def isolated_qsettings(tmp_path, monkeypatch):
     yield
 
 
+# --------------------------------------------------- D-039: 레지스트리 경로 해석
+
+def test_resolve_registry_path_uses_env_var_when_set(monkeypatch, tmp_path):
+    custom = tmp_path / "custom-roots.json"
+    monkeypatch.setenv("SSOT_REGISTRY_PATH", str(custom))
+    assert m.resolve_registry_path() == custom
+
+
+def test_resolve_registry_path_falls_back_to_generic_default(monkeypatch):
+    monkeypatch.delenv("SSOT_REGISTRY_PATH", raising=False)
+    assert m.resolve_registry_path() == Path.home() / ".claude" / "ssot-roots.json"
+
+
+def test_router_classifier_default_registry_path_matches_main(monkeypatch, tmp_path):
+    import router_classifier
+    monkeypatch.delenv("SSOT_REGISTRY_PATH", raising=False)
+    assert router_classifier._default_registry_path() == m.resolve_registry_path()
+    custom = tmp_path / "custom-roots.json"
+    monkeypatch.setenv("SSOT_REGISTRY_PATH", str(custom))
+    assert router_classifier._default_registry_path() == custom
+
+
 # --------------------------------------------------------- load/save 기본 동작
 
 def test_load_roots_missing_file_returns_empty(isolated_registry):

@@ -24,16 +24,16 @@ router_*.py 4개 파일을 직접 다시 읽고 전면 재작성한 것.
   "쓰기"는 (a) 레지스트리 JSON (b) 등록 루트의 규칙파일(CLAUDE.md 등,
   SYNC_MARKER 있는 파일만) (c) SaveDocumentDialog에서 사용자가 승인 버튼을
   누른 신규 문서 1건 — 그 외 기존 파일 이동/삭제/이름변경은 전면 안 함(P-01).
-- 데이터 흐름의 중심(SSOT)은 앱이 아니라 레지스트리 JSON 1개 파일
-  (`flutter_App\.claude\ssot-roots.json`) — main.py, 드리프트체크 스크립트,
-  SessionStart/PostToolUse 훅 스크립트(이 레포 밖, `~/.claude/`)가 전부 이
-  파일 하나를 공유해서 읽는다.
+- 데이터 흐름의 중심(SSOT)은 앱이 아니라 레지스트리 JSON 1개 파일 — main.py,
+  드리프트체크 스크립트, SessionStart/PostToolUse 훅 스크립트(이 레포 밖,
+  `~/.claude/`)가 전부 이 파일 하나를 공유해서 읽는다.
 
 [2] 데이터 구조
 
-[2-1] 레지스트리 파일(`REGISTRY_PATH`, main.py:114)
-- 경로: `Path.home()/OneDrive/Desktop/SSOT/SSOT_Coding_File/flutter_App/
-  .claude/ssot-roots.json`(하드코딩, 사용자 1인용이라 설정파일 분리 없음).
+[2-1] 레지스트리 파일(`REGISTRY_PATH`, `resolve_registry_path()`, main.py)
+- 경로: `SSOT_REGISTRY_PATH` 환경변수가 있으면 그 값, 없으면 범용 기본값
+  `~/.claude/ssot-roots.json`(D-039, 2026-08-14 — 공개 저장소 전환 준비로
+  개인 폴더 하드코딩을 환경변수로 교체).
 - 최상위 키: `roots`(배열), `sharedDocs`(배열), `relations`(배열),
   `$comment`(있으면 save_roots가 보존만 하고 무시).
 - `roots[i]` 필드(load_roots가 없으면 기본값으로 채움, main.py:158):

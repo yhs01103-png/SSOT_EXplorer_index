@@ -275,9 +275,13 @@ def classify_content(text: str, roots: list[dict], idf: dict[str, float] | None 
 # 로직을 호출할 수 있게. GUI(SaveDocumentDialog)를 열 필요 없음.
 
 def _default_registry_path() -> Path:
-    return (
-        Path.home() / "OneDrive" / "Desktop" / "SSOT" / "SSOT_Coding_File"
-        / "flutter_App" / ".claude" / "ssot-roots.json"
+    """main.py의 REGISTRY_PATH와 같은 규칙(2026-08-14 공개 준비 — 환경변수
+    우선, 없으면 범용 기본값) — 이 함수와 main.py 둘 다 같은 파일을 봐야
+    CLI/GUI 결과가 어긋나지 않는다."""
+    import os
+    return Path(
+        os.environ.get("SSOT_REGISTRY_PATH")
+        or (Path.home() / ".claude" / "ssot-roots.json")
     )
 
 

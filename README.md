@@ -1,6 +1,7 @@
 # SSOT Explorer
 
 [![tests](https://github.com/yhs01103-png/SSOT_EXplorer_index/actions/workflows/tests.yml/badge.svg)](https://github.com/yhs01103-png/SSOT_EXplorer_index/actions/workflows/tests.yml)
+[![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 SSOT 인덱싱 트리 전용 탐색기 대체 뷰어 + 다중 AI 툴 규칙 동기화 도구. Windows
 탐색기 대신, 각 폴더의 CLAUDE.md/README.md 내용을 트리 옆에서 바로 볼 수 있고,
@@ -122,9 +123,12 @@ Windsurf(`.windsurf/rules/`)로 동시에 맞출 수 있다(레거시 `.cursorru
 
 ## 레지스트리(`ssot-roots.json`) — 단일 소스
 
-`flutter_App\.claude\ssot-roots.json`이 유일한 소스(2026-08-13부로 이 위치로
-이동, 예전엔 `~/.claude/` 밑 전역 위치) — 이 앱, 드리프트 스크립트, 훅
-스크립트가 전부 이 파일을 공유해서 읽는다. 각 루트 항목:
+이 앱, 드리프트 스크립트, 훅 스크립트가 전부 파일 하나를 공유해서 읽고
+쓴다. 위치는 `SSOT_REGISTRY_PATH` 환경변수로 지정 — 안 정해두면 범용
+기본값 `~/.claude/ssot-roots.json`을 쓴다(2026-08-14, D-039 — 공개 저장소로
+전환하면서 특정 사용자의 개인 폴더 하드코딩을 뺐다). 자기 컴퓨터에 맞는
+위치를 한 곳에 고정해두고 싶으면 이 환경변수를 영구 등록해두면 된다(예:
+Windows는 `setx SSOT_REGISTRY_PATH "C:\경로\ssot-roots.json"`). 각 루트 항목:
 
 - `referenceCondition` — 실질적 규칙 SSOT(프로즈). CLAUDE.md/AGENTS.md/
   Cursor/Windsurf(신·구 포맷 전부, D-036) 이걸로 동기화됨(포인터 모드 — 내용은
@@ -140,12 +144,11 @@ Windsurf(`.windsurf/rules/`)로 동시에 맞출 수 있다(레거시 `.cursorru
   나머지는 계속 자유 프로즈
 - **참조조건 수정은 Claude Code가**: 앱 UI로 편집하지 않음 — 대화 중 레지스트리
   JSON을 직접 고침
-- **기존 손편집 내용 보호**: flutter_App/Local_APP/Coding_Nomal/개발자 전용
-  어플 4개는 사람이 공들여 쓴 CLAUDE.md라 동기화 마커가 없음 — 동기화를 눌러도
-  확인창 없이는 안 덮어씀(D-010/P-05)
+- **기존 손편집 내용 보호**: 사람이 이미 공들여 써둔 CLAUDE.md는 동기화
+  마커가 없으므로, 동기화를 눌러도 확인창 없이는 안 덮어씀(D-010/P-05)
 
-현재 등록 루트(5개): flutter_App, Local_APP, Coding_Nomal, 개발자 전용 어플,
-coding_admin.
+루트는 몇 개든 자유롭게 추가/삭제 가능(툴바 "+ 루트 추가") — 예: 개인
+프로젝트 여러 개를 각각 하나의 루트로 등록해두고 이 앱 하나에서 오간다.
 
 최상위 `relations`(D-028, 2026-08-13) — 루트 항목이 아니라 최상위 배열:
 `{fromPath, toPath, reason, bidirectional}`. 등록된 루트든 그 밑 임의

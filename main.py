@@ -120,10 +120,20 @@ def find_python_interpreter() -> str:
     found = shutil.which("python") or shutil.which("python3")
     return found or "python"
 
-REGISTRY_PATH = (
-    Path.home() / "OneDrive" / "Desktop" / "SSOT" / "SSOT_Coding_File"
-    / "flutter_App" / ".claude" / "ssot-roots.json"
-)
+# 2026-08-14(공개 준비) — 레지스트리 경로를 개인 폴더 하드코딩에서 환경변수로.
+# 이 저장소를 공개하면서 특정 사용자의 실제 OneDrive 경로를 코드에서 뺐다 —
+# `SSOT_REGISTRY_PATH` 환경변수가 있으면 그걸 쓰고, 없으면 범용 기본값
+# (`~/.claude/ssot-roots.json`, D-014 이전에 실제로 쓰던 전역 위치)으로
+# 폴백한다. 자기 컴퓨터에 맞는 위치를 쓰려면 이 환경변수를 지정하면 된다
+# (README "레지스트리 위치" 참고).
+def resolve_registry_path() -> Path:
+    return Path(
+        os.environ.get("SSOT_REGISTRY_PATH")
+        or (Path.home() / ".claude" / "ssot-roots.json")
+    )
+
+
+REGISTRY_PATH = resolve_registry_path()
 INDEX_FILENAMES = {"claude.md", "readme.md"}
 
 
