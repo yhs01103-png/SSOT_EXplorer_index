@@ -2,8 +2,9 @@
 
 SSOT 인덱싱 트리 전용 탐색기 대체 뷰어 + 다중 AI 툴 규칙 동기화 도구. Windows
 탐색기 대신, 각 폴더의 CLAUDE.md/README.md 내용을 트리 옆에서 바로 볼 수 있고,
-등록된 루트의 규칙을 CLAUDE.md/AGENTS.md/.cursorrules/.windsurfrules로 동시에
-맞출 수 있다.
+등록된 루트의 규칙을 CLAUDE.md/AGENTS.md/Cursor(`.cursor/rules/`)/
+Windsurf(`.windsurf/rules/`)로 동시에 맞출 수 있다(레거시 `.cursorrules`/
+`.windsurfrules`는 이미 있을 때만 동기화, D-036).
 
 ## 실행
 
@@ -122,8 +123,8 @@ SSOT 인덱싱 트리 전용 탐색기 대체 뷰어 + 다중 AI 툴 규칙 동�
 스크립트가 전부 이 파일을 공유해서 읽는다. 각 루트 항목:
 
 - `referenceCondition` — 실질적 규칙 SSOT(프로즈). CLAUDE.md/AGENTS.md/
-  .cursorrules/.windsurfrules 전부 이걸로 동기화됨(포인터 모드 — 내용은 항상
-  레지스트리 확인, 파일엔 복붙 안 함. "전체 내보내기"만 예외적으로 전문을 박음)
+  Cursor/Windsurf(신·구 포맷 전부, D-036) 이걸로 동기화됨(포인터 모드 — 내용은
+  항상 레지스트리 확인, 파일엔 복붙 안 함. "전체 내보내기"만 예외적으로 전문을 박음)
 - `readmeReferenceCondition` — README.md는 안 건드리되, 언제 여는지의 요약
 - `webArtifactUrl` — claude.ai 아티팩트 등 웹 문서 URL(있으면)
 - `primarySource` — `"local"`(기본) | `"web"`. `"web"`이면 `webArtifactUrl`이
