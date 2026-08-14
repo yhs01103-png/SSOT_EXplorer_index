@@ -7,3 +7,6 @@ dist/
 __pycache__/
 *.pyc
 .pytest_cache/
+
+# 개인 로컬 launcher 스크립트(절대경로 하드코딩 — 공개 레포엔 안 올림, 2026-08-15)
+scripts/
