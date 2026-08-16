@@ -130,6 +130,15 @@ Windsurf(`.windsurf/rules/`)로 동시에 맞출 수 있다(레거시 `.cursorru
   과 같은 발상이지만 서버 배포가 없는 로컬 데스크톱 앱이라 새 의존성 없이
   stdlib `http.server`만 사용, 인증 없음(기본 `127.0.0.1` 전용). **아직
   main.py UI에 시작 버튼은 없음**(O-010 — 코드는 동작하지만 통합은 보류).
+- **MCP 서버**(D-048, "범용 IDE 플러그인" 방향): `python ssot_mcp_server.py`
+  로 stdio transport 실행(공식 `mcp` SDK). 파일 조작은 절대 안 함 — Claude
+  Code/Cursor/Windsurf 등 MCP를 지원하는 IDE/에이전트가 이 서버의 tool을
+  불러서 "신호"만 받고, 실제 조치는 그쪽이 한다는 게 핵심(P-01 그대로
+  유지). 지금은 tool 2개: `list_ssot_roots()`(등록 루트 목록),
+  `check_readme_freshness(root_label?, stale_days=30)`(README.md가 폴더 안
+  다른 파일들의 최신 수정시각 대비 며칠 뒤처졌는지 — git 없는 루트라 커밋
+  이력 대신 mtime 기반). **아직 실제 IDE에 등록은 안 함**(O-011 — 서버
+  코드까지만 이번 라운드 범위).
 
 ## 이 앱이 안 하는 것
 
