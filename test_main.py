@@ -251,6 +251,17 @@ def test_format_registry_text_tags_web_primary():
     assert "🌐웹정본" in text.split("\n\n")[0]
 
 
+def test_format_registry_text_tags_missing_path(tmp_path):
+    """D-052 — 폴더가 삭제/이동됐는데 레지스트리엔 남아있는 경우 개발자
+    탭에서 한눈에 보이게(자동 등록해제는 안 함, 감지→알림만)."""
+    missing = {"label": "gone", "path": str(tmp_path / "does-not-exist")}
+    present = {"label": "here", "path": str(tmp_path)}
+    text = m.format_registry_text([missing, present])
+    blocks = text.split("\n\n")
+    assert "⚠️경로없음" in blocks[0]
+    assert "⚠️경로없음" not in blocks[1]
+
+
 def test_sync_dialog_warns_only_when_web_primary():
     entry_web = {"label": "a", "webArtifactUrl": "https://x", "primarySource": "web"}
     entry_local = {"label": "b", "webArtifactUrl": "https://x", "primarySource": "local"}

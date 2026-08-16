@@ -130,7 +130,9 @@ def _check_one_root(entry: dict, stale_days: int) -> dict:
 @server.tool()
 def list_ssot_roots() -> list[dict]:
     """등록된 SSOT 루트 목록을 반환한다(label/path/scope/참조조건 요약) —
-    다른 tool을 부르기 전에 어떤 루트가 있는지 확인하는 용도."""
+    다른 tool을 부르기 전에 어떤 루트가 있는지 확인하는 용도. `pathExists`
+    가 false면 폴더가 삭제/이동됐을 수 있다는 신호(D-052) — 등록 해제
+    여부는 항상 호출한 쪽/사람이 판단, 이 tool이 자동으로 지우지 않는다."""
     from main import load_roots
 
     return [
@@ -139,6 +141,7 @@ def list_ssot_roots() -> list[dict]:
             "path": r.get("path", ""),
             "scope": r.get("scope"),
             "referenceCondition": (r.get("referenceCondition") or "")[:200],
+            "pathExists": Path(r.get("path", "")).is_dir(),
         }
         for r in load_roots()
     ]

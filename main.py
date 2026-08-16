@@ -676,8 +676,13 @@ def format_registry_text(roots: list[dict]) -> str:
         else:
             review_line = f"  리뷰: {r.get('lastReviewed')} ({age}일 전)"
         web_primary_tag = " 🌐웹정본" if r.get("primarySource") == "web" else ""
+        # 2026-08-17(D-052) — 폴더가 삭제/이동됐는데 레지스트리엔 그대로
+        # 남아있는 경우를 한눈에 보이게. 자동 등록해제는 안 함(감지→알림만,
+        # 이 프로젝트 일관 원칙) — 사람이 여기 보고 직접 "루트 삭제" 버튼을
+        # 누를지 판단.
+        missing_tag = " ⚠️경로없음" if not Path(r["path"]).is_dir() else ""
         block = (
-            f"■ {r['label']}{web_primary_tag}"
+            f"■ {r['label']}{web_primary_tag}{missing_tag}"
             f" [owner={r.get('owner') or '?'}, scope={r.get('scope') or '?'}]\n"
             f"{review_line}\n"
             f"  경로: {r['path']}\n"

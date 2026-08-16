@@ -134,7 +134,9 @@ Windsurf(`.windsurf/rules/`)로 동시에 맞출 수 있다(레거시 `.cursorru
   로 stdio transport 실행(공식 `mcp` SDK). 파일 조작은 절대 안 함 — Claude
   Code/Cursor/Windsurf 등 MCP를 지원하는 IDE/에이전트가 이 서버의 tool을
   불러서 "신호"만 받고, 실제 조치는 그쪽이 한다는 게 핵심(P-01 그대로
-  유지). 지금은 tool 2개: `list_ssot_roots()`(등록 루트 목록),
+  유지). 지금은 tool 3개: `list_ssot_roots()`(등록 루트 목록 — 각 항목에
+  `pathExists`도 포함, D-052 — 폴더가 삭제/이동됐으면 false, 자동 등록해제는
+  안 함),
   `check_readme_freshness(root_label?, stale_days=30)`(README.md가 폴더 안
   다른 파일들의 최신 수정시각 대비 며칠 뒤처졌는지 — git 없는 루트라 커밋
   이력 대신 mtime 기반), `classify_content(text)`(D-050 — "맥락형 인덱싱"을

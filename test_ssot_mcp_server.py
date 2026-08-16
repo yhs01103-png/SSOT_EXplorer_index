@@ -70,6 +70,18 @@ def test_list_ssot_roots_empty_when_no_registry():
     assert mcp_srv.list_ssot_roots() == []
 
 
+def test_list_ssot_roots_reports_path_exists(tmp_path):
+    """D-052 — 폴더 삭제/이동 신호(pathExists)가 MCP로도 나가는지."""
+    missing = tmp_path / "does-not-exist"
+    m.save_roots([
+        {"label": "here", "path": str(tmp_path)},
+        {"label": "gone", "path": str(missing)},
+    ])
+    result = mcp_srv.list_ssot_roots()
+    by_label = {r["label"]: r["pathExists"] for r in result}
+    assert by_label == {"here": True, "gone": False}
+
+
 # ------------------------------------------------------- check_readme_freshness
 
 def test_readme_freshness_root_missing_on_disk(tmp_path):
