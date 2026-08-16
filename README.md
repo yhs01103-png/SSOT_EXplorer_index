@@ -137,8 +137,9 @@ Windsurf(`.windsurf/rules/`)로 동시에 맞출 수 있다(레거시 `.cursorru
   유지). 지금은 tool 2개: `list_ssot_roots()`(등록 루트 목록),
   `check_readme_freshness(root_label?, stale_days=30)`(README.md가 폴더 안
   다른 파일들의 최신 수정시각 대비 며칠 뒤처졌는지 — git 없는 루트라 커밋
-  이력 대신 mtime 기반). **아직 실제 IDE에 등록은 안 함**(O-011 — 서버
-  코드까지만 이번 라운드 범위).
+  이력 대신 mtime 기반). **Claude Code에는 등록 완료**(D-049, 저장소 루트
+  `.mcp.json` — `${CLAUDE_PROJECT_DIR:-.}` 사용, 개인 절대경로 없음). 다른
+  MCP 지원 IDE(Cursor/Windsurf 등)에는 아직 안 붙임(O-011, 필요성 미확인).
 
 ## 이 앱이 안 하는 것
 

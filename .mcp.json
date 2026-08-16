@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ssot-explorer": {
+      "command": "python",
+      "args": ["${CLAUDE_PROJECT_DIR:-.}/ssot_mcp_server.py"]
+    }
+  }
+}
