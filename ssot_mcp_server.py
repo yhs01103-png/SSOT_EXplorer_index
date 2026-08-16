@@ -12,18 +12,27 @@ Claude Code뿐 아니라 Cursor/Windsurf 등 MCP를 지원하는 어떤 IDE/에�
 AI 코딩 툴이 공통으로 지원하는 사실상 유일한 프로토콜이라 이걸 그릇으로
 택했다.
 
-**이번 라운드 범위 — README 신선도 체크 1개 tool만(스켈레톤, D-046
-개발자콘솔과 같은 "일단 동작하는 것부터" 판단)**:
-`check_readme_freshness` — 등록된 루트의 README.md가 그 폴더 안 다른
-파일들의 최신 수정 시각(mtime) 대비 얼마나 뒤처졌는지 확인한다. git 커밋
-이력 기반이 아니라 **mtime 기반**인 이유: 등록된 5개 루트 전부 git 저장소가
-아님(실측 확인, 2026-08-16) — OneDrive로 동기화되는 일반 폴더라 git log를
-쓸 수 없다. `lastReviewed`(D-018, 사람이 "리뷰했음"을 수동으로 기록, 180일
-기준)와는 다른 신호다 — 이쪽은 "실제로 파일이 그만큼 안 낡았는지"를 자동
-계산하는 교차검증용.
+**tool 목록** (D-046 개발자콘솔과 같은 "일단 동작하는 것부터" 판단으로
+하나씩 스켈레톤 추가하는 중):
+- `list_ssot_roots` — 등록 루트 목록(D-048)
+- `check_readme_freshness` — README.md가 그 폴더 안 다른 파일들의 최신
+  수정 시각(mtime) 대비 얼마나 뒤처졌는지(D-048). git 커밋 이력이 아니라
+  **mtime 기반**인 이유: 등록된 5개 루트 전부 git 저장소가 아님(실측 확인,
+  2026-08-16) — OneDrive로 동기화되는 일반 폴더라 git log를 쓸 수 없다.
+  `lastReviewed`(D-018, 사람이 "리뷰했음"을 수동으로 기록, 180일 기준)와는
+  다른 신호 — 이쪽은 "실제로 파일이 그만큼 안 낡았는지"를 자동 계산하는
+  교차검증용.
+- `classify_content` — 텍스트 하나가 등록 루트 중 어디에 속할지 순위
+  매김("맥락형 인덱싱", D-044/D-049 다음 단계). 기존 `router_orchestrator.
+  orchestrate()`(5단계 파이프라인)를 그대로 재사용 — 새 분류 로직 없음.
 
-**읽기 전용(P-01) 그대로 유지** — 이 서버는 파일을 절대 쓰지 않는다. 결과를
-받은 IDE/에이전트가 알아서 판단해서 (필요하면) 자기 도구로 직접 고친다.
+**읽기 전용(P-01) 그대로 유지 — 단, 프로젝트 파일에 한정**: 이 서버는
+README.md/CLAUDE.md 같은 **프로젝트 파일은 절대 안 쓴다.** 결과를 받은
+IDE/에이전트가 알아서 판단해서 (필요하면) 자기 도구로 직접 고친다. 다만
+`classify_content`는 호출될 때마다 이 앱 **자신의 내부 로그**(오케스트레이션
+실행 이력 `ssot_orchestrator_log.json`, 키워드 관측 `ssot_keyword_
+registry.json`)에는 계속 기록을 쌓는다 — 이건 MCP라서 새로 생긴 게 아니라
+D-044부터 GUI/CLI가 이미 하던 동작 그대로 재사용한 것뿐.
 
 **알려진 절충**(dev_console_server.py의 D-046 절충과 동일 계열): 아래
 `from main import ...`가 PySide6까지 로드한다 — `load_roots`/
@@ -44,6 +53,8 @@ import os
 from pathlib import Path
 
 from mcp.server import MCPServer
+
+import router_orchestrator  # Qt 미의존 순수 모듈 — main.py와 달리 순환참조 없이 top-level import 가능
 
 # mtime 기반이라 사람 리뷰 주기(REVIEW_STALE_DAYS=180, D-018)보다 훨씬
 # 짧게 잡는다 — 이건 "실제 파일 변경 대비 문서가 며칠 뒤처졌는지"라, 활발히
@@ -150,6 +161,24 @@ def check_readme_freshness(
         if not roots:
             return [{"status": "label_not_found", "label": root_label}]
     return [_check_one_root(r, stale_days) for r in roots]
+
+
+@server.tool()
+def classify_content(text: str) -> dict:
+    """텍스트 하나를 등록된 SSOT 루트들과 대조해 어디에 속할지 순위 매긴
+    후보를 반환한다 — 이미 있는 5단계 분류 파이프라인(router_orchestrator.
+    orchestrate(), D-032~D-044)을 그대로 재사용, 새 로직 없음. 프로젝트
+    파일(README.md/CLAUDE.md 등)은 절대 안 건드린다 — 어디에 실제로
+    저장할지는 호출한 에이전트/사람이 이 결과를 보고 판단한다(P-01,
+    범용 IDE 플러그인 방향, D-048).
+
+    **주의 — "파일 조작 없음"의 정확한 범위**: 프로젝트 파일은 안 건드리지만
+    이 앱 자신의 내부 관측 로그(오케스트레이션 실행 이력, 키워드 관측
+    카운트)는 기존 GUI/CLI와 똑같이 계속 쌓인다 — MCP로 옮겨서 새로 생긴
+    부작용이 아니라 D-044부터 있던 동작 그대로다."""
+    from main import load_roots
+
+    return router_orchestrator.orchestrate(text, load_roots())
 
 
 if __name__ == "__main__":

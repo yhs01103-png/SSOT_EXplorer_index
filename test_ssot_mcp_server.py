@@ -14,6 +14,9 @@ from pathlib import Path
 import pytest
 
 import main as m
+import router_keyword_registry as kr
+import router_orchestrator as ro
+import router_proposals as rp
 import ssot_mcp_server as mcp_srv
 
 
@@ -21,6 +24,19 @@ import ssot_mcp_server as mcp_srv
 def isolated_registry(tmp_path, monkeypatch):
     monkeypatch.setattr(m, "REGISTRY_PATH", tmp_path / "ssot-roots.json")
     m._LAST_KNOWN_HASH = ""
+    yield
+
+
+@pytest.fixture(autouse=True)
+def isolated_orchestrator_state(tmp_path, monkeypatch):
+    """classify_content()가 내부적으로 router_orchestrator.orchestrate()를
+    부르는데, 이게 오케스트레이션 로그/키워드 레지스트리/신뢰상태 전부를
+    기본(실제 사용자) 경로에 쓴다 — test_router_orchestrator.py와 같은
+    이유로 셋 다 격리(D-044 이후 정립된 관례)."""
+    monkeypatch.setattr(ro, "ORCHESTRATION_LOG_PATH", tmp_path / "orch-log.json")
+    monkeypatch.setattr(kr, "KEYWORD_REGISTRY_PATH", tmp_path / "keywords.json")
+    monkeypatch.setattr(rp, "PROPOSALS_LOG_PATH", tmp_path / "proposals.json")
+    monkeypatch.setattr(rp, "TRUST_STATE_PATH", tmp_path / "trust.json")
     yield
 
 
@@ -134,6 +150,49 @@ def test_readme_freshness_empty_registry_returns_empty_list():
     assert mcp_srv.check_readme_freshness() == []
 
 
+# ---------------------------------------------------------------- classify_content
+
+def test_classify_content_ranks_matching_root_first(tmp_path):
+    """referenceCondition에 실제 사전 단어("보안")를 써서 구조화 신호가
+    확실히 나게 함 — test_router_orchestrator.py와 같은 실측 패턴(D-034,
+    kiwipiepy가 미등록 조어를 걸러내는 문제 회피)."""
+    root = tmp_path / "root"
+    root.mkdir()
+    m.save_roots([
+        {"label": "match", "path": str(root), "referenceCondition": "보안 관련 문서"},
+        {"label": "nomatch", "path": str(root), "referenceCondition": "요리 레시피"},
+    ])
+    result = mcp_srv.classify_content("보안 정책을 정리해줘")
+    assert result["candidates"]
+    assert result["candidates"][0]["rootLabel"] == "match"
+
+
+def test_classify_content_empty_registry_returns_no_candidates():
+    result = mcp_srv.classify_content("아무 내용")
+    assert result["candidates"] == []
+
+
+def test_classify_content_result_is_json_serializable(tmp_path):
+    """MCP는 반환값을 JSON으로 직렬화한다 — Path 등 비직렬화 객체가 섞여
+    들어가는 회귀를 여기서 잡는다."""
+    import json
+
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "README.md").write_text("보안 정책 문서", encoding="utf-8")
+    m.save_roots([{"label": "root", "path": str(root), "referenceCondition": "보안"}])
+    result = mcp_srv.classify_content("보안 관련 요청")
+    json.dumps(result)  # 예외 없이 직렬화되면 통과
+
+
+def test_classify_content_records_orchestration_log(tmp_path):
+    """D-044부터 있던 동작(내부 로그 축적)이 MCP 경유로도 그대로 유지되는지
+    — docstring에 명시한 "새로 생긴 부작용 아님"을 실측으로 뒷받침."""
+    m.save_roots([{"label": "a", "path": "C:\\a"}])
+    mcp_srv.classify_content("아무 텍스트")
+    assert len(ro.load_orchestration_log()) == 1
+
+
 # ------------------------------------------------------------ tool 등록 확인
 
 def test_tools_are_registered_on_server():
@@ -145,3 +204,4 @@ def test_tools_are_registered_on_server():
     names = {t.name for t in tools}
     assert "list_ssot_roots" in names
     assert "check_readme_freshness" in names
+    assert "classify_content" in names
