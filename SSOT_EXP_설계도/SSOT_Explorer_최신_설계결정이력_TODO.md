@@ -1809,9 +1809,11 @@ D-033에서 이미 "추측 대신 매 변경을 실측으로 검증"한 방식�
 
 [O-011] MCP 서버(D-048)를 실제 IDE에 등록 + 나머지 브레인스토밍 항목
 반영 여부(다중 README 모순탐지/PR diff 결정로그/미해결질문 큐/온보딩 퀴즈).
-임시결정: **Claude Code 등록은 D-049에서 완료**(`.mcp.json` 신설) — 다만
-다음 세션 시작 시 실제로 도구 승인 프롬프트/`/mcp` 연결 상태를 눈으로
-확인하는 절차가 아직 남음. Cursor/Windsurf 쪽 MCP 설정 등록은 여전히 안 함
+임시결정: **Claude Code 등록·연결 확인 완료**(D-049 등록 → 2026-08-17
+사용자가 실제 새 세션에서 "Use this and all future MCP servers in this
+project" 승인 후 `/mcp`로 `ssot-explorer · connected · 3 tools` 실측
+확인 — `list_ssot_roots`/`check_readme_freshness`/`classify_content` 3개
+전부 잡힘). Cursor/Windsurf 쪽 MCP 설정 등록은 여전히 안 함
 (사용자가 그 툴로도 이 프로젝트를 여는지 확인 안 됨 — D-048 당시 물었던
 질문과 같은 종류, 필요성 미확인 상태 유지). 나머지 브레인스토밍 4개는
 D-048 결정문의 대조표 그대로 유효.

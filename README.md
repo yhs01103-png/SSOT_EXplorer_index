@@ -140,8 +140,9 @@ Windsurf(`.windsurf/rules/`)로 동시에 맞출 수 있다(레거시 `.cursorru
   이력 대신 mtime 기반), `classify_content(text)`(D-050 — "맥락형 인덱싱"을
   MCP로 노출, 기존 `router_orchestrator.orchestrate()` 5단계 파이프라인을
   그대로 재사용해 텍스트가 어느 등록 루트에 속할지 순위 매김). **Claude
-  Code에는 등록 완료**(D-049, 저장소 루트 `.mcp.json` — `${CLAUDE_PROJECT_
-  DIR:-.}` 사용, 개인 절대경로 없음). 다른 MCP 지원 IDE(Cursor/Windsurf
+  Code에 등록·연결 확인 완료**(D-049, 저장소 루트 `.mcp.json` —
+  `${CLAUDE_PROJECT_DIR:-.}` 사용, 개인 절대경로 없음 — `/mcp`로 3개 tool
+  전부 연결 확인, 2026-08-17). 다른 MCP 지원 IDE(Cursor/Windsurf
   등)에는 아직 안 붙임(O-011, 필요성 미확인). MCP 경유 호출의 승인/거부
   신호를 어떻게 모을지는 아직 미정(O-012).
 
