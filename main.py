@@ -1184,6 +1184,22 @@ class SyncFormatsDialog(QDialog):
 
 # ------------------------------------------------------- 라우터(D-029) — 저장
 
+class ClassificationWorker(QThread):
+    """SaveDocumentDialog.run_classification()의 router_orchestrator.
+    orchestrate() 호출을 배경 스레드로 분리(D-051, H-008) — SearchWorker
+    (D-013)와 같은 "느린 작업은 QThread로" 패턴."""
+    result_ready = Signal(dict)
+
+    def __init__(self, text: str, roots: list[dict]):
+        super().__init__()
+        self.text = text
+        self.roots = roots
+
+    def run(self):
+        result = router_orchestrator.orchestrate(self.text, self.roots)
+        self.result_ready.emit(result)
+
+
 class SaveDocumentDialog(QDialog):
     """"저장하면 알아서 맞는 프로젝트 폴더로" 워크플로우의 1단계(수동 캡처
     + 분류 제안 + 사용자 승인, 2026-08-13 D-029). router_classifier로
@@ -1201,6 +1217,7 @@ class SaveDocumentDialog(QDialog):
         self.resize(600, 520)
         self.candidates: list[dict] = []
         self.classified_text = ""
+        self.worker: ClassificationWorker | None = None
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("저장할 내용을 붙여넣으세요:"))
@@ -1208,9 +1225,9 @@ class SaveDocumentDialog(QDialog):
         self.content_edit.setPlaceholderText("여기에 텍스트를 붙여넣거나 입력...")
         layout.addWidget(self.content_edit)
 
-        classify_btn = QPushButton("🔍 분류 제안 보기")
-        classify_btn.clicked.connect(self.run_classification)
-        layout.addWidget(classify_btn)
+        self.classify_btn = QPushButton("🔍 분류 제안 보기")
+        self.classify_btn.clicked.connect(self.run_classification)
+        layout.addWidget(self.classify_btn)
 
         layout.addWidget(QLabel("제안된 저장 위치(점수 높은 순 — 등록 루트 label/scope/참조조건과 겹치는 키워드 기준):"))
         self.candidates_list = QListWidget()
@@ -1240,13 +1257,26 @@ class SaveDocumentDialog(QDialog):
         """D-032 — router_classifier 단독 대신 router_orchestrator를 통해
         3단계(구조화 신호 + README 실시간 프로즈검색 + 신뢰폐루프 주석)를
         전부 거친 결과를 쓴다 — CLI와 정확히 같은 결과(같은 함수 호출)라
-        GUI/세션 어느 쪽으로 물어도 답이 갈리지 않는다."""
+        GUI/세션 어느 쪽으로 물어도 답이 갈리지 않는다.
+
+        2026-08-17(D-051, H-008) — orchestrate()를 동기 호출하면 kiwipiepy
+        Kiwi() 콜드인잇(~1.4초, D-034)+전체 등록 루트 README 읽기가 전부 UI
+        스레드에서 돌아 그동안 창이 멈춘 것처럼 보였다(D-043 코드리뷰 발견).
+        SearchWorker(D-013)와 같은 패턴으로 QThread + Signal로 분리."""
         text = self.content_edit.toPlainText()
         if not text.strip():
             self.status_label.setText("⚠️ 내용을 먼저 입력하세요.")
             return
         self.classified_text = text
-        result = router_orchestrator.orchestrate(text, self.roots)
+        self.classify_btn.setEnabled(False)
+        self.candidates_list.clear()
+        self.status_label.setText("⏳ 분류 중...")
+        self.worker = ClassificationWorker(text, self.roots)
+        self.worker.result_ready.connect(self._on_classification_result)
+        self.worker.start()
+
+    def _on_classification_result(self, result: dict):
+        self.classify_btn.setEnabled(True)
         self.candidates = result["candidates"]
         self.candidates_list.clear()
         if not self.candidates:
@@ -1329,6 +1359,27 @@ class SaveDocumentDialog(QDialog):
             # 판단할 제안 자체가 없었으니까.
             router_proposals.record_decision(self.candidates[0], self.classified_text, "cancelled")
         self.reject()
+
+    def _stop_worker(self):
+        """SearchDialog(D-013)와 같은 이유 — 다이얼로그가 닫히는 동안 백그
+        라운드 스레드가 끝나서 이미 파괴된 위젯에 신호를 쏘는 걸 막는다.
+        orchestrate()는 SearchWorker처럼 중간에 끊을 체크포인트가 없는
+        단일 호출이라(취소 플래그 대신) 신호만 먼저 끊고 최대 2초 기다린다
+        — kiwipiepy 콜드인잇 포함 실측 ~1.4초(D-034)라 충분한 여유."""
+        if self.worker is not None and self.worker.isRunning():
+            try:
+                self.worker.result_ready.disconnect(self._on_classification_result)
+            except (RuntimeError, TypeError):
+                pass
+            self.worker.wait(2000)
+
+    def reject(self):
+        self._stop_worker()
+        super().reject()
+
+    def closeEvent(self, event):
+        self._stop_worker()
+        super().closeEvent(event)
 
 
 # ---------------------------------------------------------------------- 앱

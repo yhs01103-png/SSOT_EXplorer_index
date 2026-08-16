@@ -784,6 +784,17 @@ def test_update_relations_panel_shows_and_hides(isolated_registry, isolated_qset
 
 # --------------------------------------------------- D-029: 새 문서 저장(라우터)
 
+def _run_classification_sync(dlg):
+    """D-051(H-008) — run_classification()이 이제 QThread 배경작업(D-013
+    SearchWorker와 같은 패턴)이라, 테스트에서는 워커가 끝나길 기다린 뒤
+    큐잉된 result_ready 신호를 processEvents()로 직접 배달해야 dlg.
+    candidates에 결과가 반영된다(그래야 기존 동기 호출 시절과 같은
+    어서션을 그대로 쓸 수 있음)."""
+    dlg.run_classification()
+    dlg.worker.wait()
+    QApplication.processEvents()
+
+
 def test_save_document_dialog_run_classification_populates_candidates(tmp_path):
     root_dir = tmp_path / "flutter_App"
     root_dir.mkdir()
@@ -791,11 +802,51 @@ def test_save_document_dialog_run_classification_populates_candidates(tmp_path):
     dlg = m.SaveDocumentDialog(roots)
     try:
         dlg.content_edit.setPlainText("플러터 앱 개발 관련 메모")
-        dlg.run_classification()
+        _run_classification_sync(dlg)
         assert dlg.candidates_list.count() == 1
         assert dlg.candidates[0]["rootLabel"] == "flutter_App"
     finally:
         dlg.close()
+
+
+def test_run_classification_does_not_block_ui_thread(tmp_path):
+    """D-051(H-008) 핵심 회귀 — run_classification() 호출 직후(워커가 아직
+    안 끝났을 시점)엔 결과가 비어있고 버튼이 비활성화 상태여야 진짜로
+    배경 스레드에서 도는 것. 이 어서션이 없으면 실수로 다시 동기 호출로
+    되돌려도(H-008 재발) 다른 테스트들은 processEvents()가 어차피 결과를
+    채워줘서 못 잡는다."""
+    root_dir = tmp_path / "flutter_App"
+    root_dir.mkdir()
+    roots = [{"label": "flutter_App", "path": str(root_dir), "scope": "플러터 앱 개발", "referenceCondition": ""}]
+    dlg = m.SaveDocumentDialog(roots)
+    try:
+        dlg.content_edit.setPlainText("플러터 앱 개발 관련 메모")
+        dlg.run_classification()
+        assert dlg.worker is not None
+        assert dlg.candidates == []  # 워커가 아직 결과를 emit 안 함
+        assert dlg.classify_btn.isEnabled() is False
+        assert "분류 중" in dlg.status_label.text()
+
+        dlg.worker.wait()
+        QApplication.processEvents()
+        assert dlg.candidates_list.count() == 1
+        assert dlg.classify_btn.isEnabled() is True
+    finally:
+        dlg.close()
+
+
+def test_reject_while_classification_running_does_not_crash(tmp_path):
+    """워커가 아직 도는 중에 다이얼로그를 닫아도(X버튼/취소) 이미 파괴된
+    위젯에 신호가 배달되며 죽지 않아야 한다 — _stop_worker()가 신호를
+    먼저 끊고 기다리는지 실측."""
+    root_dir = tmp_path / "flutter_App"
+    root_dir.mkdir()
+    roots = [{"label": "flutter_App", "path": str(root_dir), "scope": "플러터 앱 개발", "referenceCondition": ""}]
+    dlg = m.SaveDocumentDialog(roots)
+    dlg.content_edit.setPlainText("플러터 앱 개발 관련 메모")
+    dlg.run_classification()
+    dlg.reject()  # 워커가 아직 도는 중일 가능성 높음(kiwipiepy 콜드인잇 ~1.4초)
+    assert dlg.worker.isRunning() is False  # _stop_worker()가 끝날 때까지 기다렸어야 함
 
 
 def test_save_document_dialog_no_candidates_shows_hint(tmp_path):
@@ -807,7 +858,7 @@ def test_save_document_dialog_no_candidates_shows_hint(tmp_path):
         # D-033/D-034: 명사가 4개 이상은 있어야 needs_clarification(너무
         # 짧음) 분기로 안 새고, 등록 루트와는 진짜 무관한 실제 단어 문장.
         dlg.content_edit.setPlainText("고양이와 강아지와 물고기와 새와 토끼 이야기")
-        dlg.run_classification()
+        _run_classification_sync(dlg)
         assert dlg.candidates_list.count() == 0
         assert "후보가 없습니다" in dlg.status_label.text()
     finally:
@@ -825,7 +876,7 @@ def test_save_document_dialog_save_writes_file_and_records_approved(tmp_path, mo
     dlg = m.SaveDocumentDialog(roots)
     try:
         dlg.content_edit.setPlainText("플러터 앱 개발 메모 내용")
-        dlg.run_classification()
+        _run_classification_sync(dlg)
         dlg.candidates_list.setCurrentRow(0)
         dlg.filename_edit.setText("메모.md")
         dlg.save_to_selected()
@@ -853,7 +904,7 @@ def test_save_document_dialog_save_uses_live_text_after_edit(tmp_path, monkeypat
     dlg = m.SaveDocumentDialog(roots)
     try:
         dlg.content_edit.setPlainText("플러터 앱 개발 메모 초안")
-        dlg.run_classification()
+        _run_classification_sync(dlg)
         dlg.candidates_list.setCurrentRow(0)
         dlg.content_edit.setPlainText("플러터 앱 개발 메모 — 수정된 최종본")  # 분류 후 추가 편집
         dlg.filename_edit.setText("메모.md")
@@ -876,7 +927,7 @@ def test_save_document_dialog_rejects_path_traversal_filename(tmp_path):
     dlg = m.SaveDocumentDialog(roots)
     try:
         dlg.content_edit.setPlainText("플러터 앱 개발 메모")
-        dlg.run_classification()
+        _run_classification_sync(dlg)
         dlg.candidates_list.setCurrentRow(0)
 
         dlg.filename_edit.setText("../evil.md")
@@ -908,7 +959,7 @@ def test_save_document_dialog_cancel_after_classification_records_cancelled(tmp_
     roots = [{"label": "flutter_App", "path": str(root_dir), "scope": "플러터 앱 개발", "referenceCondition": ""}]
     dlg = m.SaveDocumentDialog(roots)
     dlg.content_edit.setPlainText("플러터 앱 개발 메모")
-    dlg.run_classification()
+    _run_classification_sync(dlg)
     dlg.cancel_and_close()  # reject() 호출 — 다이얼로그는 이 시점에 이미 닫힘
 
     proposals = router_proposals.load_proposals()

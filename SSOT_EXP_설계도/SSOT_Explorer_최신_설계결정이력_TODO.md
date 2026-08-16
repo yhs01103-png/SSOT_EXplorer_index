@@ -2,7 +2,7 @@
 SSOT_Explorer — 최신 설계결정이력 + TODO
 ================================================================
 기준 버전: v1.0
-최종수정: 2026-08-17 (D-050)
+최종수정: 2026-08-17 (D-051)
 원칙: 가장 최근 라운드의 신규 결정(D-번호)과 전체 TODO(H-번호)만 담는다.
       더 오래된 결정은 레거시 파일로 이동.
 
@@ -1550,6 +1550,36 @@ MCP엔 GUI의 "승인 버튼" 같은 명시적 이벤트가 없어서, O-006/007
 싶다"는 필요가 확인될 때.
 관련 D-번호: D-029(원래 신뢰폐루프), D-048, D-050.
 
+[D-051] H-008 구현 — SaveDocumentDialog 분류를 QThread로 분리(GUI 블로킹 해소)
+결정: "다음 스텝" 요청 → 밀린 TODO 중 H-008(D-043 코드리뷰가 이미 발견해둔
+      실제 버그, 자체 완결적이라 사용자 판단 불필요)을 진행. `run_
+      classification()`이 `router_orchestrator.orchestrate()`를 동기
+      호출해 kiwipiepy 콜드인잇(~1.4초, D-034)+전체 등록 루트 README
+      읽기가 UI 스레드에서 돌던 문제를 SearchWorker(D-013)와 같은
+      QThread+Signal 패턴으로 해소.
+      구현: `ClassificationWorker(QThread)` 신설(`result_ready = Signal(dict)`,
+      `run()`이 orchestrate() 호출 후 emit) — `SaveDocumentDialog.
+      run_classification()`은 이제 워커만 띄우고 즉시 반환("⏳ 분류 중..."
+      표시 + 분류버튼 비활성화), 실제 후보 반영은 새 슬롯
+      `_on_classification_result()`로 분리. `_stop_worker()`(다이얼로그
+      close/reject 시 신호 먼저 끊고 최대 2초 대기 — orchestrate()는
+      SearchWorker처럼 중간에 끊을 체크포인트가 없는 단일 호출이라 취소
+      플래그 대신 "먼저 끊고 기다리는" 전략 채택)를 `reject()`/
+      `closeEvent()` 양쪽에 배선(SearchDialog D-013과 같은 이중 오버라이드
+      패턴) — 워커가 도는 중에 다이얼로그가 닫혀도 이미 파괴된 위젯에
+      신호가 안 날아가게.
+이유: 이미 코드리뷰(D-043)로 확인된 실제 결함이고 수정 방향까지 그때
+      정해뒀던 항목이라, 사용자 판단이 필요한 새 설계가 아니라 곧장
+      구현 가능한 상태였음.
+검증: 기존 SaveDocumentDialog 테스트 6개를 `_run_classification_sync()`
+      헬퍼(워커 wait()+processEvents()로 결과 배달)로 갱신 + 신규 2개
+      (① run_classification() 직후 워커가 안 끝난 시점엔 candidates가
+      비어있고 버튼 비활성화 상태임을 확인해 "진짜 비동기"임을 증명 —
+      이 어서션 없인 실수로 동기 호출로 되돌려도 다른 테스트가 못 잡음
+      ② 워커가 도는 중 reject() 호출해도 크래시 없이 안전 종료) — pytest
+      전체 185→187개 통과. 앱 smoke-test(백그라운드 실행→크래시로그
+      0바이트 확인→종료) 통과.
+
 ================================================================
 PART 2 — TODO
 ================================================================
@@ -1597,16 +1627,10 @@ PART 2 — TODO
   반영해 전면 재작성(레지스트리 스키마/원자성+동시성/클래스구조/CLI계약/
   훅3종/pytest94개 breakdown까지).
 
-🟡 P2
-H-008  SaveDocumentDialog.run_classification()이 GUI 스레드를 블로킹
+✅ H-008  SaveDocumentDialog.run_classification()이 GUI 스레드를 블로킹  | 2026-08-17
   대상: main.py의 run_classification()
-  원인: D-043 코드리뷰 발견 — router_orchestrator.orchestrate()를 동기
-        호출하는데, kiwipiepy Kiwi() 콜드인잇(~1.4초)+전체 등록 루트
-        README 읽기가 전부 UI 스레드에서 돔 — SearchWorker(D-013)가 이미
-        정립한 "느린 작업은 QThread로" 관례와 불일치.
-  수정 방향(안): SearchWorker와 같은 패턴으로 QThread + Signal(dict)로
-        분리, 다이얼로그는 "분류 중..." 표시 후 결과 신호로 채움.
-  완료 조건: 별도 라운드에서 구현(지금 라운드는 범위 밖)
+  D-051에서 구현 완료 — ClassificationWorker(QThread) 신설, SearchWorker
+  (D-013)와 동일 패턴. pytest 187개 통과.
 
 🔵 P3
 H-009  _ensure_all_roots_initialized()가 앱 시작 시 전체 루트를 동기 블로킹
