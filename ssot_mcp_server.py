@@ -25,14 +25,19 @@ AI 코딩 툴이 공통으로 지원하는 사실상 유일한 프로토콜이�
 - `classify_content` — 텍스트 하나가 등록 루트 중 어디에 속할지 순위
   매김("맥락형 인덱싱", D-044/D-049 다음 단계). 기존 `router_orchestrator.
   orchestrate()`(5단계 파이프라인)를 그대로 재사용 — 새 분류 로직 없음.
-- `list_triggered_actions` — 액션 레지스트리(D-058, O-013). 등록 루트가
-  `actions: [{trigger, scriptPath, policy}]`를 선언해두면, 호출자가 넘긴
-  `changed_paths`와 `trigger`(fnmatch 글롭)가 매치되는 항목만 신호로
-  돌려준다. "이런 조건이면 이 스크립트가 관련 있다"는 신호만 줄 뿐,
-  스크립트 실행 여부/자동·승인 판단은 전부 호출한 에이전트 몫(P-01 그대로
-  — 이 tool도 파일 조작·프로세스 실행을 절대 안 함). 첫 실사용 사례:
-  Lazzy_App_OS_Monorepo/productized/check_drift.py(포팅한 소스가 원본 대비
-  드리프트났는지 검사).
+- `list_triggered_actions` — 액션 레지스트리(D-058, O-013, D-061). 등록
+  루트가 `actions: [{trigger, policy, scriptPath?, prompt?}]`를 선언해두면
+  (scriptPath/prompt 중 최소 하나는 필수, D-061 — 실행 스크립트든 순수
+  자연어 규칙이든), 호출자가 넘긴 `changed_paths`와 `trigger`(fnmatch
+  글롭)가 매치되는 항목만 신호로 돌려준다. "이런 조건이면 이게 관련
+  있다"는 신호만 줄 뿐, 스크립트 실행이든 프롬프트 적용이든 자동/승인
+  판단은 전부 호출한 에이전트 몫(P-01 그대로 — 이 tool도 파일 조작·
+  프로세스 실행을 절대 안 함). 첫 실사용 사례: Lazzy_App_OS_Monorepo/
+  productized/check_drift.py(포팅한 소스가 원본 대비 드리프트났는지 검사).
+- `list_registered_actions` — 액션 전체 조회(D-061). `changed_paths` 매칭
+  없이 등록된 actions를 그대로 나열한다(root_label 생략 시 전체 루트) —
+  "지금 뭐가 등록돼 있는지 보여줘" 같은 순수 조회용, `list_triggered_
+  actions`와 달리 매치 판단을 아예 안 한다.
 - `list_missing_index_folders` — 인덱스 누락 탐지(D-060). 등록 루트 바로
   밑(depth=1)의 하위 폴더 중 CLAUDE.md/README.md가 (둘 중 하나라도) 없는
   것만 후보로 반환한다. dot-폴더와 흔한 의존성/빌드 디렉토리(node_modules,
@@ -276,11 +281,58 @@ def list_triggered_actions(root_label: str, changed_paths: list[str]) -> list[di
                 "matchedPath": matched_path,
                 "scriptPath": script_path,
                 "scriptExists": bool(script_path) and Path(script_path).is_file(),
+                # D-061 — 순수 프롬프트(자연어 규칙) 액션. scriptPath 없이
+                # 이 필드만 있을 수 있다 — 호출한 에이전트가 실행 파일 없이
+                # 이 지시문 자체를 판단 근거로 쓴다.
+                "prompt": action.get("prompt", ""),
                 "policy": action.get("policy", "approve"),
                 "description": action.get("description", ""),
             }
         )
     return matched
+
+
+@server.tool()
+def list_registered_actions(root_label: str | None = None) -> list[dict]:
+    """등록된 actions(D-058/D-061)를 매칭 없이 그대로 나열한다 —
+    `list_triggered_actions`가 changed_paths와 대조해 매치되는 것만
+    돌려주는 것과 달리, 이건 "지금 뭐가 등록돼 있는지" 자체를 보여주는
+    순수 조회용이다. root_label을 생략하면 등록된 모든 루트의 actions를
+    합쳐서 반환(각 항목에 rootLabel을 붙여 어디 소속인지 구분).
+
+    scriptPath가 있는 항목은 scriptExists(D-052 원칙 — 신호만, 자동으로
+    안 거름)도 같이 계산. prompt만 있고 scriptPath가 없는 순수 규칙
+    항목은 scriptPath/scriptExists가 빈 값/False로 나온다(D-061).
+
+    root_label을 줬는데 못 찾으면 다른 tool과 동일하게 label_not_found.
+    개발자 모드가 꺼져 있으면 에러 dict 하나만(D-057 게이팅 관례)."""
+    from main import REGISTRY_PATH, load_roots
+
+    if not is_developer_mode(REGISTRY_PATH):
+        return [_DEV_MODE_OFF]
+
+    roots = load_roots()
+    if root_label is not None:
+        roots = [r for r in roots if r.get("label") == root_label]
+        if not roots:
+            return [{"status": "label_not_found", "label": root_label}]
+
+    results: list[dict] = []
+    for r in roots:
+        for action in r.get("actions", []):
+            script_path = action.get("scriptPath", "")
+            results.append(
+                {
+                    "rootLabel": r.get("label", ""),
+                    "trigger": action.get("trigger", ""),
+                    "scriptPath": script_path,
+                    "scriptExists": bool(script_path) and Path(script_path).is_file(),
+                    "prompt": action.get("prompt", ""),
+                    "policy": action.get("policy", "approve"),
+                    "description": action.get("description", ""),
+                }
+            )
+    return results
 
 
 @server.tool()

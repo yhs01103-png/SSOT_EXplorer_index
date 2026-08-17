@@ -438,7 +438,27 @@ def test_validate_registry_flags_bad_action_policy_enum():
 
 def test_validate_registry_flags_action_missing_required_field():
     errors = m.validate_registry({
-        "roots": [{"label": "a", "path": "C:\\a", "actions": [{"trigger": "*.py"}]}],  # scriptPath/policy 없음
+        "roots": [{"label": "a", "path": "C:\\a", "actions": [{"trigger": "*.py"}]}],  # scriptPath/prompt/policy 없음
+    })
+    assert errors
+
+
+def test_validate_registry_accepts_prompt_only_action():
+    """D-061 — scriptPath 없이 prompt만 있는 순수 규칙 action도 유효해야 한다."""
+    errors = m.validate_registry({
+        "roots": [{
+            "label": "a", "path": "C:\\a",
+            "actions": [{"trigger": "*.py", "prompt": "이 조건이면 이렇게 판단해라", "policy": "approve"}],
+        }],
+    })
+    assert errors == []
+
+
+def test_validate_registry_flags_action_with_neither_script_nor_prompt():
+    """D-061 — scriptPath도 prompt도 없으면 호출한 에이전트가 뭘 해야
+    할지 알 수 없는 빈 액션이라 무효."""
+    errors = m.validate_registry({
+        "roots": [{"label": "a", "path": "C:\\a", "actions": [{"trigger": "*.py", "policy": "auto"}]}],
     })
     assert errors
 

@@ -339,18 +339,26 @@ REGISTRY_SCHEMA = {
                     "lastReviewed": {"type": "string", "pattern": r"^$|^\d{4}-\d{2}-\d{2}$"},
                     "dependsOnDocs": {"type": "array", "items": {"type": "string"}},
                     # 2026-08-17(D-058, O-013) — 액션 레지스트리. trigger는
-                    # fnmatch 글롭(예: "*/productized/*"), scriptPath는 실행
-                    # 스크립트 경로, policy는 호출한 에이전트가 자동 실행할지
-                    # 사용자 승인을 받을지 판단하는 힌트(이 앱은 강제 안 함).
+                    # fnmatch 글롭(예: "*/productized/*"), policy는 호출한
+                    # 에이전트가 자동 실행할지 사용자 승인을 받을지 판단하는
+                    # 힌트(이 앱은 강제 안 함). scriptPath(실행 스크립트
+                    # 경로)/prompt(순수 자연어 규칙, 실행 파일 없음) 중
+                    # 최소 하나는 있어야 함(D-061) — 둘 다 없으면 호출한
+                    # 에이전트가 뭘 해야 할지 알 수 없는 빈 액션이라 무의미.
                     "actions": {
                         "type": "array",
                         "items": {
                             "type": "object",
-                            "required": ["trigger", "scriptPath", "policy"],
+                            "required": ["trigger", "policy"],
+                            "anyOf": [
+                                {"required": ["scriptPath"]},
+                                {"required": ["prompt"]},
+                            ],
                             "additionalProperties": True,
                             "properties": {
                                 "trigger": {"type": "string", "minLength": 1},
                                 "scriptPath": {"type": "string", "minLength": 1},
+                                "prompt": {"type": "string", "minLength": 1},
                                 "policy": {"type": "string", "enum": ["auto", "approve"]},
                                 "description": {"type": "string"},
                             },

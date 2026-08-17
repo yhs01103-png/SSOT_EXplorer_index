@@ -1859,6 +1859,55 @@ D-057(개발자모드 게이팅), O-013.
 관련 D-번호: D-057(개발자모드 게이팅), D-058(같은 패턴의 직전 tool),
 D-013(SearchWorker dot-폴더 제외 관례).
 
+[D-061] 순수 프롬프트(자연어 규칙) 액션 + list_registered_actions 조회 tool
+결정: `actions` 스키마의 `required: [trigger, scriptPath, policy]`를
+      `required: [trigger, policy]` + `anyOf: [{required: [scriptPath]},
+      {required: [prompt]}]`로 완화 — scriptPath(실행 스크립트) 없이
+      `prompt`(순수 자연어 규칙 텍스트) 필드만으로도 유효한 action이
+      되게 함. `list_triggered_actions`가 매치된 항목에 `prompt` 필드도
+      같이 반환하도록 확장(scriptPath 없으면 빈 문자열, scriptExists는
+      False). 별도로 `list_registered_actions(root_label?)` tool 신설 —
+      changed_paths 매칭 없이 등록된 actions를 그대로 나열(라벨 생략 시
+      전체 루트 합산, 각 항목에 rootLabel 포함).
+이유: "실행 스크립트뿐 아니라 순수 규칙(프롬프트)도 등록하고 싶다" +
+      "지금 뭐 등록됐는지 그냥 조회하고 싶다"는 요청 — D-058/D-059로 만든
+      액션 레지스트리가 scriptPath 중심이라 텍스트 규칙만 등록하고 싶은
+      경우를 못 담았고, 조회도 changed_paths를 지어내야만 되는 매칭
+      경로뿐이었음. 둘 다 P-01(파일/프로세스 조작 절대 안 함) 그대로 —
+      prompt 필드도 그 자체는 그냥 문자열, 실제로 그 지시를 따를지는
+      호출한 에이전트 판단.
+검증: main.py 신규 2개(prompt-only action 스키마 통과, scriptPath/prompt
+      둘 다 없으면 스키마 위반) + ssot_mcp_server.py 신규 7개
+      (list_triggered_actions의 prompt 매치 1개 + list_registered_actions
+      전체 조회/라벨 필터/빈 목록/라벨 없음/scriptExists 계산/개발자모드
+      게이팅/JSON 직렬화 6개) + tool 등록 목록 assert 갱신 — 전체 pytest
+      227→237개 통과. 실제 레지스트리로 `list_registered_actions()` 직접
+      실행 — flutter_App의 productized/check_drift.py 액션이 정확한
+      필드(scriptExists=True, prompt="")로 나오는 것 확인.
+관련 D-번호: D-058, D-060.
+
+[D-062] SSOT_Explorer MCP 서버를 사용자 스코프로 등록 — 진짜 전역 플러그인화
+결정: `claude mcp add -s user ssot-explorer -- python <경로>\ssot_mcp_
+      server.py` 실행 — 기존 프로젝트 스코프(D-049, 이 레포 `.mcp.json`)에
+      더해 사용자 스코프에도 등록. `claude mcp get ssot-explorer`로
+      `Scope: User config (available in all your projects)` +
+      `Status: ✔ Connected` 확인.
+이유: "SSOT 앱이 실제로 클로드 코드 플러그인이 된 거냐"는 질문에 답하며
+      확인해보니, 지금까지(D-049~D-061 전부)는 프로젝트 스코프 등록뿐이라
+      **이 레포 자체를 열 때만** 연결되고 있었음 — 실제로 Lazzy_App_OS_
+      Monorepo 세션(이 레포 아님)에서 ToolSearch로 확인하니 `mcp__ssot-
+      explorer__*` tool이 하나도 안 잡혔다(이번 대화 내내 이 tool들을
+      "호출"한 건 전부 Bash로 직접 함수를 부른 시뮬레이션이었지, 진짜 MCP
+      경유가 아니었다는 뜻). 사용자가 "설치만 하면 전역으로 되길 원한다"고
+      명시적으로 확인해서 사용자 스코프로 승격.
+검증: `claude mcp list`/`claude mcp get ssot-explorer` 둘 다 사용자
+      스코프+Connected 확인. **주의**: 이미 켜져 있던 세션(이 등록 이전에
+      시작된 세션)에는 소급 반영 안 됨 — 실제로 이 등록을 실행한 Lazzy_
+      App_OS_Monorepo 세션 자체에서 재확인해보니 여전히 tool 목록에 안
+      잡힘(D-049 때도 동일하게 "세션 재시작 필요"로 기록해뒀던 것과 같은
+      제약). 새 세션부터 확인 필요.
+관련 D-번호: D-049(최초 프로젝트 스코프 등록), O-011.
+
 ================================================================
 PART 2 — TODO
 ================================================================

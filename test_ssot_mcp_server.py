@@ -282,6 +282,96 @@ def test_list_triggered_actions_result_is_json_serializable(tmp_path):
     json.dumps(result)
 
 
+def test_list_triggered_actions_matches_prompt_only_action(tmp_path):
+    """D-061 — scriptPath 없이 prompt만 있는 순수 규칙 action도 신호로
+    잡혀야 하고, scriptPath/scriptExists는 빈 값/False로 나와야 한다."""
+    m.save_roots([{
+        "label": "demo",
+        "path": str(tmp_path),
+        "actions": [
+            {"trigger": "*/notes/*", "prompt": "이 조건이면 이렇게 판단해라", "policy": "approve"},
+        ],
+    }])
+    result = mcp_srv.list_triggered_actions("demo", ["C:/repo/notes/foo.md"])
+    assert len(result) == 1
+    assert result[0]["prompt"] == "이 조건이면 이렇게 판단해라"
+    assert result[0]["scriptPath"] == ""
+    assert result[0]["scriptExists"] is False
+
+
+# ----------------------------------------------------------- list_registered_actions
+
+def test_list_registered_actions_returns_all_when_no_label_given(tmp_path):
+    m.save_roots([
+        {
+            "label": "a", "path": str(tmp_path / "a"),
+            "actions": [{"trigger": "*.py", "scriptPath": "x.py", "policy": "auto"}],
+        },
+        {
+            "label": "b", "path": str(tmp_path / "b"),
+            "actions": [{"trigger": "*.md", "prompt": "규칙 텍스트", "policy": "approve"}],
+        },
+    ])
+    result = mcp_srv.list_registered_actions()
+    assert len(result) == 2
+    by_root = {r["rootLabel"]: r for r in result}
+    assert by_root["a"]["scriptPath"] == "x.py"
+    assert by_root["b"]["prompt"] == "규칙 텍스트"
+
+
+def test_list_registered_actions_filters_by_label(tmp_path):
+    m.save_roots([
+        {"label": "a", "path": str(tmp_path / "a"), "actions": [{"trigger": "*.py", "scriptPath": "x.py", "policy": "auto"}]},
+        {"label": "b", "path": str(tmp_path / "b"), "actions": [{"trigger": "*.md", "scriptPath": "y.py", "policy": "auto"}]},
+    ])
+    result = mcp_srv.list_registered_actions("a")
+    assert len(result) == 1
+    assert result[0]["rootLabel"] == "a"
+
+
+def test_list_registered_actions_empty_when_no_actions_registered(tmp_path):
+    m.save_roots([{"label": "demo", "path": str(tmp_path)}])
+    assert mcp_srv.list_registered_actions("demo") == []
+
+
+def test_list_registered_actions_unknown_label():
+    result = mcp_srv.list_registered_actions("no-such-label")
+    assert result == [{"status": "label_not_found", "label": "no-such-label"}]
+
+
+def test_list_registered_actions_reports_script_exists(tmp_path):
+    script = tmp_path / "real.py"
+    script.write_text("# x", encoding="utf-8")
+    m.save_roots([{
+        "label": "demo", "path": str(tmp_path),
+        "actions": [
+            {"trigger": "*.py", "scriptPath": str(script), "policy": "auto"},
+            {"trigger": "*.py", "scriptPath": str(tmp_path / "gone.py"), "policy": "auto"},
+        ],
+    }])
+    result = mcp_srv.list_registered_actions("demo")
+    by_script = {r["scriptPath"]: r["scriptExists"] for r in result}
+    assert by_script[str(script)] is True
+    assert by_script[str(tmp_path / "gone.py")] is False
+
+
+def test_list_registered_actions_gated_when_developer_mode_off(tmp_path):
+    m.save_roots([{"label": "demo", "path": str(tmp_path), "actions": []}])
+    rp.set_developer_mode(False, m.REGISTRY_PATH)
+    result = mcp_srv.list_registered_actions("demo")
+    assert result == [mcp_srv._DEV_MODE_OFF]
+
+
+def test_list_registered_actions_result_is_json_serializable(tmp_path):
+    import json
+
+    m.save_roots([{
+        "label": "demo", "path": str(tmp_path),
+        "actions": [{"trigger": "*.py", "scriptPath": "x.py", "policy": "auto"}],
+    }])
+    json.dumps(mcp_srv.list_registered_actions())
+
+
 # ----------------------------------------------------- list_missing_index_folders
 
 def test_list_missing_index_folders_flags_folder_with_no_index(tmp_path):
@@ -460,4 +550,5 @@ def test_tools_are_registered_on_server():
     assert "check_readme_freshness" in names
     assert "classify_content" in names
     assert "list_triggered_actions" in names
+    assert "list_registered_actions" in names
     assert "list_missing_index_folders" in names
