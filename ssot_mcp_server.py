@@ -25,6 +25,14 @@ AI 코딩 툴이 공통으로 지원하는 사실상 유일한 프로토콜이�
 - `classify_content` — 텍스트 하나가 등록 루트 중 어디에 속할지 순위
   매김("맥락형 인덱싱", D-044/D-049 다음 단계). 기존 `router_orchestrator.
   orchestrate()`(5단계 파이프라인)를 그대로 재사용 — 새 분류 로직 없음.
+- `list_triggered_actions` — 액션 레지스트리(D-058, O-013). 등록 루트가
+  `actions: [{trigger, scriptPath, policy}]`를 선언해두면, 호출자가 넘긴
+  `changed_paths`와 `trigger`(fnmatch 글롭)가 매치되는 항목만 신호로
+  돌려준다. "이런 조건이면 이 스크립트가 관련 있다"는 신호만 줄 뿐,
+  스크립트 실행 여부/자동·승인 판단은 전부 호출한 에이전트 몫(P-01 그대로
+  — 이 tool도 파일 조작·프로세스 실행을 절대 안 함). 첫 실사용 사례:
+  Lazzy_App_OS_Monorepo/productized/check_drift.py(포팅한 소스가 원본 대비
+  드리프트났는지 검사).
 
 **읽기 전용(P-01) 그대로 유지 — 단, 프로젝트 파일에 한정**: 이 서버는
 README.md/CLAUDE.md 같은 **프로젝트 파일은 절대 안 쓴다.** 결과를 받은
@@ -49,6 +57,7 @@ IDE 쪽 mcp 설정(예: Claude Code `.mcp.json`)에 이 파일을 커맨드로 �
 """
 from __future__ import annotations
 
+import fnmatch
 import os
 from pathlib import Path
 
@@ -208,6 +217,55 @@ def classify_content(text: str) -> dict:
         return _DEV_MODE_OFF
 
     return router_orchestrator.orchestrate(text, load_roots())
+
+
+@server.tool()
+def list_triggered_actions(root_label: str, changed_paths: list[str]) -> list[dict]:
+    """등록 루트의 `actions`(D-058, O-013) 중 `changed_paths`와 `trigger`가
+    매치되는 것만 신호로 반환한다 — 스크립트를 절대 실행하지 않는다(P-01,
+    다른 tool과 동일 원칙). `trigger`는 fnmatch 글롭 패턴으로 각
+    changed_path 문자열 전체와 대조한다 — 경로 구분자(윈도우 `\\` vs
+    posix `/`)는 정규화하지 않으므로, 호출자가 자기 쪽에서 쓰는 형식과
+    trigger 글롭의 형식을 맞춰야 한다.
+
+    반환된 각 항목의 `policy`("auto"|"approve")는 힌트일 뿐 강제가
+    아니다 — 실제로 스크립트를 돌릴지, 돌리기 전에 사용자 승인을 받을지는
+    호출한 에이전트가 판단한다. `scriptExists`는 D-052(pathExists)와 같은
+    원칙 — scriptPath가 그 사이 없어졌을 수 있다는 신호일 뿐 자동으로
+    걸러내지 않는다.
+
+    root_label을 못 찾으면 check_readme_freshness와 동일하게
+    label_not_found 신호 하나만 반환. 개발자 모드가 꺼져 있으면 다른
+    tool과 동일하게 에러 dict 하나만 반환한다(D-057 게이팅 관례)."""
+    from main import REGISTRY_PATH, load_roots
+
+    if not is_developer_mode(REGISTRY_PATH):
+        return [_DEV_MODE_OFF]
+
+    roots = [r for r in load_roots() if r.get("label") == root_label]
+    if not roots:
+        return [{"status": "label_not_found", "label": root_label}]
+
+    matched: list[dict] = []
+    for action in roots[0].get("actions", []):
+        trigger = action.get("trigger", "")
+        matched_path = next(
+            (p for p in changed_paths if trigger and fnmatch.fnmatch(p, trigger)), None
+        )
+        if matched_path is None:
+            continue
+        script_path = action.get("scriptPath", "")
+        matched.append(
+            {
+                "trigger": trigger,
+                "matchedPath": matched_path,
+                "scriptPath": script_path,
+                "scriptExists": bool(script_path) and Path(script_path).is_file(),
+                "policy": action.get("policy", "approve"),
+                "description": action.get("description", ""),
+            }
+        )
+    return matched
 
 
 if __name__ == "__main__":

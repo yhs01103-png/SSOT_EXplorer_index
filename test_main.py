@@ -139,6 +139,7 @@ def test_save_then_load_roundtrip(isolated_registry):
     assert len(roots) == 1
     assert roots[0]["label"] == "a"
     assert roots[0]["primarySource"] == "local"  # D-023 기본값
+    assert roots[0]["actions"] == []  # D-058 기본값
 
 
 def test_save_preserves_shared_docs_and_comment(isolated_registry):
@@ -412,6 +413,34 @@ def test_validate_registry_allows_unknown_extra_fields():
     # 실측: matchToken처럼 main.py가 안 읽는 필드를 외부 스크립트가 쓸 수 있음 — 막지 않는다
     errors = m.validate_registry({"roots": [{"label": "a", "path": "C:\\a", "matchToken": "C:\\a"}]})
     assert errors == []
+
+
+def test_validate_registry_accepts_well_formed_actions():
+    """D-058(O-013) — actions 배열이 스키마를 통과하는지."""
+    errors = m.validate_registry({
+        "roots": [{
+            "label": "a", "path": "C:\\a",
+            "actions": [{"trigger": "*.py", "scriptPath": "check.py", "policy": "approve"}],
+        }],
+    })
+    assert errors == []
+
+
+def test_validate_registry_flags_bad_action_policy_enum():
+    errors = m.validate_registry({
+        "roots": [{
+            "label": "a", "path": "C:\\a",
+            "actions": [{"trigger": "*.py", "scriptPath": "check.py", "policy": "sometimes"}],
+        }],
+    })
+    assert errors  # policy는 "auto"|"approve"만 허용
+
+
+def test_validate_registry_flags_action_missing_required_field():
+    errors = m.validate_registry({
+        "roots": [{"label": "a", "path": "C:\\a", "actions": [{"trigger": "*.py"}]}],  # scriptPath/policy 없음
+    })
+    assert errors
 
 
 def test_validate_registry_flags_duplicate_labels():

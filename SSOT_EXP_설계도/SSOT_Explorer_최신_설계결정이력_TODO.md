@@ -1761,6 +1761,33 @@ MCP엔 GUI의 "승인 버튼" 같은 명시적 이벤트가 없어서, O-006/007
       복원) — pytest 전체 192→205개 통과. 앱 smoke-test로 실제
       토글(끄기→탭 1개, 켜기→탭 2개 복귀) 확인 + 크래시로그 없음 확인.
 
+[D-058] O-013(b) 구현 — 액션 레지스트리(actions) + list_triggered_actions MCP tool
+결정: 루트 항목에 `actions: [{trigger, scriptPath, policy}]` 배열 추가
+      (REGISTRY_SCHEMA properties에 명시, additionalProperties는 계속
+      허용). load_roots()가 다른 필드처럼 `actions`를 `[]`로 setdefault.
+      ssot_mcp_server.py에 `list_triggered_actions(root_label,
+      changed_paths)` tool 신설 — `trigger`를 fnmatch 글롭으로 각
+      changed_path 문자열과 대조해 매치되는 action만 반환. `policy`
+      ("auto"|"approve")는 힌트일 뿐 이 tool이 강제하지 않음 — 실제로
+      스크립트를 돌릴지, 돌리기 전에 사용자 승인을 받을지는 호출한
+      에이전트가 그 값을 보고 스스로 판단(P-01 그대로 유지 — 이 tool도
+      파일 조작·프로세스 실행 절대 안 함). `scriptExists`는 D-052
+      (pathExists)와 동일 원칙으로 신호만 주고 자동으로 안 거름. 다른 3개
+      tool과 동일하게 D-057 개발자모드 게이팅 적용.
+이유: O-013에서 사용자가 후보 (a)/(b)/(c) 중 (b)(MCP tool 노출)를 확정.
+      (b)는 (a) 스키마 확장을 전제로 하므로 함께 구현. Lazzy_App_OS_
+      Monorepo/productized/check_drift.py(포팅한 소스가 원본 대비
+      드리프트났는지 검사)가 이 기능이 나오게 된 실사용 계기이자 첫 후보
+      사례.
+검증: main.py 신규 3개(actions 기본값 [] 라운드트립, 스키마 통과, policy
+      enum 위반 시 에러) + ssot_mcp_server.py 신규 8개(글롭 매치/불일치/
+      스크립트 없음(scriptExists=False)/라벨 없음/actions 없음/policy
+      기본값(approve)/JSON 직렬화/개발자모드 게이팅) + tool 등록 목록
+      assert 갱신 — 전체 pytest 205→216개 통과. `echo "" | python
+      ssot_mcp_server.py` 프로세스 스모크 재확인(예외 없이 정상 종료).
+관련 D-번호: D-038(스키마), D-048(MCP 서버), D-052(pathExists 원칙),
+D-057(개발자모드 게이팅), O-013.
+
 ================================================================
 PART 2 — TODO
 ================================================================
@@ -1990,6 +2017,47 @@ D-048 결정문의 대조표 그대로 유효.
 재논의 조건: MCP 서버를 실제로 Claude Code나 다른 IDE에 붙여서 써보고
 싶어질 때(그때 등록 절차 + 위 항목들 우선순위를 같이 정함).
 관련 D-번호: D-020, D-045, D-048, O-009.
+
+[O-013] 임의 스크립트를 트리거 조건 + 자동/승인 정책과 함께 등록하는 일반
+메커니즘("액션 레지스트리"). 2026-08-17, Lazzy_App_OS_Monorepo 세션에서
+productized/check_drift.py(포팅한 소스가 원본 대비 드리프트났는지 검사하는
+스크립트, PORT_MANIFEST.json 기반)를 만들고 나서 사용자가 "이걸 감지되면
+자동/승인 정책에 따라 실행해주는 형태로 SSOT 인덱싱 쪽에 등록하고 싶다"고
+요청하며 나온 항목 — O-012(MCP classify_content 승인신호 수집)와 인접하지만
+범위가 다르다: O-012는 "이 앱이 이미 내리는 판단(어느 루트가 맞는지)에 대한
+사람 피드백을 어떻게 모으나"고, 이건 "사람이 정의한 임의 스크립트를 사람이
+정의한 트리거 조건에 걸릴 때 실행할지 말지"라 판단 주체 자체가 다르다
+(전자는 라우터가 판단, 후자는 사용자가 미리 정한 규칙이 판단).
+후보(택1 미확정):
+(a) 레지스트리 스키마 확장 — 루트 항목에 `actions: [{trigger, scriptPath,
+  policy: "auto"|"approve"}]` 배열 추가, SessionStart 훅 또는 새 MCP tool이
+  현재 세션 경로/최근 변경 파일과 trigger를 대조해서 매치되는 action을
+  신호로 올림. P-01(파일 조작 절대 안 함) 원칙 유지하려면 이 신호를 받은
+  뒤 실제로 스크립트를 실행하는 건 여전히 Claude Code(에이전트) 쪽 —
+  policy="approve"면 사용자에게 물어보고, "auto"면 바로 Bash로 실행.
+  이 앱/MCP서버 자체는 "이 조건에 이 스크립트가 걸린다"는 신호만 반환.
+(b) MCP tool 신설 — `list_triggered_actions(root_label, changed_paths)`처럼
+  변경된 경로 목록을 받아 매치되는 등록 action들을 반환. (a)의 스키마
+  확장을 전제로 함, MCP 노출 방식만 별도 후보로 분리.
+(c) 지금은 일반 메커니즘 만들지 않음 — productized/check_drift.py 건은 이미
+  README.md(실제 규칙)+CLAUDE.md(인덱서) 패턴만으로 사람이 세션 시작 때
+  자연스럽게 도달하게 돼 있어(Lazzy_App_OS_Monorepo/.claude/CLAUDE.md →
+  productized/README.md), 이 앱에 새 기능을 안 만들어도 이미 동작한다.
+  일반화는 두 번째 실사용 사례(다른 프로젝트에서도 "이 조건 되면 이 스크립트"
+  요청)가 실제로 생길 때까지 보류.
+임시결정: **(b) 채택, D-058(2026-08-17)에서 구현 완료** — 당초 초안에선
+(c)(보류)를 제안했으나 사용자가 그 자리에서 바로 (b)로 확정, 스키마 확장(a)
++ MCP tool(b)까지 한 번에 구현. actions 배열/list_triggered_actions tool
+자체는 이제 범용으로 존재함 — **남은 건 실제 등록뿐**: 지금 이 기능을 쓰려면
+flutter_App 레지스트리의 root 항목(label="flutter_App")에 productized/
+check_drift.py를 가리키는 actions 항목을 실제로 추가해야 하는데, 그 루트의
+referenceCondition이 대용량 프로즈 문자열이라 손으로 수정 시 실수 위험이
+있어 이번 라운드에선 메커니즘만 만들고 실제 연동은 별도 확인 후로 미룸.
+재논의 조건: flutter_App(또는 다른 등록 루트) 레지스트리에 실제 actions
+항목을 추가해 productized/check_drift.py를 라이브로 연동하고 싶을 때 —
+그때 trigger 글롭 패턴(예: `*/productized/*`)과 scriptPath(절대경로)를
+정하고 조심스럽게 JSON을 편집(전체 재작성이 아니라 actions 배열만 추가).
+관련 D-번호: D-058, O-012, D-020(자동 텍스트 스캔 대신 명시적 선언 원칙).
 
 ================================================================
 변경이력

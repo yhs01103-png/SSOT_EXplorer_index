@@ -205,6 +205,83 @@ def test_classify_content_records_orchestration_log(tmp_path):
     assert len(ro.load_orchestration_log()) == 1
 
 
+# --------------------------------------------------------- list_triggered_actions
+
+def test_list_triggered_actions_returns_matching_action(tmp_path):
+    script = tmp_path / "check_drift.py"
+    script.write_text("# script", encoding="utf-8")
+    m.save_roots([{
+        "label": "demo",
+        "path": str(tmp_path),
+        "actions": [
+            {"trigger": "*/productized/*", "scriptPath": str(script), "policy": "approve"},
+        ],
+    }])
+    result = mcp_srv.list_triggered_actions("demo", ["C:/repo/productized/ai_trust_kit/foo.py"])
+    assert len(result) == 1
+    assert result[0]["scriptPath"] == str(script)
+    assert result[0]["policy"] == "approve"
+    assert result[0]["scriptExists"] is True
+    assert result[0]["matchedPath"] == "C:/repo/productized/ai_trust_kit/foo.py"
+
+
+def test_list_triggered_actions_no_match_returns_empty(tmp_path):
+    m.save_roots([{
+        "label": "demo",
+        "path": str(tmp_path),
+        "actions": [{"trigger": "*/productized/*", "scriptPath": "x.py", "policy": "auto"}],
+    }])
+    result = mcp_srv.list_triggered_actions("demo", ["C:/repo/server/core/foo.py"])
+    assert result == []
+
+
+def test_list_triggered_actions_missing_script_flagged_not_existing(tmp_path):
+    """D-052(pathExists)와 동일 원칙 — scriptPath가 사라졌어도 신호만
+    주지 자동으로 걸러내지 않는다."""
+    m.save_roots([{
+        "label": "demo",
+        "path": str(tmp_path),
+        "actions": [{"trigger": "*.py", "scriptPath": str(tmp_path / "gone.py"), "policy": "auto"}],
+    }])
+    result = mcp_srv.list_triggered_actions("demo", ["anything.py"])
+    assert result[0]["scriptExists"] is False
+
+
+def test_list_triggered_actions_unknown_label():
+    result = mcp_srv.list_triggered_actions("no-such-label", ["a.py"])
+    assert result == [{"status": "label_not_found", "label": "no-such-label"}]
+
+
+def test_list_triggered_actions_no_actions_defined_returns_empty(tmp_path):
+    m.save_roots([{"label": "demo", "path": str(tmp_path)}])
+    result = mcp_srv.list_triggered_actions("demo", ["a.py"])
+    assert result == []
+
+
+def test_list_triggered_actions_policy_defaults_to_approve_when_missing(tmp_path):
+    """스키마상 policy는 required지만, 방어적으로 값이 비어있어도 안전한
+    기본값(approve, 사람 승인 필요)으로 취급되는지."""
+    m.save_roots([{
+        "label": "demo",
+        "path": str(tmp_path),
+        "actions": [{"trigger": "*.py", "scriptPath": "x.py"}],
+    }])
+    result = mcp_srv.list_triggered_actions("demo", ["a.py"])
+    assert result[0]["policy"] == "approve"
+
+
+def test_list_triggered_actions_result_is_json_serializable(tmp_path):
+    import json
+
+    m.save_roots([{
+        "label": "demo",
+        "path": str(tmp_path),
+        "actions": [{"trigger": "*.py", "scriptPath": "x.py", "policy": "auto"}],
+    }])
+    result = mcp_srv.list_triggered_actions("demo", ["a.py"])
+    json.dumps(result)
+
+
 # --------------------------------------------------------- D-057: 개발자 모드 게이팅
 
 def test_list_ssot_roots_gated_when_developer_mode_off(tmp_path):
@@ -226,6 +303,13 @@ def test_classify_content_gated_when_developer_mode_off(tmp_path):
     rp.set_developer_mode(False, m.REGISTRY_PATH)
     result = mcp_srv.classify_content("보안 관련 요청")
     assert result == mcp_srv._DEV_MODE_OFF
+
+
+def test_list_triggered_actions_gated_when_developer_mode_off(tmp_path):
+    m.save_roots([{"label": "demo", "path": str(tmp_path), "actions": []}])
+    rp.set_developer_mode(False, m.REGISTRY_PATH)
+    result = mcp_srv.list_triggered_actions("demo", ["a.py"])
+    assert result == [mcp_srv._DEV_MODE_OFF]
 
 
 def test_tools_work_normally_when_developer_mode_explicitly_true(tmp_path):
@@ -250,3 +334,4 @@ def test_tools_are_registered_on_server():
     assert "list_ssot_roots" in names
     assert "check_readme_freshness" in names
     assert "classify_content" in names
+    assert "list_triggered_actions" in names

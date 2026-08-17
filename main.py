@@ -213,6 +213,12 @@ def load_roots() -> list[dict]:
         # 스냅샷일 뿐 웹 아티팩트가 유일한 정본(Lazzy가 결정이력 문서 2개를
         # 이 방식으로 전환한 사례 — 문서가 너무 커지거나/가독성이 떨어질 때).
         r.setdefault("primarySource", "local")
+        # 2026-08-17(D-058, O-013): "액션 레지스트리" — 이 루트 밑에서 특정
+        # 경로가 바뀌면 실행할 만한 스크립트를 트리거 조건+정책과 함께
+        # 선언. 이 앱/MCP 서버는 매치되는 항목을 신호로만 반환하고 실제
+        # 실행은 절대 안 함(P-01 그대로) — ssot_mcp_server.list_triggered_
+        # actions() 참고.
+        r.setdefault("actions", [])
     return roots
 
 
@@ -332,6 +338,24 @@ REGISTRY_SCHEMA = {
                     "scope": {"type": "string"},
                     "lastReviewed": {"type": "string", "pattern": r"^$|^\d{4}-\d{2}-\d{2}$"},
                     "dependsOnDocs": {"type": "array", "items": {"type": "string"}},
+                    # 2026-08-17(D-058, O-013) — 액션 레지스트리. trigger는
+                    # fnmatch 글롭(예: "*/productized/*"), scriptPath는 실행
+                    # 스크립트 경로, policy는 호출한 에이전트가 자동 실행할지
+                    # 사용자 승인을 받을지 판단하는 힌트(이 앱은 강제 안 함).
+                    "actions": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["trigger", "scriptPath", "policy"],
+                            "additionalProperties": True,
+                            "properties": {
+                                "trigger": {"type": "string", "minLength": 1},
+                                "scriptPath": {"type": "string", "minLength": 1},
+                                "policy": {"type": "string", "enum": ["auto", "approve"]},
+                                "description": {"type": "string"},
+                            },
+                        },
+                    },
                 },
             },
         },

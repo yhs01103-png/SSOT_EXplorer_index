@@ -134,19 +134,24 @@ Windsurf(`.windsurf/rules/`)로 동시에 맞출 수 있다(레거시 `.cursorru
   로 stdio transport 실행(공식 `mcp` SDK). 파일 조작은 절대 안 함 — Claude
   Code/Cursor/Windsurf 등 MCP를 지원하는 IDE/에이전트가 이 서버의 tool을
   불러서 "신호"만 받고, 실제 조치는 그쪽이 한다는 게 핵심(P-01 그대로
-  유지). 지금은 tool 3개: `list_ssot_roots()`(등록 루트 목록 — 각 항목에
+  유지). 지금은 tool 4개: `list_ssot_roots()`(등록 루트 목록 — 각 항목에
   `pathExists`도 포함, D-052 — 폴더가 삭제/이동됐으면 false, 자동 등록해제는
   안 함),
   `check_readme_freshness(root_label?, stale_days=30)`(README.md가 폴더 안
   다른 파일들의 최신 수정시각 대비 며칠 뒤처졌는지 — git 없는 루트라 커밋
   이력 대신 mtime 기반), `classify_content(text)`(D-050 — "맥락형 인덱싱"을
   MCP로 노출, 기존 `router_orchestrator.orchestrate()` 5단계 파이프라인을
-  그대로 재사용해 텍스트가 어느 등록 루트에 속할지 순위 매김). **Claude
+  그대로 재사용해 텍스트가 어느 등록 루트에 속할지 순위 매김),
+  `list_triggered_actions(root_label, changed_paths)`(D-058, O-013 — "액션
+  레지스트리". 루트가 `actions: [{trigger, scriptPath, policy}]`를 선언해두면
+  changed_paths와 trigger(fnmatch 글롭)가 매치되는 것만 신호로 반환 — 실행
+  여부/자동·승인 판단은 전부 호출한 에이전트 몫). **Claude
   Code에 등록·연결 확인 완료**(D-049, 저장소 루트 `.mcp.json` —
   `${CLAUDE_PROJECT_DIR:-.}` 사용, 개인 절대경로 없음 — `/mcp`로 3개 tool
   전부 연결 확인, 2026-08-17). 다른 MCP 지원 IDE(Cursor/Windsurf
   등)에는 아직 안 붙임(O-011, 필요성 미확인). MCP 경유 호출의 승인/거부
-  신호를 어떻게 모을지는 아직 미정(O-012).
+  신호를 어떻게 모을지는 아직 미정(O-012) — `list_triggered_actions`의
+  `policy` 힌트는 이것과 별개(O-013 참고, 호출자가 스스로 판단하는 용도).
 
 ## 이 앱이 안 하는 것
 
