@@ -2,7 +2,7 @@
 SSOT_Explorer — 최신 설계결정이력 + TODO
 ================================================================
 기준 버전: v1.0
-최종수정: 2026-08-17 (D-052)
+최종수정: 2026-08-17 (D-053)
 원칙: 가장 최근 라운드의 신규 결정(D-번호)과 전체 TODO(H-번호)만 담는다.
       더 오래된 결정은 레거시 파일로 이동.
 
@@ -1611,6 +1611,27 @@ MCP엔 GUI의 "승인 버튼" 같은 명시적 이벤트가 없어서, O-006/007
       `format_registry_text`/`list_ssot_roots` 신규 테스트 2개 — 전체
       pytest 187→189개 통과. 앱 smoke-test(크래시로그 0바이트) 통과.
 
+[D-053] H-009 _ensure_all_roots_initialized()를 QThread(RootInitWorker)로 분리
+결정: 앱 시작 시 등록 루트 전체를 순회하며 is_dir()/exists()/init 파일
+      쓰기를 하던 루프(D-031)를 `RootInitWorker`(QThread)로 옮김 —
+      SearchWorker(D-013)/ClassificationWorker(D-051)와 동일한 "느린
+      작업은 QThread로" 패턴. `__init__`은 워커를 start()만 하고 바로
+      반환, 완료 시 `done` 시그널로 `_on_roots_initialized()`(트리
+      새로고침 + 상태바 메시지)를 호출. `closeEvent()`에 워커가 아직
+      도는 중이면 `wait(3000)`으로 정리하는 방어도 InboxWatcherThread와
+      같은 자리에 추가.
+이유: H-009(D-043 코드리뷰 발견)가 "체감 지연 재현 전 보류"였으나,
+      사용자가 재현 여부와 무관하게 먼저 가자고 결정 — 이미 검증된
+      워커 패턴 2개(D-013/D-051)를 그대로 재사용하는 저위험 작업이라
+      "재현 안 됐다고 미루기"보다 선제 적용의 비용이 낮다고 판단.
+검증: 기존 테스트 3개(D-031, 생성/미터치/경로없음)를 워커 완료 대기
+      (`wait()` + `processEvents()`, H-008 테스트와 동일 패턴)로 갱신 +
+      신규 회귀 테스트 1개(`__init__` 반환 직후 `root_init_worker`가
+      `RootInitWorker` 인스턴스로 존재 — 동기 호출로 되돌리는 재발을
+      다른 테스트가 못 잡는 문제를 H-008과 같은 방식으로 방지) —
+      pytest 189→190개 통과. 앱 smoke-test(백그라운드 실행 1.5초→
+      크래시로그 없음→종료) 통과.
+
 ================================================================
 PART 2 — TODO
 ================================================================
@@ -1663,17 +1684,11 @@ PART 2 — TODO
   D-051에서 구현 완료 — ClassificationWorker(QThread) 신설, SearchWorker
   (D-013)와 동일 패턴. pytest 187개 통과.
 
-🔵 P3
-H-009  _ensure_all_roots_initialized()가 앱 시작 시 전체 루트를 동기 블로킹
+✅ H-009  _ensure_all_roots_initialized()가 앱 시작 시 전체 루트를 동기 블로킹  | 2026-08-17
   대상: main.py의 _ensure_all_roots_initialized()
-  원인: D-043 코드리뷰 발견 — 루트 개수만큼 순차 is_dir()/exists()/쓰기를
-        UI 스레드(__init__)에서 돔. 등록 루트가 몇 개 안 되거나(현재 5개)
-        전부 로컬/OneDrive 경로면 체감 안 되지만, 네트워크 드라이브나 오프라인
-        경로가 섞이면 앱 시작 자체가 그 경로 하나 때문에 멎을 수 있음.
-  수정 방향(안): 루트 개수/경로 접근성에 따라 체감 지연이 실제로 확인되면
-        QThread로 분리(지금은 이론적 우려, 실측 없음 — H-003과 비슷한
-        "재현 전 보류" 케이스에 가까움).
-  완료 조건: 실제 지연 체감/재현 시 진행
+  D-053에서 구현 완료 — RootInitWorker(QThread) 신설, SearchWorker(D-013)/
+  ClassificationWorker(D-051)와 동일 패턴. 완료 조건("실제 지연 체감/재현
+  시 진행")과 무관하게 사용자가 선제 적용 요청. pytest 190개 통과.
 
 🔵 P3
 H-010  router_classifier/router_orchestrator CLI(_run_cli) 구현 중복

@@ -998,6 +998,16 @@ def test_toolbar_has_save_document_action(isolated_qsettings):
 
 # --------------------------------------------------- D-031: 루트 자동 init
 
+def _wait_for_root_init(win):
+    """H-009 — _ensure_all_roots_initialized()가 이제 RootInitWorker
+    (QThread) 배경작업이라(run_classification과 동일 패턴, D-051 참고),
+    __init__ 직후엔 아직 파일이 안 써져 있을 수 있다. 워커가 끝나길
+    기다린 뒤 큐잉된 done 신호를 processEvents()로 배달해야 기존 동기
+    호출 시절과 같은 어서션을 그대로 쓸 수 있다."""
+    win.root_init_worker.wait()
+    QApplication.processEvents()
+
+
 def test_ensure_all_roots_initialized_creates_missing_claude_md(tmp_path, isolated_registry, isolated_qsettings):
     root_dir = tmp_path / "missing_init_root"
     root_dir.mkdir()
@@ -1005,6 +1015,7 @@ def test_ensure_all_roots_initialized_creates_missing_claude_md(tmp_path, isolat
 
     win = m.SSOTExplorer()  # __init__이 _ensure_all_roots_initialized()를 호출
     try:
+        _wait_for_root_init(win)
         claude_path = root_dir / "CLAUDE.md"
         assert claude_path.exists()
         assert m.SYNC_MARKER in claude_path.read_text(encoding="utf-8")
@@ -1021,6 +1032,7 @@ def test_ensure_all_roots_initialized_does_not_touch_existing_file(tmp_path, iso
 
     win = m.SSOTExplorer()
     try:
+        _wait_for_root_init(win)
         assert (root_dir / "CLAUDE.md").read_text(encoding="utf-8") == existing_content
     finally:
         win.close()
@@ -1029,4 +1041,24 @@ def test_ensure_all_roots_initialized_does_not_touch_existing_file(tmp_path, iso
 def test_ensure_all_roots_initialized_skips_nonexistent_path(isolated_registry, isolated_qsettings):
     m.save_roots([{"label": "gone", "path": "C:\\definitely-does-not-exist-xyz", "referenceCondition": ""}])
     win = m.SSOTExplorer()  # 예외 없이 조용히 건너뛰어야 함
+    _wait_for_root_init(win)
     win.close()
+
+
+def test_ensure_all_roots_initialized_does_not_block_ui_thread(tmp_path, isolated_registry, isolated_qsettings):
+    """H-009 핵심 회귀 — __init__ 반환 직후(워커가 아직 안 끝났을 수 있는
+    시점)엔 root_init_worker가 QThread 인스턴스로 존재해야 진짜로 배경
+    스레드에서 도는 것(H-008의 run_classification 회귀 테스트와 동일한
+    발상). 이 어서션이 없으면 실수로 다시 동기 호출로 되돌려도 다른
+    테스트들은 processEvents()가 어차피 결과를 채워줘서 못 잡는다."""
+    root_dir = tmp_path / "missing_init_root"
+    root_dir.mkdir()
+    m.save_roots([{"label": "missing_init_root", "path": str(root_dir), "referenceCondition": ""}])
+
+    win = m.SSOTExplorer()
+    try:
+        assert isinstance(win.root_init_worker, m.RootInitWorker)
+        _wait_for_root_init(win)
+        assert (root_dir / "CLAUDE.md").exists()
+    finally:
+        win.close()

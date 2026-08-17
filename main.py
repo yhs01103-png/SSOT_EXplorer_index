@@ -1387,6 +1387,37 @@ class SaveDocumentDialog(QDialog):
         super().closeEvent(event)
 
 
+class RootInitWorker(QThread):
+    """_ensure_all_roots_initialized()의 존재확인+init 생성 루프를 배경
+    스레드로 분리(H-009) — 루트 개수만큼 순차 is_dir()/exists()/쓰기를
+    UI 스레드(__init__)에서 돌리던 걸, SearchWorker(D-013)/
+    ClassificationWorker(D-051)와 같은 "느린 I/O는 QThread로" 패턴으로
+    옮겼다. 현재 등록 루트(로컬/OneDrive 5개)에서는 체감 지연이 실측된
+    적 없지만, 네트워크 드라이브나 오프라인 경로가 섞이는 시나리오까지
+    감안해 재현 전에 선제 적용."""
+    done = Signal(list)
+
+    def __init__(self, roots: list[dict]):
+        super().__init__()
+        self.roots = roots
+
+    def run(self):
+        created = []
+        for entry in self.roots:
+            root_path = Path(entry["path"])
+            if not root_path.is_dir():
+                continue  # 경로 자체가 없으면(다른 기기 전용 등) 건너뜀
+            claude_path = resolve_claude_md_target(root_path)
+            if claude_path.exists():
+                continue
+            try:
+                claude_path.write_text(generate_init_claude_md(entry), encoding="utf-8")
+                created.append(entry["label"])
+            except OSError:
+                pass  # 권한 문제 등 — 조용히 건너뜀, 앱 시작을 막을 이유 없음
+        self.done.emit(created)
+
+
 # ---------------------------------------------------------------------- 앱
 
 class SSOTExplorer(QMainWindow):
@@ -1398,6 +1429,7 @@ class SSOTExplorer(QMainWindow):
         self.roots = load_roots()
         self.current_folder: Path | None = None
         self.inbox_watcher_thread: InboxWatcherThread | None = None
+        self.root_init_worker: RootInitWorker | None = None
         # 2026-08-13: 창 크기/스플리터 비율/마지막 선택 위치 기억(QSettings,
         # Windows에서는 레지스트리 HKCU\Software\SSOT_Explorer\SSOT_Explorer에
         # 저장 — 별도 설정파일 없음).
@@ -1490,6 +1522,8 @@ class SSOTExplorer(QMainWindow):
         if self.inbox_watcher_thread is not None:
             self.inbox_watcher_thread.stop()
             self.inbox_watcher_thread.wait(3000)
+        if self.root_init_worker is not None and self.root_init_worker.isRunning():
+            self.root_init_worker.wait(3000)
         super().closeEvent(event)
 
     # ------------------------------------------------------------ 툴바
@@ -1642,20 +1676,17 @@ class SSOTExplorer(QMainWindow):
         루트 하나에 대해 하던 걸 앱 시작 시 전체 루트로 확장한 것. 기존
         파일이 있으면(손편집이든 이미 동기화된 것이든) 절대 손 안 댐 —
         "없는 것만 채운다"라 SYNC_MARKER 확인조차 필요 없다(덮어쓸 대상이
-        없으므로). 조용히 처리하고 상태바에 몇 개 채웠는지만 알림."""
-        created = []
-        for entry in self.roots:
-            root_path = Path(entry["path"])
-            if not root_path.is_dir():
-                continue  # 경로 자체가 없으면(다른 기기 전용 등) 건너뜀
-            claude_path = resolve_claude_md_target(root_path)
-            if claude_path.exists():
-                continue
-            try:
-                claude_path.write_text(generate_init_claude_md(entry), encoding="utf-8")
-                created.append(entry["label"])
-            except OSError:
-                pass  # 권한 문제 등 — 조용히 건너뜀, 앱 시작을 막을 이유 없음
+        없으므로). 조용히 처리하고 상태바에 몇 개 채웠는지만 알림.
+
+        2026-08-17(H-009) — 실제 파일 존재확인+쓰기 루프는 RootInitWorker
+        (QThread)로 옮겨 __init__이 이 작업이 끝나길 기다리지 않고 바로
+        반환한다(SearchWorker/ClassificationWorker와 동일 패턴). self에
+        참조를 들고 있어야 워커가 가비지컬렉트 안 됨."""
+        self.root_init_worker = RootInitWorker(self.roots)
+        self.root_init_worker.done.connect(self._on_roots_initialized)
+        self.root_init_worker.start()
+
+    def _on_roots_initialized(self, created: list[str]):
         if created:
             self.tree.clear()
             self.populate_roots()
