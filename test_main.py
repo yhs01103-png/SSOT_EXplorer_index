@@ -609,6 +609,50 @@ def test_open_management_switches_to_developer_tab(isolated_registry, isolated_q
         win.close()
 
 
+# --------------------------------------------------- D-057: 개발자 모드 토글
+
+def test_developer_tab_hidden_when_registry_says_off(isolated_registry, isolated_qsettings):
+    """레지스트리에 developerMode: false가 이미 있으면 시작부터 탭이 안
+    붙어야 한다(O-010 재논의 — 웹서빙 대신 이 토글로 대체)."""
+    router_proposals.set_developer_mode(False, isolated_registry)
+    win = m.SSOTExplorer()
+    try:
+        assert win.tabs.count() == 1
+        assert win.tabs.tabText(0) == "탐색기"
+        assert win.dev_mode_action.isChecked() is False
+        assert win.manage_action.isEnabled() is False
+    finally:
+        win.close()
+
+
+def test_toggling_developer_mode_off_removes_tab_and_persists(isolated_registry, isolated_qsettings):
+    win = m.SSOTExplorer()
+    try:
+        assert win.tabs.count() == 2  # 기본값 True로 시작
+        win.dev_mode_action.setChecked(False)
+        assert win.tabs.count() == 1
+        assert win.tabs.tabText(0) == "탐색기"
+        assert win.manage_action.isEnabled() is False
+        assert router_proposals.is_developer_mode(m.REGISTRY_PATH) is False  # 레지스트리에도 반영
+    finally:
+        win.close()
+
+
+def test_toggling_developer_mode_back_on_restores_same_panel_instance(isolated_registry, isolated_qsettings):
+    """탭을 뗐다 다시 붙여도 ManagementPanel 인스턴스는 그대로라 상태(예:
+    스크롤 위치 등)를 안 잃는다."""
+    win = m.SSOTExplorer()
+    try:
+        panel = win.management_panel
+        win.dev_mode_action.setChecked(False)
+        win.dev_mode_action.setChecked(True)
+        assert win.tabs.count() == 2
+        assert win.tabs.widget(1) is panel
+        assert win.manage_action.isEnabled() is True
+    finally:
+        win.close()
+
+
 # ------------------------------------------------------------- D-042: Inbox 감시
 
 def test_toggle_inbox_watcher_starts_and_stops(isolated_registry, isolated_qsettings, tmp_path, monkeypatch):

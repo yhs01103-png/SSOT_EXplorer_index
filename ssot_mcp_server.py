@@ -55,6 +55,7 @@ from pathlib import Path
 from mcp.server import MCPServer
 
 import router_orchestrator  # Qt 미의존 순수 모듈 — main.py와 달리 순환참조 없이 top-level import 가능
+from router_proposals import is_developer_mode  # Qt 미의존, 안전하게 top-level import
 
 # mtime 기반이라 사람 리뷰 주기(REVIEW_STALE_DAYS=180, D-018)보다 훨씬
 # 짧게 잡는다 — 이건 "실제 파일 변경 대비 문서가 며칠 뒤처졌는지"라, 활발히
@@ -127,13 +128,29 @@ def _check_one_root(entry: dict, stale_days: int) -> dict:
     }
 
 
+_DEV_MODE_OFF = {
+    "error": "developer_mode_disabled",
+    "message": (
+        "SSOT_Explorer 앱에서 개발자 모드가 꺼져 있어 이 MCP 서버 기능이 "
+        "비활성화돼 있습니다. 앱 툴바의 '개발자 모드' 버튼으로 다시 켤 수 "
+        "있습니다."
+    ),
+}
+
+
 @server.tool()
 def list_ssot_roots() -> list[dict]:
     """등록된 SSOT 루트 목록을 반환한다(label/path/scope/참조조건 요약) —
     다른 tool을 부르기 전에 어떤 루트가 있는지 확인하는 용도. `pathExists`
     가 false면 폴더가 삭제/이동됐을 수 있다는 신호(D-052) — 등록 해제
-    여부는 항상 호출한 쪽/사람이 판단, 이 tool이 자동으로 지우지 않는다."""
-    from main import load_roots
+    여부는 항상 호출한 쪽/사람이 판단, 이 tool이 자동으로 지우지 않는다.
+
+    2026-08-17(D-057) — 개발자 모드가 꺼져 있으면 빈 응답 대신 명시적
+    에러 dict 하나만 반환(아래 게이트 3곳 전부 공통)."""
+    from main import REGISTRY_PATH, load_roots
+
+    if not is_developer_mode(REGISTRY_PATH):
+        return [_DEV_MODE_OFF]
 
     return [
         {
@@ -155,8 +172,11 @@ def check_readme_freshness(
     시각(mtime) 대비 며칠이나 뒤처졌는지 확인한다. root_label을 주면 그
     루트 하나만, 안 주면 등록된 전체를 확인한다. 파일을 절대 고치지 않는다
     — status가 "stale"이면 호출한 에이전트/사람이 README를 검토할지
-    판단한다."""
-    from main import load_roots
+    판단한다. 개발자 모드가 꺼져 있으면 에러 dict 하나만 반환(D-057)."""
+    from main import REGISTRY_PATH, load_roots
+
+    if not is_developer_mode(REGISTRY_PATH):
+        return [_DEV_MODE_OFF]
 
     roots = load_roots()
     if root_label is not None:
@@ -178,8 +198,14 @@ def classify_content(text: str) -> dict:
     **주의 — "파일 조작 없음"의 정확한 범위**: 프로젝트 파일은 안 건드리지만
     이 앱 자신의 내부 관측 로그(오케스트레이션 실행 이력, 키워드 관측
     카운트)는 기존 GUI/CLI와 똑같이 계속 쌓인다 — MCP로 옮겨서 새로 생긴
-    부작용이 아니라 D-044부터 있던 동작 그대로다."""
-    from main import load_roots
+    부작용이 아니라 D-044부터 있던 동작 그대로다.
+
+    개발자 모드가 꺼져 있으면 분류를 아예 실행하지 않고 에러 dict만
+    반환한다(D-057) — 내부 로그도 안 쌓인다."""
+    from main import REGISTRY_PATH, load_roots
+
+    if not is_developer_mode(REGISTRY_PATH):
+        return _DEV_MODE_OFF
 
     return router_orchestrator.orchestrate(text, load_roots())
 

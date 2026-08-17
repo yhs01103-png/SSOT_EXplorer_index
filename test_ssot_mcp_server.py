@@ -205,6 +205,39 @@ def test_classify_content_records_orchestration_log(tmp_path):
     assert len(ro.load_orchestration_log()) == 1
 
 
+# --------------------------------------------------------- D-057: 개발자 모드 게이팅
+
+def test_list_ssot_roots_gated_when_developer_mode_off(tmp_path):
+    m.save_roots([{"label": "a", "path": "C:\\a"}])
+    rp.set_developer_mode(False, m.REGISTRY_PATH)
+    result = mcp_srv.list_ssot_roots()
+    assert result == [mcp_srv._DEV_MODE_OFF]
+
+
+def test_check_readme_freshness_gated_when_developer_mode_off(tmp_path):
+    _register_root("a", tmp_path)
+    rp.set_developer_mode(False, m.REGISTRY_PATH)
+    result = mcp_srv.check_readme_freshness()
+    assert result == [mcp_srv._DEV_MODE_OFF]
+
+
+def test_classify_content_gated_when_developer_mode_off(tmp_path):
+    m.save_roots([{"label": "a", "path": "C:\\a", "referenceCondition": "보안"}])
+    rp.set_developer_mode(False, m.REGISTRY_PATH)
+    result = mcp_srv.classify_content("보안 관련 요청")
+    assert result == mcp_srv._DEV_MODE_OFF
+
+
+def test_tools_work_normally_when_developer_mode_explicitly_true(tmp_path):
+    """기본값(필드 없음)뿐 아니라 명시적 True에서도 정상 동작하는지 —
+    False만 잠그고 True는 그냥 통과시키는지 확인."""
+    m.save_roots([{"label": "a", "path": "C:\\a"}])
+    rp.set_developer_mode(True, m.REGISTRY_PATH)
+    result = mcp_srv.list_ssot_roots()
+    assert result != [mcp_srv._DEV_MODE_OFF]
+    assert result[0]["label"] == "a"
+
+
 # ------------------------------------------------------------ tool 등록 확인
 
 def test_tools_are_registered_on_server():

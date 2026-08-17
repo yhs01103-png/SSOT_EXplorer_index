@@ -44,6 +44,47 @@ def resolve_registry_path() -> Path:
     )
 
 
+def is_developer_mode(registry_path: Path | None = None) -> bool:
+    """레지스트리 최상위 `developerMode` 필드(D-057) — 기본값 True("이
+    앱을 쓴다는 건 이미 개발자"라는 사용자 명시 전제, O-010 재논의 결과).
+    main.py가 개발자 탭 표시 여부를 판단할 때, ssot_mcp_server.py가 각
+    tool 호출을 게이팅할 때 둘 다 이 하나의 플래그를 같은 레지스트리
+    파일에서 읽는다 — router_proposals.py는 Qt 미의존이라 ssot_mcp_
+    server.py가 이 체크 하나 때문에 추가로 PySide6를 로드할 일은 없다
+    (기존 `from main import load_roots` lazy import는 여전히 필요, 그건
+    O-010에 이미 기록된 별개 부채).
+
+    registry_path를 생략하면 resolve_registry_path()(기본 위치) — main.py
+    는 자기 REGISTRY_PATH를 명시로 넘겨서 테스트 격리와 일관되게 맞춘다
+    (router_orchestrator.orchestrate()의 log_path 패턴과 동일)."""
+    path = registry_path or resolve_registry_path()
+    if not path.exists():
+        return True
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return True
+    return bool(data.get("developerMode", True))
+
+
+def set_developer_mode(enabled: bool, registry_path: Path | None = None) -> None:
+    """developerMode 필드만 갱신 — roots/sharedDocs/relations 등 나머지는
+    디스크에서 읽은 그대로 보존한다(D-020 sharedDocs 보존과 동일 원칙,
+    save_roots()가 매번 디스크를 먼저 읽는 것과 같은 이유). save_roots()
+    (main.py)와 달리 낙관적 동시성 검사는 생략 — 이 플래그는 단일 세션
+    UI 토글용이라 여러 기기 동시편집 충돌 위험이 roots보다 훨씬 낮다고
+    판단(필요해지면 같은 패턴으로 승격 가능, H-009식 "재현 후 대응")."""
+    path = registry_path or resolve_registry_path()
+    payload = {}
+    if path.exists():
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError):
+            payload = {}
+    payload["developerMode"] = enabled
+    atomic_write_json(path, payload)
+
+
 def load_proposals() -> list[dict]:
     if not PROPOSALS_LOG_PATH.exists():
         return []

@@ -335,6 +335,7 @@ REGISTRY_SCHEMA = {
                 },
             },
         },
+        "developerMode": {"type": "boolean"},
         "sharedDocs": {
             "type": "array",
             "items": {
@@ -1420,6 +1421,14 @@ class SSOTExplorer(QMainWindow):
         self.resize(1200, 750)
 
         self.roots = load_roots()
+        # 2026-08-17(D-057) — 개발자 모드: 레지스트리 최상위 developerMode
+        # 필드(기본 True, "이 앱을 쓴다는 건 이미 개발자"). 꺼지면 개발자
+        # 탭이 숨겨지고 MCP 서버(ssot_mcp_server.py)의 3개 tool도 전부
+        # 비활성 응답을 준다(같은 플래그를 두 프로세스가 같은 레지스트리
+        # 파일에서 읽어 공유 — O-010이 "웹서빙 2단계"로 계획했던 걸
+        # 사용자가 재논의: MCP가 이미 "IDE가 어디서든 조회"를 해결하므로
+        # 별도 웹서버는 불필요, 대신 이 토글이 필요하다는 판단).
+        self.developer_mode = router_proposals.is_developer_mode(REGISTRY_PATH)
         self.current_folder: Path | None = None
         self.inbox_watcher_thread: InboxWatcherThread | None = None
         self.root_init_worker: RootInitWorker | None = None
@@ -1481,10 +1490,14 @@ class SSOTExplorer(QMainWindow):
         # HTML 서빙으로 바꿔줘"). 관리자 패널이 모달 다이얼로그였다가
         # 상시 탭으로 승격 — 항상 최신 상태를 보여주려고 탭이 활성화될
         # 때마다 refresh().
+        # 2026-08-17(D-057) — 개발자 모드가 꺼져 있으면 탭 자체를 안 붙인다
+        # (인스턴스는 그대로 만들어둠 — 나중에 토글로 다시 켜면 상태 안
+        # 잃고 재부착만 하면 되도록, _apply_developer_mode_visibility 참고).
         self.management_panel = ManagementPanel(self)
         self.tabs = QTabWidget()
         self.tabs.addTab(self.splitter, "탐색기")
-        self.tabs.addTab(self.management_panel, "개발자")
+        if self.developer_mode:
+            self.tabs.addTab(self.management_panel, "개발자")
         self.tabs.currentChanged.connect(self._on_tab_changed)
         self.setCentralWidget(self.tabs)
 
@@ -1568,10 +1581,26 @@ class SSOTExplorer(QMainWindow):
 
         bar.addSeparator()
 
-        manage_action = QAction(style.standardIcon(QStyle.SP_FileDialogDetailedView), "개발자 탭으로", self)
-        manage_action.setToolTip("개발자 탭으로 전환(레지스트리/스키마검증/로그 뷰 + 드리프트 체크)")
-        manage_action.triggered.connect(self.open_management)
-        bar.addAction(manage_action)
+        self.manage_action = QAction(style.standardIcon(QStyle.SP_FileDialogDetailedView), "개발자 탭으로", self)
+        self.manage_action.setToolTip("개발자 탭으로 전환(레지스트리/스키마검증/로그 뷰 + 드리프트 체크)")
+        self.manage_action.setEnabled(self.developer_mode)
+        self.manage_action.triggered.connect(self.open_management)
+        bar.addAction(self.manage_action)
+
+        # 2026-08-17(D-057) — 개발자 모드 토글: 꺼지면 개발자 탭이 숨겨지고
+        # MCP 서버 tool 3개도 전부 비활성 응답을 준다(register_proposals.
+        # is_developer_mode()를 두 프로세스가 공유). 이 버튼 자체는
+        # 항상(탭 상태와 무관하게) 툴바에 있어서, 실수로 껐어도 되돌릴
+        # 경로가 항상 보인다.
+        self.dev_mode_action = QAction(style.standardIcon(QStyle.SP_ComputerIcon), "개발자 모드", self)
+        self.dev_mode_action.setCheckable(True)
+        self.dev_mode_action.setChecked(self.developer_mode)
+        self.dev_mode_action.setToolTip(
+            "끄면 개발자 탭이 숨겨지고 MCP 서버(ssot_mcp_server.py) 기능도 "
+            "전부 비활성화됩니다 — 언제든 이 버튼으로 다시 켤 수 있습니다."
+        )
+        self.dev_mode_action.toggled.connect(self.on_developer_mode_toggled)
+        bar.addAction(self.dev_mode_action)
 
         save_doc_action = QAction(style.standardIcon(QStyle.SP_FileIcon), "새 문서 저장", self)
         save_doc_action.setToolTip(
@@ -1622,6 +1651,30 @@ class SSOTExplorer(QMainWindow):
         """툴바 버튼 하위호환 — 이제 모달 대신 상시 탭(D-047)이라 그
         탭으로 전환만 한다."""
         self.tabs.setCurrentWidget(self.management_panel)
+
+    def on_developer_mode_toggled(self, checked: bool):
+        """D-057 — 개발자 모드 토글. 레지스트리에 기록해서 MCP 서버
+        (별도 프로세스)도 같은 값을 보게 하고, 이 세션의 탭/버튼 상태도
+        즉시 반영한다."""
+        self.developer_mode = checked
+        router_proposals.set_developer_mode(checked, REGISTRY_PATH)
+        self._apply_developer_mode_visibility()
+        self.manage_action.setEnabled(checked)
+        self.statusBar().showMessage(
+            "🛠 개발자 모드 켜짐 — 개발자 탭 표시, MCP 서버 기능 활성화" if checked
+            else "🛠 개발자 모드 꺼짐 — 개발자 탭 숨김, MCP 서버 기능 비활성화",
+            5000,
+        )
+
+    def _apply_developer_mode_visibility(self):
+        """개발자 탭을 탈부착 — ManagementPanel 인스턴스 자체는 항상
+        살아있으니(D-057, __init__ 참고) 껐다 켜도 레지스트리 뷰 등 상태를
+        다시 잃지 않는다."""
+        idx = self.tabs.indexOf(self.management_panel)
+        if self.developer_mode and idx == -1:
+            self.tabs.insertTab(1, self.management_panel, "개발자")
+        elif not self.developer_mode and idx != -1:
+            self.tabs.removeTab(idx)
 
     def open_save_document_dialog(self):
         dlg = SaveDocumentDialog(self.roots, self)

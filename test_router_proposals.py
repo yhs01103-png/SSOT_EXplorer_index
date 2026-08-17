@@ -128,3 +128,54 @@ def test_save_trust_state_leaves_no_tmp_file():
     rp.record_decision(candidate, "x", "approved")
     leftovers = list(rp.TRUST_STATE_PATH.parent.glob(rp.TRUST_STATE_PATH.name + ".tmp*"))
     assert leftovers == []
+
+
+# --------------------------------------------------- D-057: 개발자 모드 플래그
+
+def test_is_developer_mode_defaults_true_when_no_registry(tmp_path):
+    missing = tmp_path / "does-not-exist.json"
+    assert rp.is_developer_mode(missing) is True
+
+
+def test_is_developer_mode_defaults_true_when_field_absent(tmp_path):
+    registry = tmp_path / "ssot-roots.json"
+    registry.write_text('{"roots": []}', encoding="utf-8")
+    assert rp.is_developer_mode(registry) is True
+
+
+def test_is_developer_mode_respects_explicit_false(tmp_path):
+    registry = tmp_path / "ssot-roots.json"
+    registry.write_text('{"roots": [], "developerMode": false}', encoding="utf-8")
+    assert rp.is_developer_mode(registry) is False
+
+
+def test_set_developer_mode_round_trips(tmp_path):
+    registry = tmp_path / "ssot-roots.json"
+    rp.set_developer_mode(False, registry)
+    assert rp.is_developer_mode(registry) is False
+    rp.set_developer_mode(True, registry)
+    assert rp.is_developer_mode(registry) is True
+
+
+def test_set_developer_mode_preserves_other_keys(tmp_path):
+    """D-020 sharedDocs 보존과 같은 원칙 — developerMode 하나만 바뀌고
+    roots/sharedDocs 등 나머지는 그대로 남아야 한다."""
+    registry = tmp_path / "ssot-roots.json"
+    registry.write_text(
+        '{"roots": [{"label": "a", "path": "C:\\\\a"}], "sharedDocs": [{"label": "doc", "path": "C:\\\\doc"}]}',
+        encoding="utf-8",
+    )
+    rp.set_developer_mode(False, registry)
+
+    import json
+    data = json.loads(registry.read_text(encoding="utf-8"))
+    assert data["developerMode"] is False
+    assert data["roots"] == [{"label": "a", "path": "C:\\a"}]
+    assert data["sharedDocs"] == [{"label": "doc", "path": "C:\\doc"}]
+
+
+def test_set_developer_mode_leaves_no_tmp_file(tmp_path):
+    registry = tmp_path / "ssot-roots.json"
+    rp.set_developer_mode(True, registry)
+    leftovers = list(registry.parent.glob(registry.name + ".tmp*"))
+    assert leftovers == []
