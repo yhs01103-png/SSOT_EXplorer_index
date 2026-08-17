@@ -224,5 +224,5 @@ Windows는 `setx SSOT_REGISTRY_PATH "C:\경로\ssot-roots.json"`). 각 루트 �
 비교분석 4파일(v1.0 단일 레포 구조).
 
 가독성 재구성판 웹 아티팩트(정본은 위 md 파일, 아티팩트는 스냅샷, D-035):
-- [인수인계 노트](https://claude.ai/code/artifact/b38c1d60-e6c8-46f4-99e0-d21b4330a768) — 구현도+D-001~D-034 이력+다음 세션용 프롬프트
+- [인수인계 노트](https://claude.ai/code/artifact/1266df91-5b7d-435e-92ab-c5a8205bac68) — 구현도+D-058~D-062(액션 레지스트리) 이력+다음 세션용 프롬프트 (2026-08-18 갱신, 이전 링크 dead 확인 후 재발행)
 - [상용/표준 비교분석](https://claude.ai/code/artifact/115070d7-977d-4f0c-8e4f-54786416af7b) — 축A/축B 판정 카드로 재구성
