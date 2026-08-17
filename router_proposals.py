@@ -53,11 +53,18 @@ def load_proposals() -> list[dict]:
         return []
 
 
-def atomic_write_json(path: Path, data) -> None:
+def atomic_write_json(path: Path, data) -> bytes:
     """D-021과 같은 원자적 쓰기(temp+os.replace) 패턴 — proposals 로그와
     trust 상태 둘 다 이걸로 쓴다. 둘 다 단일 기기·단일 프로세스 전용이라
     (OneDrive로 여러 기기에 공유되는 레지스트리와 다름) 낙관적 동시성
-    검사는 생략하고 원자성만 챙긴다."""
+    검사는 생략하고 원자성만 챙긴다.
+
+    2026-08-17(D-055, H-011) — 실제로 쓴 바이트를 반환하도록 확장(기존
+    호출부는 반환값을 안 써서 영향 없음). main.py의 save_roots()가 이
+    저수준 부분(temp 쓰기+replace)만 여기로 위임하고, 그 위에 얹힌
+    낙관적 동시성 검사(RegistryConflictError)는 save_roots() 쪽에만
+    유지한 채 _LAST_KNOWN_HASH 갱신에 이 반환값을 그대로 재사용한다 —
+    같은 payload를 두 번 json.dumps()하지 않기 위함."""
     path.parent.mkdir(parents=True, exist_ok=True)
     raw = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
     tmp_path = path.with_name(path.name + f".tmp{os.getpid()}")
@@ -70,6 +77,7 @@ def atomic_write_json(path: Path, data) -> None:
                 tmp_path.unlink()
             except OSError:
                 pass
+    return raw
 
 
 def _save_proposals(proposals: list[dict]) -> None:

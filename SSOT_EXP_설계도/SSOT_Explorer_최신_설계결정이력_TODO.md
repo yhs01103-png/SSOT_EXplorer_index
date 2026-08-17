@@ -2,7 +2,7 @@
 SSOT_Explorer — 최신 설계결정이력 + TODO
 ================================================================
 기준 버전: v1.0
-최종수정: 2026-08-17 (D-054)
+최종수정: 2026-08-17 (D-055)
 원칙: 가장 최근 라운드의 신규 결정(D-번호)과 전체 TODO(H-번호)만 담는다.
       더 오래된 결정은 레거시 파일로 이동.
 
@@ -1659,6 +1659,28 @@ MCP엔 GUI의 "승인 버튼" 같은 명시적 이벤트가 없어서, O-006/007
       — 에러 출력만 인코딩이 갈리는 재발을 감지) 추가 — pytest
       190→191개 통과.
 
+[D-055] H-011 main.py save_roots()와 router_proposals.atomic_write_json()의
+원자적쓰기 패턴 중복 제거
+결정: `router_proposals.atomic_write_json(path, data)`가 실제로 쓴 바이트
+      (raw)를 반환하도록 확장(기존 호출부는 반환값을 안 써서 영향 없음).
+      `main.py`의 `save_roots()`는 이제 저수준 temp파일 쓰기+os.replace()
+      시퀀스를 직접 구현하지 않고 이 헬퍼로 위임 — `_LAST_KNOWN_HASH`
+      갱신도 반환받은 raw 바이트를 그대로 재사용(같은 payload를 두 번
+      json.dumps() 안 함). H-011 원안 그대로 낙관적 동시성 검사
+      (RegistryConflictError)는 save_roots() 쪽에만 유지.
+이유: D-043 코드리뷰가 발견한 대로 temp+os.replace() 시퀀스가 두 파일에
+      독립 구현돼 있었음 — router_proposals.atomic_write_json이 이미
+      router_orchestrator/router_watcher/router_keyword_registry 3곳에서
+      재사용되고 있어(D-032/D-039/D-044) main.py도 같은 헬퍼로 합치는
+      게 위험도 낮은 표준 정리.
+검증: 기존 D-021 원자적쓰기/동시성 테스트 4개 그대로 통과(최초생성/
+      정상흐름/충돌감지/충돌시미보존/임시파일미잔존) + 신규 회귀 테스트
+      1개(monkeypatch로 save_roots()가 실제로 router_proposals.
+      atomic_write_json()을 호출하는지 잠금 — 나중에 실수로 로직을 다시
+      인라인으로 베껴 넣어도 결과 파일만 보는 다른 테스트는 못 잡는
+      문제 방지) — pytest 191→192개 통과. 앱 smoke-test(백그라운드 1.5초
+      실행→크래시로그 없음→종료) 통과.
+
 ================================================================
 PART 2 — TODO
 ================================================================
@@ -1722,16 +1744,12 @@ PART 2 — TODO
   D-054에서 구현 완료 — router_classifier._cli_common() 헬퍼로 통합,
   ensure_ascii 불일치도 같이 수정. pytest 191개 통과.
 
-🔵 P3
-H-011  main.py save_roots()와 router_proposals.atomic_write_json()의
-원자적쓰기 패턴 중복
+✅ H-011  main.py save_roots()와 router_proposals.atomic_write_json()의
+원자적쓰기 패턴 중복  | 2026-08-17
   대상: main.py의 save_roots(), router_proposals.py의 atomic_write_json()
-  원인: D-043 코드리뷰 발견 — temp파일+os.replace() 시퀀스가 독립적으로
-        두 번 구현돼 있음. save_roots()는 그 위에 낙관적 동시성 검사까지
-        얹혀 있어 단순 치환은 아님 — 저수준 "temp 쓰고 replace" 부분만
-        공유 헬퍼로 뽑고, 동시성 검사는 save_roots() 쪽에만 유지하는 형태가
-        필요.
-  완료 조건: 별도 라운드에서 구현(위험도 낮은 리팩터라 우선순위는 낮음)
+  D-055에서 구현 완료 — atomic_write_json이 raw 바이트를 반환하도록 확장,
+  save_roots()는 저수준 쓰기를 위임하고 동시성 검사만 유지. pytest 192개
+  통과.
 
 ================================================================
 === 미결 (O-번호, OPEN) ===

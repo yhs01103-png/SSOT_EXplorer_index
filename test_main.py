@@ -210,6 +210,24 @@ def test_save_roots_leaves_no_tmp_file(isolated_registry):
     assert leftovers == []
 
 
+def test_save_roots_delegates_low_level_write_to_router_proposals(isolated_registry, monkeypatch):
+    """D-055(H-011) 핵심 회귀 — save_roots()의 temp+os.replace() 저수준
+    쓰기가 router_proposals.atomic_write_json()으로 위임됐는지 잠가둔다.
+    이게 없으면 나중에 실수로 main.py 안에 같은 로직을 다시 인라인으로
+    베껴 넣어도(H-011 재발) 다른 테스트들은 결과 파일만 보고 통과시켜서
+    못 잡는다."""
+    calls = []
+    original = router_proposals.atomic_write_json
+
+    def spy(path, data):
+        calls.append(path)
+        return original(path, data)
+
+    monkeypatch.setattr(router_proposals, "atomic_write_json", spy)
+    m.save_roots([{"label": "a", "path": "C:\\a"}])
+    assert calls == [m.REGISTRY_PATH]
+
+
 # ---------------------------------------------------------- D-023: primarySource
 
 def test_primary_source_defaults_to_local(isolated_registry):

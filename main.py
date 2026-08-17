@@ -424,6 +424,10 @@ def save_roots(roots: list[dict]) -> None:
     - 원자적 쓰기: 같은 폴더의 임시파일에 먼저 쓰고 os.replace()로 치환.
       os.replace()는 Windows/POSIX 둘 다 원자적이라, 쓰다가 죽어도(정전,
       OneDrive 충돌 등) 절반만 쓰인 JSON이 실제 파일명으로 남는 일이 없다.
+      2026-08-17(D-055, H-011) — 이 저수준 temp+replace 시퀀스는
+      router_proposals.atomic_write_json()과 그대로 중복이었어서(D-043
+      코드리뷰 발견) 그쪽으로 위임 — main.py는 이제 이 파일 고유 로직인
+      아래 동시성 검사만 담당한다.
     - 낙관적 동시성 제어: 쓰기 직전 디스크의 '현재' 해시를 다시 재서
       _LAST_KNOWN_HASH(마지막으로 load_roots/save_roots가 확인한 값)와
       비교한다. 다르면 그 사이 다른 기기/세션이 먼저 저장한 것 —
@@ -457,18 +461,7 @@ def save_roots(roots: list[dict]) -> None:
     payload.setdefault("relations", [])  # D-028 — 병합 보존(sharedDocs와 동일 이유)
     payload["roots"] = roots
 
-    REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    raw = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
-    tmp_path = REGISTRY_PATH.with_name(REGISTRY_PATH.name + f".tmp{os.getpid()}")
-    try:
-        tmp_path.write_bytes(raw)
-        os.replace(tmp_path, REGISTRY_PATH)  # 원자적 치환
-    finally:
-        if tmp_path.exists():
-            try:
-                tmp_path.unlink()
-            except OSError:
-                pass
+    raw = router_proposals.atomic_write_json(REGISTRY_PATH, payload)
     _LAST_KNOWN_HASH = _hash_bytes(raw)
 
 
