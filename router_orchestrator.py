@@ -245,37 +245,24 @@ def load_orchestration_log(log_path: Path | None = None) -> list[dict]:
 # --------------------------------------------------------------------- CLI
 
 def _run_cli() -> int:
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="레지스트리+README 실시간검색+신뢰폐루프를 단계별로 거친 최종 분류 제안(JSON)"
+    # D-053, H-010 — argparse 골격/텍스트 stdin 처리/레지스트리 로드+에러
+    # 처리는 router_classifier._cli_common()으로 통합(중복 제거), 이 파일
+    # 고유의 --log-path/--keyword-registry-path만 extra_args로 얹는다.
+    result = router_classifier._cli_common(
+        "레지스트리+README 실시간검색+신뢰폐루프를 단계별로 거친 최종 분류 제안(JSON)",
+        extra_args=[
+            ("--log-path", {"default": None, "help": "오케스트레이션 로그 파일 경로(생략 시 기본 위치 — 테스트 등에서 격리용)"}),
+            ("--keyword-registry-path", {"default": None, "help": "키워드 레지스트리 파일 경로(D-044, 생략 시 기본 위치 — 테스트 등에서 격리용)"}),
+        ],
     )
-    parser.add_argument("--text", required=True, help="분류할 내용. '-'면 stdin에서 읽음")
-    parser.add_argument("--registry", default=None, help="ssot-roots.json 경로(생략 시 기본 위치)")
-    parser.add_argument(
-        "--log-path", default=None,
-        help="오케스트레이션 로그 파일 경로(생략 시 기본 위치 — 테스트 등에서 격리용)",
-    )
-    parser.add_argument(
-        "--keyword-registry-path", default=None,
-        help="키워드 레지스트리 파일 경로(D-044, 생략 시 기본 위치 — 테스트 등에서 격리용)",
-    )
-    args = parser.parse_args()
-
-    text = sys.stdin.read() if args.text == "-" else args.text
-    registry_path = Path(args.registry) if args.registry else router_classifier._default_registry_path()
+    if result is None:
+        return 1
+    args, text, roots = result
     log_path = Path(args.log_path) if args.log_path else None
     keyword_registry_path = Path(args.keyword_registry_path) if args.keyword_registry_path else None
 
-    try:
-        data = json.loads(registry_path.read_text(encoding="utf-8-sig"))
-    except (OSError, json.JSONDecodeError) as e:
-        print(json.dumps({"error": str(e)}))
-        return 1
-
-    roots = data.get("roots", [])
-    result = orchestrate(text, roots, log_path=log_path, keyword_registry_path=keyword_registry_path)
-    print(json.dumps(result, indent=2))  # ensure_ascii=True(기본) — 인코딩 사고 방지(D-030과 동일 이유)
+    final = orchestrate(text, roots, log_path=log_path, keyword_registry_path=keyword_registry_path)
+    print(json.dumps(final, indent=2))  # ensure_ascii=True(기본) — 인코딩 사고 방지(D-030과 동일 이유)
     return 0
 
 

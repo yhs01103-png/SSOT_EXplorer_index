@@ -182,3 +182,21 @@ def test_cli_reports_needs_clarification_for_vague_text(tmp_path):
     payload = json.loads(result.stdout)
     assert payload["needsClarification"] is True
     assert payload["candidates"] == []
+
+
+def test_cli_registry_load_error_returns_json_error_ascii_safe(tmp_path):
+    """D-053(H-010) — _cli_common() 통합 과정에서 에러 출력의 ensure_ascii
+    불일치(예전엔 에러만 False, 성공 출력은 기본값 True)를 같이 잡았다 —
+    레지스트리 파일이 없을 때도 성공 출력과 동일하게 순수 ASCII(\\uXXXX
+    이스케이프)로만 나가는지 잠가둔다(한글이 원문 그대로 섞여 나오면
+    회귀)."""
+    missing_registry = tmp_path / "does-not-exist.json"
+
+    result = subprocess.run(
+        [sys.executable, rc.__file__, "--text", "아무 내용", "--registry", str(missing_registry)],
+        capture_output=True, text=True, encoding="utf-8", timeout=15,
+    )
+    assert result.returncode == 1
+    assert result.stdout.strip().isascii()
+    payload = json.loads(result.stdout)
+    assert "error" in payload

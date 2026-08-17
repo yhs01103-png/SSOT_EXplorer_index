@@ -290,14 +290,31 @@ def _default_registry_path() -> Path:
     return resolve_registry_path()
 
 
-def _run_cli() -> int:
+def _cli_common(description: str, extra_args: list[tuple[str, dict]] | None = None):
+    """router_classifier.py/router_orchestrator.py CLI 진입점이 공유하는
+    argparse 골격 + stdin 텍스트 처리 + 레지스트리 로드+에러처리(D-053,
+    H-010) — D-043 코드리뷰가 두 파일이 이 부분을 각자 따로 구현해서
+    인코딩 안전장치(ensure_ascii)가 미묘하게 갈려 있다고 지적한 걸 여기
+    통합. 부수적으로 실제 불일치 하나도 같이 잡음 — 예전엔 에러 출력만
+    `ensure_ascii=False`였는데(성공 출력은 기본값 True) 이젠 둘 다 기본값
+    True로 통일(사람이 아니라 subprocess로 stdout을 읽는 쪽(pytest, Claude
+    Code의 Bash 도구)이 콘솔 코드페이지로 UTF-8을 오독하는 사고를 막기
+    위한 원래 취지 — 에러 메시지도 같은 stdout으로 나가니 예외일 이유가
+    없었다).
+
+    extra_args: (플래그, add_argument kwargs) 튜플 리스트 — 오케스트레이터
+    전용 인자(--log-path, --keyword-registry-path) 추가용. 공통 인자
+    (--text/--registry)는 여기 고정.
+    반환: 성공 시 (args, text, roots). 실패 시(레지스트리 로드 에러) 이미
+    JSON 에러를 stdout에 출력한 뒤 None — 호출부는
+    `if result is None: return 1` 패턴으로 이어받는다."""
     import argparse
 
-    parser = argparse.ArgumentParser(
-        description="텍스트가 어느 SSOT 등록 루트와 관련 있는지 분류 제안(JSON 출력)"
-    )
+    parser = argparse.ArgumentParser(description=description)
     parser.add_argument("--text", required=True, help="분류할 내용. '-'면 stdin에서 읽음")
     parser.add_argument("--registry", default=None, help="ssot-roots.json 경로(생략 시 기본 위치)")
+    for flag, kwargs in extra_args or []:
+        parser.add_argument(flag, **kwargs)
     args = parser.parse_args()
 
     text = sys.stdin.read() if args.text == "-" else args.text
@@ -306,12 +323,20 @@ def _run_cli() -> int:
     try:
         data = json.loads(registry_path.read_text(encoding="utf-8-sig"))
     except (OSError, json.JSONDecodeError) as e:
-        print(json.dumps({"error": str(e)}, ensure_ascii=False))
-        return 1
+        print(json.dumps({"error": str(e)}))
+        return None
 
-    roots = data.get("roots", [])
+    return args, text, data.get("roots", [])
+
+
+def _run_cli() -> int:
+    result = _cli_common("텍스트가 어느 SSOT 등록 루트와 관련 있는지 분류 제안(JSON 출력)")
+    if result is None:
+        return 1
+    _args, text, roots = result
+
     candidates = classify_content(text, roots)
-    result = {
+    result_payload = {
         "needsClarification": not candidates and needs_clarification(text),
         "candidates": candidates,
     }
@@ -320,7 +345,7 @@ def _run_cli() -> int:
     # UTF-8을 오독하는 사고를 겪은 적 있어서(이 프로젝트에서 반복된 패턴),
     # 사람이 읽는 용도가 아니라 기계가 파싱하는 용도라 \uXXXX 이스케이프로
     # 인코딩 문제 자체를 원천봉쇄한다.
-    print(json.dumps(result, indent=2))
+    print(json.dumps(result_payload, indent=2))
     return 0
 
 

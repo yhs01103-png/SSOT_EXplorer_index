@@ -2,7 +2,7 @@
 SSOT_Explorer — 최신 설계결정이력 + TODO
 ================================================================
 기준 버전: v1.0
-최종수정: 2026-08-17 (D-053)
+최종수정: 2026-08-17 (D-054)
 원칙: 가장 최근 라운드의 신규 결정(D-번호)과 전체 TODO(H-번호)만 담는다.
       더 오래된 결정은 레거시 파일로 이동.
 
@@ -1632,6 +1632,33 @@ MCP엔 GUI의 "승인 버튼" 같은 명시적 이벤트가 없어서, O-006/007
       pytest 189→190개 통과. 앱 smoke-test(백그라운드 실행 1.5초→
       크래시로그 없음→종료) 통과.
 
+[D-054] H-010 router_classifier/router_orchestrator CLI(_run_cli) 구현 중복 제거
+결정: 두 파일이 각자 구현하던 argparse 골격(--text/--registry) + stdin
+      텍스트 처리 + 레지스트리 JSON 로드+에러처리를 `router_classifier.
+      _cli_common(description, extra_args=None)`로 통합 — 성공 시
+      (args, text, roots) 반환, 실패 시(레지스트리 로드 에러) 이미 JSON
+      에러를 stdout에 출력한 뒤 None 반환(`if result is None: return 1`
+      패턴). `extra_args`는 (플래그, add_argument kwargs) 튜플 리스트로
+      오케스트레이터 전용 인자(--log-path/--keyword-registry-path)를
+      얹는 확장점. router_orchestrator._run_cli()는 이제 이 헬퍼를 호출한
+      뒤 자기 고유 로직(orchestrate() 호출)만 담당.
+      [부수 수정] 통합 과정에서 실제 불일치 발견 — 에러 출력만
+      `ensure_ascii=False`였고 성공 출력은 기본값 True였음(D-043
+      코드리뷰가 예고한 "두 파일이 서로 다른 인코딩 안전장치를 갖게 될
+      위험"이 실제로 이미 발생해 있었음). `_cli_common`으로 통합하며
+      에러 출력도 기본값 True로 맞춤 — 사람이 아니라 subprocess로
+      stdout을 읽는 쪽(pytest/Claude Code Bash 도구)이 콘솔 코드페이지로
+      오독하는 사고를 막는다는 원래 취지가 에러 경로에서도 지금까지 안
+      지켜지고 있었음.
+이유: D-043 코드리뷰가 "이미 미묘하게 갈려 있어, 한쪽만 고치고 다른 쪽을
+      잊기 쉬운 상태"라고 지적한 대로 실제 갈림(ensure_ascii 불일치)이
+      확인됨 — 공통 헬퍼로 합치면 이런 종류의 드리프트 자체가 구조적으로
+      재발 불가능해짐.
+검증: 기존 CLI 통합테스트(subprocess 실제 실행) 32개 그대로 통과 + 신규
+      회귀 테스트 1개(레지스트리 파일 없을 때 stdout이 순수 ASCII인지
+      — 에러 출력만 인코딩이 갈리는 재발을 감지) 추가 — pytest
+      190→191개 통과.
+
 ================================================================
 PART 2 — TODO
 ================================================================
@@ -1690,16 +1717,10 @@ PART 2 — TODO
   ClassificationWorker(D-051)와 동일 패턴. 완료 조건("실제 지연 체감/재현
   시 진행")과 무관하게 사용자가 선제 적용 요청. pytest 190개 통과.
 
-🔵 P3
-H-010  router_classifier/router_orchestrator CLI(_run_cli) 구현 중복
+✅ H-010  router_classifier/router_orchestrator CLI(_run_cli) 구현 중복  | 2026-08-17
   대상: router_classifier.py, router_orchestrator.py의 _run_cli()
-  원인: D-043 코드리뷰 발견 — argparse 설정/레지스트리 읽기/에러처리/JSON
-        출력을 두 파일이 거의 그대로 중복 구현. 이미 서로 다른 인코딩
-        안전장치(ensure_ascii)가 미묘하게 갈려 있어(발견 당시), 한쪽만
-        고치고 다른 쪽을 잊기 쉬운 상태.
-  수정 방향(안): 공통 부분(argparse 골격+레지스트리 로드+에러처리)을
-        `_cli_common()` 같은 헬퍼로 뽑아 두 파일이 공유.
-  완료 조건: 별도 라운드에서 구현
+  D-054에서 구현 완료 — router_classifier._cli_common() 헬퍼로 통합,
+  ensure_ascii 불일치도 같이 수정. pytest 191개 통과.
 
 🔵 P3
 H-011  main.py save_roots()와 router_proposals.atomic_write_json()의
