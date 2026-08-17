@@ -1788,6 +1788,41 @@ MCP엔 GUI의 "승인 버튼" 같은 명시적 이벤트가 없어서, O-006/007
 관련 D-번호: D-038(스키마), D-048(MCP 서버), D-052(pathExists 원칙),
 D-057(개발자모드 게이팅), O-013.
 
+[D-059] O-013 실제 연동 — flutter_App 레지스트리에 productized/check_drift.py
+액션 라이브 등록
+결정: `flutter_App\.claude\ssot-roots.json`의 flutter_App root 항목에
+      `actions` 배열 추가(대용량 referenceCondition 문자열은 전혀 안
+      건드림 — Edit 도구로 그 문자열 뒤 나머지 필드 블록만 정확히
+      매칭해서 삽입, D-058에서 우려했던 "손으로 수정 시 실수" 리스크
+      회피). 항목 하나:
+      ```json
+      {
+        "trigger": "*Lazzy_App_OS_Monorepo*productized*",
+        "scriptPath": "...\\Lazzy_App_OS_Monorepo\\productized\\check_drift.py",
+        "policy": "auto"
+      }
+      ```
+      trigger를 `*/productized/*`가 아니라 `*Lazzy_App_OS_Monorepo*
+      productized*`(프로젝트명까지 포함)로 잡은 이유 — 경로 구분자
+      정규화를 안 하는 fnmatch 특성상(D-058) `/`든 `\`든 어차피 안
+      가리므로 굳이 구분자를 패턴에 넣을 이유가 없고, 대신 프로젝트명을
+      넣어 향후 다른 루트에 동명의 "productized" 폴더가 생겨도 오매치
+      안 나게 미리 좁혀둠. policy="auto"인 이유 — check_drift.py가 순수
+      읽기 전용(리포트만 출력, 파일 무변경)이라 승인 절차가 실익이
+      없다고 판단.
+이유: O-013/D-058 완료 직후 사용자가 "그거 말한 거 맞지, 맞으면 연동까지"로
+      바로 확정 — 메커니즘만 만들고 실제 데이터 등록을 미루는 대신 이번에
+      마무리.
+검증: (1) 레지스트리 JSON 재파싱 성공 + 기존 루트 5개(flutter_App/
+      Local_APP/Coding_Nomal/개발자 전용 어플/coding_admin) 그대로 보존
+      확인. (2) `main.validate_registry()`로 실제 파일 스키마 통과(에러
+      0건) 재확인. (3) `list_triggered_actions("flutter_App", [...])`를
+      실제 레지스트리 경로(SSOT_REGISTRY_PATH)로 두 케이스 실행 — Lazzy_
+      App_OS_Monorepo/productized/ 밑 경로는 매치(scriptExists=True,
+      policy=auto), 무관한 server/core/orchestrators/ 경로는 매치 안 됨
+      (빈 리스트) 확인.
+관련 D-번호: D-058, O-013.
+
 ================================================================
 PART 2 — TODO
 ================================================================
@@ -2045,19 +2080,20 @@ productized/check_drift.py(포팅한 소스가 원본 대비 드리프트났는�
   productized/README.md), 이 앱에 새 기능을 안 만들어도 이미 동작한다.
   일반화는 두 번째 실사용 사례(다른 프로젝트에서도 "이 조건 되면 이 스크립트"
   요청)가 실제로 생길 때까지 보류.
-임시결정: **(b) 채택, D-058(2026-08-17)에서 구현 완료** — 당초 초안에선
-(c)(보류)를 제안했으나 사용자가 그 자리에서 바로 (b)로 확정, 스키마 확장(a)
-+ MCP tool(b)까지 한 번에 구현. actions 배열/list_triggered_actions tool
-자체는 이제 범용으로 존재함 — **남은 건 실제 등록뿐**: 지금 이 기능을 쓰려면
-flutter_App 레지스트리의 root 항목(label="flutter_App")에 productized/
-check_drift.py를 가리키는 actions 항목을 실제로 추가해야 하는데, 그 루트의
-referenceCondition이 대용량 프로즈 문자열이라 손으로 수정 시 실수 위험이
-있어 이번 라운드에선 메커니즘만 만들고 실제 연동은 별도 확인 후로 미룸.
-재논의 조건: flutter_App(또는 다른 등록 루트) 레지스트리에 실제 actions
-항목을 추가해 productized/check_drift.py를 라이브로 연동하고 싶을 때 —
-그때 trigger 글롭 패턴(예: `*/productized/*`)과 scriptPath(절대경로)를
-정하고 조심스럽게 JSON을 편집(전체 재작성이 아니라 actions 배열만 추가).
-관련 D-번호: D-058, O-012, D-020(자동 텍스트 스캔 대신 명시적 선언 원칙).
+임시결정: **(b) 채택 + 라이브 연동까지 완료(D-058, D-059, 2026-08-17)** —
+당초 초안에선 (c)(보류)를 제안했으나 사용자가 그 자리에서 바로 (b)로
+확정, 스키마 확장(a)+MCP tool(b) 구현(D-058) 직후 실제 flutter_App
+레지스트리에 productized/check_drift.py용 actions 항목까지 등록(D-059).
+이 항목 하나로 요청은 완결 — 메커니즘 자체는 다른 등록 루트/다른
+스크립트에도 그대로 재사용 가능(각 루트 JSON에 actions 항목만 추가하면
+됨, 새 코드 불필요).
+재논의 조건: (남은 건 확장뿐) productized/check_drift.py 외에 다른
+프로젝트/루트에서도 "이 조건 되면 이 스크립트" 요청이 들어와서 두 번째
+실사용 사례가 쌓이면, 그때 공통 패턴이 있는지 보고 필요하면 트리거 문법
+(지금은 fnmatch 글롭 하나뿐)이나 policy 종류(지금은 auto/approve 둘뿐)를
+확장할지 판단.
+관련 D-번호: D-058, D-059, O-012, D-020(자동 텍스트 스캔 대신 명시적 선언
+원칙).
 
 ================================================================
 변경이력
