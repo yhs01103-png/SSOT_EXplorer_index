@@ -282,6 +282,124 @@ def test_list_triggered_actions_result_is_json_serializable(tmp_path):
     json.dumps(result)
 
 
+# ----------------------------------------------------- list_missing_index_folders
+
+def test_list_missing_index_folders_flags_folder_with_no_index(tmp_path):
+    root = tmp_path / "root"
+    (root / "child_a").mkdir(parents=True)
+    m.save_roots([{"label": "demo", "path": str(root)}])
+
+    result = mcp_srv.list_missing_index_folders("demo")
+
+    assert len(result) == 1
+    assert result[0]["path"] == str(root / "child_a")
+    assert result[0]["hasClaudeMd"] is False
+    assert result[0]["hasReadmeMd"] is False
+
+
+def test_list_missing_index_folders_skips_folder_with_both_files(tmp_path):
+    root = tmp_path / "root"
+    child = root / "child_a"
+    child.mkdir(parents=True)
+    (child / "CLAUDE.md").write_text("x", encoding="utf-8")
+    (child / "README.md").write_text("x", encoding="utf-8")
+    m.save_roots([{"label": "demo", "path": str(root)}])
+
+    result = mcp_srv.list_missing_index_folders("demo")
+
+    assert result == []
+
+
+def test_list_missing_index_folders_flags_folder_with_only_one_file(tmp_path):
+    """CLAUDE.md만 있고 README.md는 없는 절반짜리 상태도 후보로 잡혀야
+    한다 — hasClaudeMd/hasReadmeMd 플래그로 어느 쪽이 빠졌는지 구분."""
+    root = tmp_path / "root"
+    child = root / "child_a"
+    child.mkdir(parents=True)
+    (child / "CLAUDE.md").write_text("x", encoding="utf-8")
+    m.save_roots([{"label": "demo", "path": str(root)}])
+
+    result = mcp_srv.list_missing_index_folders("demo")
+
+    assert len(result) == 1
+    assert result[0]["hasClaudeMd"] is True
+    assert result[0]["hasReadmeMd"] is False
+
+
+def test_list_missing_index_folders_ignores_dot_folders(tmp_path):
+    root = tmp_path / "root"
+    (root / ".git").mkdir(parents=True)
+    (root / ".claude").mkdir(parents=True)
+    m.save_roots([{"label": "demo", "path": str(root)}])
+
+    result = mcp_srv.list_missing_index_folders("demo")
+
+    assert result == []
+
+
+def test_list_missing_index_folders_ignores_noise_directories(tmp_path):
+    root = tmp_path / "root"
+    for name in ["node_modules", "venv", "__pycache__", "dist", "build"]:
+        (root / name).mkdir(parents=True)
+    m.save_roots([{"label": "demo", "path": str(root)}])
+
+    result = mcp_srv.list_missing_index_folders("demo")
+
+    assert result == []
+
+
+def test_list_missing_index_folders_does_not_recurse_past_depth_one(tmp_path):
+    root = tmp_path / "root"
+    child = root / "child_a"
+    grandchild = child / "grandchild"
+    grandchild.mkdir(parents=True)
+    (child / "CLAUDE.md").write_text("x", encoding="utf-8")
+    (child / "README.md").write_text("x", encoding="utf-8")
+    m.save_roots([{"label": "demo", "path": str(root)}])
+
+    result = mcp_srv.list_missing_index_folders("demo")
+
+    # child_a는 이미 둘 다 있어 제외되고, 그 안의 grandchild(인덱스 없음)는
+    # depth=1 밖이라 애초에 안 봄 — 결과가 비어있어야 depth 제한이 지켜진 것.
+    assert result == []
+
+
+def test_list_missing_index_folders_ignores_files_at_top_level(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir(parents=True)
+    (root / "loose_file.txt").write_text("x", encoding="utf-8")
+    m.save_roots([{"label": "demo", "path": str(root)}])
+
+    result = mcp_srv.list_missing_index_folders("demo")
+
+    assert result == []
+
+
+def test_list_missing_index_folders_unknown_label():
+    result = mcp_srv.list_missing_index_folders("no-such-label")
+    assert result == [{"status": "label_not_found", "label": "no-such-label"}]
+
+
+def test_list_missing_index_folders_root_missing_on_disk(tmp_path):
+    missing = tmp_path / "does-not-exist"
+    m.save_roots([{"label": "gone", "path": str(missing)}])
+
+    result = mcp_srv.list_missing_index_folders("gone")
+
+    assert result == [{"status": "root_missing", "label": "gone", "path": str(missing)}]
+
+
+def test_list_missing_index_folders_result_is_json_serializable(tmp_path):
+    import json
+
+    root = tmp_path / "root"
+    (root / "child_a").mkdir(parents=True)
+    m.save_roots([{"label": "demo", "path": str(root)}])
+
+    result = mcp_srv.list_missing_index_folders("demo")
+    json.dumps(result)
+
+
 # --------------------------------------------------------- D-057: 개발자 모드 게이팅
 
 def test_list_ssot_roots_gated_when_developer_mode_off(tmp_path):
@@ -312,6 +430,13 @@ def test_list_triggered_actions_gated_when_developer_mode_off(tmp_path):
     assert result == [mcp_srv._DEV_MODE_OFF]
 
 
+def test_list_missing_index_folders_gated_when_developer_mode_off(tmp_path):
+    m.save_roots([{"label": "demo", "path": str(tmp_path)}])
+    rp.set_developer_mode(False, m.REGISTRY_PATH)
+    result = mcp_srv.list_missing_index_folders("demo")
+    assert result == [mcp_srv._DEV_MODE_OFF]
+
+
 def test_tools_work_normally_when_developer_mode_explicitly_true(tmp_path):
     """기본값(필드 없음)뿐 아니라 명시적 True에서도 정상 동작하는지 —
     False만 잠그고 True는 그냥 통과시키는지 확인."""
@@ -335,3 +460,4 @@ def test_tools_are_registered_on_server():
     assert "check_readme_freshness" in names
     assert "classify_content" in names
     assert "list_triggered_actions" in names
+    assert "list_missing_index_folders" in names

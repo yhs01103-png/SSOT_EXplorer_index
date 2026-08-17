@@ -134,7 +134,7 @@ Windsurf(`.windsurf/rules/`)로 동시에 맞출 수 있다(레거시 `.cursorru
   로 stdio transport 실행(공식 `mcp` SDK). 파일 조작은 절대 안 함 — Claude
   Code/Cursor/Windsurf 등 MCP를 지원하는 IDE/에이전트가 이 서버의 tool을
   불러서 "신호"만 받고, 실제 조치는 그쪽이 한다는 게 핵심(P-01 그대로
-  유지). 지금은 tool 4개: `list_ssot_roots()`(등록 루트 목록 — 각 항목에
+  유지). 지금은 tool 5개: `list_ssot_roots()`(등록 루트 목록 — 각 항목에
   `pathExists`도 포함, D-052 — 폴더가 삭제/이동됐으면 false, 자동 등록해제는
   안 함),
   `check_readme_freshness(root_label?, stale_days=30)`(README.md가 폴더 안
@@ -145,7 +145,11 @@ Windsurf(`.windsurf/rules/`)로 동시에 맞출 수 있다(레거시 `.cursorru
   `list_triggered_actions(root_label, changed_paths)`(D-058, O-013 — "액션
   레지스트리". 루트가 `actions: [{trigger, scriptPath, policy}]`를 선언해두면
   changed_paths와 trigger(fnmatch 글롭)가 매치되는 것만 신호로 반환 — 실행
-  여부/자동·승인 판단은 전부 호출한 에이전트 몫). **Claude
+  여부/자동·승인 판단은 전부 호출한 에이전트 몫),
+  `list_missing_index_folders(root_label)`(D-060 — 등록 루트 바로 밑(depth=1)
+  에서 CLAUDE.md/README.md가 없는 하위 폴더를 후보로 반환. dot-폴더/흔한
+  의존성 디렉토리는 제외, 실제로 그 폴더가 자기만의 규칙이 필요한지·뭘 써야
+  하는지는 호출한 에이전트 판단 — README 자동생성은 여전히 안 함). **Claude
   Code에 등록·연결 확인 완료**(D-049, 저장소 루트 `.mcp.json` —
   `${CLAUDE_PROJECT_DIR:-.}` 사용, 개인 절대경로 없음 — `/mcp`로 3개 tool
   전부 연결 확인, 2026-08-17). 다른 MCP 지원 IDE(Cursor/Windsurf

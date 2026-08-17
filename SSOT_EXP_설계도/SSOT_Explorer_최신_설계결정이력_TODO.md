@@ -1823,6 +1823,42 @@ D-057(개발자모드 게이팅), O-013.
       (빈 리스트) 확인.
 관련 D-번호: D-058, O-013.
 
+[D-060] list_missing_index_folders MCP tool 신설 — 인덱스 누락 탐지
+결정: 등록 루트 바로 밑(depth=1)의 하위 폴더 중 CLAUDE.md/README.md가
+      (둘 중 하나라도) 없는 것만 후보로 반환하는 tool 추가. dot-폴더와
+      흔한 의존성/빌드 디렉토리(node_modules, venv, __pycache__, dist,
+      build, target, bin, obj)는 애초에 후보에서 제외. 다른 tool과 동일한
+      원칙 그대로 — 파일을 절대 안 만든다(P-01), 후보가 정말 "자기만의
+      규칙이 필요한 단위"인지·실제로 뭘 써야 하는지는 전부 호출한
+      에이전트가 판단(README 자동생성은 `generate_init_readme_md`가
+      존재하지만 실제로는 어디서도 호출 안 되는 것과 같은 이유로 계속
+      피함). D-057과 동일하게 개발자모드 게이팅, label_not_found/
+      root_missing 응답은 다른 tool들과 동일 패턴.
+이유: Lazzy_App_OS_Monorepo 세션에서 D-058/D-059(액션 레지스트리) 작업
+      직후, 사용자가 "등록된 루트 하위에도 md/README가 다 있어야 하는
+      거 아니냐"는 질문 끝에 "앱을 플러그인만 하면 Claude Code가 그
+      구조를 자동으로 만들어주길 원한다"고 확정 — 다만 README 실제
+      내용은 여전히 Claude Code(에이전트)가 판단해서 써야 하므로, 이
+      tool은 "후보 신호"까지만 주는 것으로 범위를 좁힘(README 자동
+      생성 자체는 계속 안 함, MCP는 P-01 유지). depth=1로 좁힌 이유 —
+      더 깊은 계층은 Claude Code의 CLAUDE.md 트리 워킹(cwd에서 위로
+      올라가며 자동 로드)이 이미 커버해서, 더 내려갈 필요가 낮다고
+      사용자가 직접 확정.
+검증: 신규 테스트 11개(누락 폴더 탐지/둘 다 있으면 제외/한쪽만 있으면
+      플래그로 구분/dot-폴더 제외/노이즈 디렉토리 제외/depth=1 초과
+      비재귀 확인/파일은 무시/라벨 없음/루트 경로 없음/JSON 직렬화/
+      개발자모드 게이팅) + tool 등록 목록 assert 갱신 — 전체 pytest
+      216→227개 통과. 실제 레지스트리(SSOT_REGISTRY_PATH)로 flutter_App/
+      SSOT_Coding_File 두 루트에 직접 실행해 실측 확인 — flutter_App
+      에서 Lazzy_App_OS_Monorepo(README 없음, CLAUDE.md만 있음)와
+      Mojorl_Nova_App(마찬가지) 2건을 실제로 잡아냄. Lazzy_App_OS_
+      Monorepo는 README 없이 CLAUDE.md가 server/client/설계도_SSOT로
+      바로 흩어 보내는 구조라 의도된 설계일 가능성이 높음 — "탐지=문제"가
+      아니라 "탐지=검토 대상"이라는 이 tool의 설계 의도를 실측으로도
+      확인한 사례.
+관련 D-번호: D-057(개발자모드 게이팅), D-058(같은 패턴의 직전 tool),
+D-013(SearchWorker dot-폴더 제외 관례).
+
 ================================================================
 PART 2 — TODO
 ================================================================

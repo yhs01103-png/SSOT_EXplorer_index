@@ -33,6 +33,12 @@ AI 코딩 툴이 공통으로 지원하는 사실상 유일한 프로토콜이�
   — 이 tool도 파일 조작·프로세스 실행을 절대 안 함). 첫 실사용 사례:
   Lazzy_App_OS_Monorepo/productized/check_drift.py(포팅한 소스가 원본 대비
   드리프트났는지 검사).
+- `list_missing_index_folders` — 인덱스 누락 탐지(D-060). 등록 루트 바로
+  밑(depth=1)의 하위 폴더 중 CLAUDE.md/README.md가 (둘 중 하나라도) 없는
+  것만 후보로 반환한다. dot-폴더와 흔한 의존성/빌드 디렉토리(node_modules,
+  venv 등)는 애초에 후보에서 제외. 그 폴더가 정말 "자기만의 규칙이 필요한
+  단위"인지, 그렇다면 실제로 뭘 써야 할지는 여전히 호출한 에이전트가
+  판단·작성(P-01, README 자동생성은 이 프로젝트가 계속 피해온 영역).
 
 **읽기 전용(P-01) 그대로 유지 — 단, 프로젝트 파일에 한정**: 이 서버는
 README.md/CLAUDE.md 같은 **프로젝트 파일은 절대 안 쓴다.** 결과를 받은
@@ -71,6 +77,15 @@ from router_proposals import is_developer_mode  # Qt 미의존, 안전하게 top
 # 바뀌는 폴더라면 한 달만 밀려도 신호로 볼 가치가 있다고 판단(실측 데이터
 # 없음 — H-009와 같은 "재현/사용 후 조정" 대상, 기본값일 뿐).
 README_STALE_DAYS = 30
+
+# D-060 — list_missing_index_folders가 후보에서 제외하는 흔한 의존성/빌드
+# 디렉토리(dot-폴더는 별도로 startswith(".")로 걸러짐, SearchWorker(D-013)와
+# 동일 관례). 이 목록에 없는 낯선 이름은 일부러 그대로 후보에 남긴다 —
+# "모르면 보여준다"가 "모르면 숨긴다"보다 이 tool의 목적(누락 발견)에 맞음.
+_NOISE_DIR_NAMES = {
+    "node_modules", "venv", "__pycache__", "dist", "build",
+    "target", "bin", "obj",
+}
 
 server = MCPServer(
     "ssot-explorer",
@@ -266,6 +281,62 @@ def list_triggered_actions(root_label: str, changed_paths: list[str]) -> list[di
             }
         )
     return matched
+
+
+@server.tool()
+def list_missing_index_folders(root_label: str) -> list[dict]:
+    """등록 루트 바로 밑(depth=1)에서 CLAUDE.md/README.md가 (둘 중
+    하나라도) 없는 하위 폴더를 후보로 반환한다 — 파일을 절대 안 만든다
+    (P-01). dot-폴더(.git 등)와 흔한 의존성/빌드 디렉토리(node_modules,
+    venv, __pycache__, dist, build, target, bin, obj)는 애초에 후보에서
+    제외 — 대부분 자기만의 규칙이 필요 없는 노이즈일 확률이 매우 높음.
+
+    반환된 각 후보가 정말 "자기만의 CLAUDE.md/README.md가 필요한 의미
+    있는 단위"인지, 그렇다면 실제로 무슨 내용을 써야 하는지는 전부 호출한
+    에이전트가 그 폴더 내용을 보고 판단한다 — README 자동 생성은 이
+    프로젝트가 계속 피해온 영역(`generate_init_readme_md`가 존재하지만
+    실제로는 어디서도 호출되지 않는 것과 같은 이유, D-060).
+
+    depth=1만 보는 이유 — 더 깊은 계층은 Claude Code의 CLAUDE.md 트리
+    워킹(cwd에서 위로 올라가며 자동 로드)이 이미 커버하므로, 이 tool까지
+    깊이 내려갈 필요가 낮다고 판단(H-009식 "재현/사용 후 조정" 대상 —
+    실사용상 부족하면 나중에 깊이 옵션 추가).
+
+    root_label을 못 찾으면 다른 tool과 동일하게 label_not_found 신호.
+    개발자 모드가 꺼져 있으면 다른 tool과 동일하게 에러 dict 하나만
+    반환한다(D-057 게이팅 관례)."""
+    from main import REGISTRY_PATH, find_index_files, load_roots
+
+    if not is_developer_mode(REGISTRY_PATH):
+        return [_DEV_MODE_OFF]
+
+    roots = [r for r in load_roots() if r.get("label") == root_label]
+    if not roots:
+        return [{"status": "label_not_found", "label": root_label}]
+
+    root_path = Path(roots[0].get("path", ""))
+    if not root_path.is_dir():
+        return [{"status": "root_missing", "label": root_label, "path": str(root_path)}]
+
+    candidates: list[dict] = []
+    try:
+        children = sorted(root_path.iterdir())
+    except OSError:
+        return candidates
+    for entry in children:
+        if not entry.is_dir():
+            continue
+        if entry.name.startswith(".") or entry.name in _NOISE_DIR_NAMES:
+            continue
+        index = find_index_files(entry)
+        has_claude = "claude.md" in index
+        has_readme = "readme.md" in index
+        if has_claude and has_readme:
+            continue
+        candidates.append(
+            {"path": str(entry), "hasClaudeMd": has_claude, "hasReadmeMd": has_readme}
+        )
+    return candidates
 
 
 if __name__ == "__main__":
