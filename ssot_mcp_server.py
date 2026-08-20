@@ -24,7 +24,8 @@ AI 코딩 툴이 공통으로 지원하는 사실상 유일한 프로토콜이�
   교차검증용.
 - `classify_content` — 텍스트 하나가 등록 루트 중 어디에 속할지 순위
   매김("맥락형 인덱싱", D-044/D-049 다음 단계). 기존 `router_orchestrator.
-  orchestrate()`(5단계 파이프라인)를 그대로 재사용 — 새 분류 로직 없음.
+  orchestrate()`(D-063부로 6단계 파이프라인)를 그대로 재사용 — 새 분류
+  로직 없음.
 - `list_triggered_actions` — 액션 레지스트리(D-058, O-013, D-061). 등록
   루트가 `actions: [{trigger, policy, scriptPath?, prompt?}]`를 선언해두면
   (scriptPath/prompt 중 최소 하나는 필수, D-061 — 실행 스크립트든 순수
@@ -218,8 +219,8 @@ def check_readme_freshness(
 @server.tool()
 def classify_content(text: str) -> dict:
     """텍스트 하나를 등록된 SSOT 루트들과 대조해 어디에 속할지 순위 매긴
-    후보를 반환한다 — 이미 있는 5단계 분류 파이프라인(router_orchestrator.
-    orchestrate(), D-032~D-044)을 그대로 재사용, 새 로직 없음. 프로젝트
+    후보를 반환한다 — 이미 있는 6단계 분류 파이프라인(router_orchestrator.
+    orchestrate(), D-032~D-063)을 그대로 재사용, 새 로직 없음. 프로젝트
     파일(README.md/CLAUDE.md 등)은 절대 안 건드린다 — 어디에 실제로
     저장할지는 호출한 에이전트/사람이 이 결과를 보고 판단한다(P-01,
     범용 IDE 플러그인 방향, D-048).

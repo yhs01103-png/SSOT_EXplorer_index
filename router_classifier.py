@@ -62,6 +62,41 @@ _STOPWORDS엔 "내용"만 있으면 "내용을"/"내용은"/"내용이"도 자�
 ~3초 걸린다(모델 로딩) — CLI는 매번 새 프로세스라 매 호출마다 이 비용을
 낸다. 모듈 전역 싱글턴으로 한 프로세스 안에서는 한 번만 초기화(GUI는
 계속 떠있는 한 프로세스라 최초 1회만 비용 지불).
+
+**D-063(2026-08-19) — "언급 vs 소유" 혼동(O-007/008) 1차 완화: 단어 역할
+태깅**: bag-of-words 겹침만으로는 "flutter_App 말고 Coding_Nomal에 넣어"
+같은 문장에서 flutter_App이 그냥 스쳐간 언급인지 실제 요청 대상인지 구분을
+못 한다. 오프라인 원칙(D-034)을 깨지 않는 선에서, kiwipiepy가 이미 주는
+품사+위치 정보를 활용해 각 루트의 label이 원문 어디서 매치됐는지 위치를
+찾아 role(target/mention/neutral)을 매기고 점수에 반영한다(label_role()) —
+실제 AI 판단으로 대체하는 건 아니고(그건 아래 router_ai_judgment.py
+스켈레톤 참고, O-009와 같은 성격의 별도 결정 필요), 순수 휴리스틱을 한
+겹 더 얹은 것뿐이다.
+
+label_role()이 실측(kiwipiepy 직접 실행)으로 확인한 두 패턴만 본다:
+1) 목적지 조사 — label이 매치된 자리 바로 뒤(또는 "쪽"/"안" 같은
+   의존명사 하나 건너)에 JKB 조사 "에"/"로"/"으로"/"에다"가 오면 target.
+   ("coding_nomal에 넣어" → nomal 다음이 JKB "에")
+2) 대조 마커 — kiwipiepy는 "말고"를 VV"말"+EC"고" 2토큰으로, "아니라"를
+   VCN"아니"+EC"라" 2토큰으로 쪼갠다(리터럴 문자열 매치로는 못 잡음, 반드시
+   토큰 시퀀스로 잡아야 함 — 실측으로 확인, 프리셋 그대로 문자열
+   비교했으면 조용히 아무 효과 없었을 뻔). label 매치 위치 직전 근방에
+   마커가 있으면 target(대조로 선택된 대상), 직후 근방에 있으면
+   mention(대조로 배제된 언급).
+아무 패턴도 안 걸리면 neutral(현재 동작 그대로, 점수 영향 없음) — D-033의
+교훈("스톱워드 필터를 더 넣었다가 오히려 나빠짐, 여기서 멈춘다")과 같은
+이유로, 확신 없는 케이스에 억지로 role을 매기지 않는다.
+
+**D-065(2026-08-19, 같은 날 즉시 수정) — O-015 수정: 단어 문자열이 아니라
+라벨별 위치로 role 판정**: D-063 최초 구현은 role을 "단어 문자열 하나당
+하나"(dict[word]=role)로 기억했는데, 실제 레지스트리로 라이브 검증하다
+"flutter_App"과 "Local_APP"처럼 서로 다른 라벨이 "app" 조각을 공유하면
+role이 위치와 무관하게 뒤섞이는 버그를 발견(이 프로젝트 라벨들이
+"_App"/"_APP" 접미사를 공유하는 경우가 흔해서 드문 케이스가 아니었음).
+label_role(tokens, root)로 교체해서 각 루트가 **자기 자신의 label이 원문의
+어느 위치에서 매치됐는지**를 먼저 찾고(_find_label_span), 그 위치 기준
+으로만 role을 판정하도록 수정 — 이제 같은 "app" 조각이라도 어느 라벨
+소속인지에 따라 독립적으로 role이 매겨진다.
 """
 from __future__ import annotations
 
@@ -146,6 +181,116 @@ def needs_clarification(text: str) -> bool:
     return has_pronoun or is_short
 
 
+_DEST_PARTICLES = {"에", "로", "으로", "에다"}
+_CONTRASTIVE_SINGLE = {"대신"}  # 단일 토큰(NNG)으로 나옴 — 실측 확인
+_CONTRASTIVE_BIGRAMS = {("말", "고"), ("아니", "라")}  # kiwipiepy가 2토큰으로 쪼갬 — 실측 확인
+_ROLE_MARKER_WINDOW = 5  # 마커 탐색 폭(토큰 수) — D-065
+TARGET_ROLE_BONUS = 0.15  # D-063 — additive(D-033 원칙과 동일, floor 아님)
+MENTION_ROLE_PENALTY = 0.15
+
+
+def _kiwi_tokens(text: str) -> list:
+    """원문을 kiwipiepy 원시 토큰 리스트로(태그+순서 보존) — role 판정
+    전용(D-065). kiwipiepy 없거나 분석 실패하면 빈 리스트(호출부가 role=
+    neutral로 처리, tokenize()와 같은 안전한 폴백 원칙)."""
+    normalized = (text or "").lower().strip()
+    if not normalized or not _KIWIPIEPY_AVAILABLE:
+        return []
+    try:
+        return list(_get_kiwi().tokenize(normalized))
+    except Exception:
+        return []
+
+
+def _ordered_label_nouns(root: dict) -> list[str]:
+    """루트 label을 순서 보존 명사 토큰 리스트로(D-065). tokenize()는 set을
+    반환해 순서가 사라지는데, "이 라벨이 원문 어디서 연속으로 나타나는지"
+    찾으려면 순서가 필요하다."""
+    return [t.form for t in _kiwi_tokens(root.get("label") or "") if t.tag in _NOUN_TAGS]
+
+
+def _find_label_span(tokens: list, label_words: list[str]) -> tuple[int, int] | None:
+    """query 전체 토큰(tokens)에서 label_words가 순서대로(사이 최대 2토큰
+    간격 허용 — "_" 같은 연결기호 대비) 나타나는 첫 (시작인덱스, 끝인덱스)를
+    찾는다(D-065). 못 찾으면 None — 이 신호(키워드겹침)만으로 채택된
+    루트는 대개 찾아지지만, scope리터럴 신호만으로 채택된 경우 label
+    자체가 원문에 없을 수 있어 정상 상황이다.
+
+    [버그수정 이력, D-065 같은 날] 최초 구현은 label_words[0]도 원문 맨
+    앞에서 3토큰 이내에만 있다고 가정해서, "flutter_app 말고 coding_
+    nomal에..."처럼 label이 문장 중간에 나오는 흔한 경우를 전부 놓쳤다
+    (실측으로 발견 — 테스트가 실제로 잡아냄). label_words[0]의 등장
+    위치는 원문 전체를 훑어 찾고, 그 뒤 나머지 단어만 좁은 창(최대 2토큰
+    간격)으로 잇는 방식으로 수정."""
+    if not label_words:
+        return None
+    first_word = label_words[0]
+    for start in range(len(tokens)):
+        if tokens[start].form != first_word:
+            continue
+        search_from = start + 1
+        last_end = start
+        matched_all = True
+        for word in label_words[1:]:
+            found_at = None
+            for k in range(search_from, min(search_from + 3, len(tokens))):
+                if tokens[k].form == word:
+                    found_at = k
+                    break
+            if found_at is None:
+                matched_all = False
+                break
+            last_end = found_at
+            search_from = found_at + 1
+        if matched_all:
+            return (start, last_end)
+    return None
+
+
+def label_role(tokens: list, root: dict) -> str:
+    """이 루트의 label이 원문(tokens, _kiwi_tokens() 결과) 어디서 매치됐는지
+    **위치를 찾아** 그 자리 기준으로 target/mention/neutral을 판정한다
+    (D-065 — O-015 수정: 예전엔 role을 단어 문자열 하나당 하나만 기억해서,
+    "flutter_App"/"Local_APP"처럼 서로 다른 라벨이 "app" 같은 하위 토큰을
+    공유하면 위치와 무관하게 뒤섞였다. 이제 라벨별로 자기 자신의 등장
+    위치만 본다).
+
+    패턴1(목적지 조사): span 바로 뒤(또는 의존명사 하나 건너)에 "에/로/
+    으로/에다"(JKB)가 오면 target.
+    패턴2(대조 마커): span 시작 직전 근방(_ROLE_MARKER_WINDOW 이내)에
+    "말고"/"대신"/"아니라"가 있으면 target(대조로 선택된 대상), span 끝
+    직후 근방에 있으면 mention(대조로 배제된 언급).
+    둘 다 없거나 label이 원문에서 안 찾아지면 neutral."""
+    label_words = _ordered_label_nouns(root)
+    span = _find_label_span(tokens, label_words)
+    if span is None:
+        return "neutral"
+    start_idx, end_idx = span
+
+    for j in (end_idx + 1, end_idx + 2):
+        if j >= len(tokens):
+            break
+        cand = tokens[j]
+        if cand.tag == "JKB" and cand.form in _DEST_PARTICLES:
+            return "target"
+        if cand.tag != "NNB":
+            break
+
+    def _is_marker(i: int) -> bool:
+        tok = tokens[i]
+        if tok.form in _CONTRASTIVE_SINGLE:
+            return True
+        return i + 1 < len(tokens) and (tok.form, tokens[i + 1].form) in _CONTRASTIVE_BIGRAMS
+
+    for k in range(max(0, start_idx - _ROLE_MARKER_WINDOW), start_idx):
+        if _is_marker(k):
+            return "target"
+    for k in range(end_idx + 1, min(len(tokens), end_idx + 1 + _ROLE_MARKER_WINDOW)):
+        if _is_marker(k):
+            return "mention"
+    return "neutral"
+
+
 def _keyword_signal(text_words: set[str], root: dict) -> set[str] | None:
     """신호1 — label/referenceCondition과의 키워드 겹침. 안 걸리면 None.
     2026-08-13(D-030) 수정: scope는 여기 안 넣는다 — scope 필드는 신호2
@@ -227,13 +372,17 @@ def classify_content(text: str, roots: list[dict], idf: dict[str, float] | None 
     더 풍부한 corpus로 계산한 idf를 넘겨서 구조화 신호와 프로즈 신호가
     일관된 가중치 기준을 쓰게 한다.
 
-    반환: [{rootLabel, rootPath, score, matchedKeywords, reason, signals}, ...]
+    반환: [{rootLabel, rootPath, score, matchedKeywords, reason, signals,
+    matchedKeywordRoles}, ...] — matchedKeywordRoles는 D-063 추가 필드
+    (기존 필드는 전혀 안 바뀜, shape 계약은 "추가만 가능" 원칙으로 유지).
     score 내림차순, 동점이면 signals 개수 많은 쪽이 위(신호 2개 다 걸린
-    후보 우대). 이 shape은 계약 — 나중에 신호를 더 추가해도 유지."""
+    후보 우대)."""
     text_words = tokenize(text)
     text_lower = (text or "").lower()
     if not text_words:
         return []
+
+    full_tokens = _kiwi_tokens(text)  # D-063/D-065 — role 판정용 원시 토큰(순서 보존)
 
     if idf is None:
         corpora = {
@@ -263,11 +412,23 @@ def classify_content(text: str, roots: list[dict], idf: dict[str, float] | None 
             reasons.append(f"scope 문구 '{scope_hit}'가 내용에 그대로 등장")
             score += SCOPE_MATCH_BONUS
 
+        # D-063/D-065 — 이 루트 자신의 label이 원문 어디서 매치됐는지
+        # 위치를 찾아 그 자리 기준으로 점수 보정(다른 루트와 하위토큰을
+        # 공유해도 뒤섞이지 않음 — O-015 수정).
+        role = label_role(full_tokens, r)
+        if role == "target":
+            score += TARGET_ROLE_BONUS
+            reasons.append("목적지 표현 근처에서 매치(가점)")
+        elif role == "mention":
+            score = max(0.0, score - MENTION_ROLE_PENALTY)
+            reasons.append("대조 마커로 배제된 언급으로 보임(감점)")
+
         candidates.append({
             "rootLabel": r["label"],
             "rootPath": r["path"],
             "score": round(min(score, 1.0), 3),
             "matchedKeywords": matched,
+            "matchedKeywordRoles": {w: role for w in matched},
             "reason": " / ".join(reasons),
             "signals": signals,
         })

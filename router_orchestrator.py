@@ -37,7 +37,14 @@ CLI와 같은 계약(JSON 입출력)이지만 3단계를 전부 거친 최종 �
 
 **D-044(2026-08-14) — 키워드 레지스트리(3.5단계) + 시맨틱 스켈레톤(4단계)
 추가**: orchestrate()의 docstring 참고. 파이프라인이 이제 5단계.
-"""
+
+**D-063(2026-08-19) — 단어 역할 태깅(1단계 내부 반영) + AI 판단 스켈레톤
+(4.5단계) 추가**: O-007/008("언급 vs 소유" 혼동) 완화. 1단계
+(router_classifier.classify_content)가 이제 자체적으로 target/mention
+role을 매겨 점수에 반영(오프라인 원칙 유지, router_classifier.py 참고).
+별도로 4.5단계 — router_ai_judgment.judge_candidates()를 시도하되 아직
+프로바이더 미연결이라 항상 skipped로 기록(semantic 단계와 동일 처리,
+O-014). 파이프라인 6단계로."""
 from __future__ import annotations
 
 import json
@@ -45,6 +52,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+import router_ai_judgment
 import router_classifier
 import router_embeddings
 import router_keyword_registry
@@ -192,6 +200,15 @@ def orchestrate(
         steps.append({"stage": "semantic", "skipped": False})
     except router_embeddings.EmbeddingProviderNotConfigured:
         steps.append({"stage": "semantic", "skipped": True, "reason": "provider_not_configured"})
+
+    # 4.5단계(D-063, O-014) — 실제 AI 판단: 아직 틀만(router_ai_judgment.py)
+    # — 프로바이더가 안 붙어 있으면 항상 스킵으로 기록만 하고 결과엔 영향
+    # 없음(semantic 단계와 동일 처리).
+    try:
+        router_ai_judgment.judge_candidates(text, list(merged.values()))
+        steps.append({"stage": "ai_judgment", "skipped": False})
+    except router_ai_judgment.AIJudgeProviderNotConfigured:
+        steps.append({"stage": "ai_judgment", "skipped": True, "reason": "provider_not_configured"})
 
     # 5단계 — 신뢰 폐루프 주석(순위는 안 바꿈, 참고 정보만 붙임)
     trusted_count = 0

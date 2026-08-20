@@ -184,6 +184,106 @@ def test_cli_reports_needs_clarification_for_vague_text(tmp_path):
     assert payload["candidates"] == []
 
 
+# ------------------------------------------ D-063/D-065: 단어 역할 태깅(O-007/008)
+#
+# 실측(kiwipiepy 직접 실행, 2026-08-19) 기반 — "말고"는 VV"말"+EC"고",
+# "아니라"는 VCN"아니"+EC"라"로 쪼개진다는 걸 먼저 확인하고 작성됨. 이
+# 실측 없이 리터럴 문자열 매치로 짰으면 조용히 아무 효과가 없었을
+# 케이스라, 여기 회귀 테스트로 그 실제 토큰 분해 형태를 잠가둔다.
+#
+# D-065: role은 단어 문자열이 아니라 label_role(tokens, root)로 루트별
+# 위치 기준으로 판정한다(O-015 수정) — 아래 테스트는 그 API로 작성됨.
+
+def _label_role_for(text: str, label: str) -> str:
+    tokens = rc._kiwi_tokens(text)
+    return rc.label_role(tokens, {"label": label})
+
+
+def test_label_role_destination_particle_marks_target():
+    assert _label_role_for("이건 coding_nomal에 넣어야지", "coding_nomal") == "target"
+
+
+def test_label_role_malgo_contrastive_splits_mention_and_target():
+    text = "flutter_app 말고 coding_nomal에 저장해줘"
+    assert _label_role_for(text, "flutter_app") == "mention"
+    assert _label_role_for(text, "coding_nomal") == "target"
+
+
+def test_label_role_anira_contrastive_splits_mention_and_target():
+    text = "flutter_app 아니라 coding_nomal에 넣어"
+    assert _label_role_for(text, "flutter_app") == "mention"
+    assert _label_role_for(text, "coding_nomal") == "target"
+
+
+def test_label_role_no_pattern_is_neutral():
+    assert _label_role_for("flutter_app 관련 메모", "flutter_app") == "neutral"
+
+
+def test_label_role_label_not_in_text_is_neutral():
+    assert _label_role_for("전혀 다른 내용", "flutter_app") == "neutral"
+
+
+def test_label_role_shared_subtoken_does_not_bleed_across_labels():
+    """D-065 회귀 테스트 — O-015 그 자체. "flutter_App"과 "Local_APP"이
+    "app" 조각을 공유해도, 실제로 "에" 조사 옆에 있는 local_app만 target이고
+    배경 언급인 flutter_app은 neutral이어야 한다(예전 버그는 둘 다 target
+    이었음 — 문자열이 같다는 이유만으로)."""
+    text = "flutter_app 얘기하다 나온건데 이건 coding_nomal 말고 local_app에 넣어야지"
+    assert _label_role_for(text, "flutter_app") == "neutral"
+    assert _label_role_for(text, "coding_nomal") == "mention"
+    assert _label_role_for(text, "local_app") == "target"
+
+
+def test_classify_content_mention_penalty_beats_target_bonus_ranking():
+    """O-007 재현 시나리오 — "flutter_app 말고 coding_nomal에 저장" 같은
+    문장에서, 문자열만 겹치는 flutter_App보다 실제 목적지로 지목된
+    Coding_Nomal이 위로 와야 한다."""
+    roots = [
+        {"label": "flutter_App", "path": "C:\\f", "scope": "", "referenceCondition": "flutter app 개발"},
+        {"label": "coding_nomal", "path": "C:\\c", "scope": "", "referenceCondition": "coding nomal 규칙"},
+    ]
+    text = "flutter_app 말고 coding_nomal에 저장해줘"
+    results = rc.classify_content(text, roots)
+    by_label = {c["rootLabel"]: c for c in results}
+    assert by_label["coding_nomal"]["score"] > by_label["flutter_App"]["score"]
+    assert by_label["coding_nomal"]["matchedKeywordRoles"].get("nomal") == "target"
+    assert by_label["flutter_App"]["matchedKeywordRoles"].get("app") == "mention"
+
+
+def test_classify_content_shared_subtoken_labels_ranked_correctly():
+    """D-065 — classify_content() 레벨에서도 O-015가 실제로 고쳐졌는지
+    확인. "app"을 공유하는 두 루트(flutter_App/Local_APP) 중 진짜 목적지
+    (Local_APP, "에" 조사 옆)만 가점을 받아야 한다."""
+    roots = [
+        {"label": "flutter_App", "path": "C:\\f", "scope": "", "referenceCondition": "flutter app 개발"},
+        {"label": "coding_nomal", "path": "C:\\c", "scope": "", "referenceCondition": "coding nomal 규칙"},
+        {"label": "local_app", "path": "C:\\l", "scope": "", "referenceCondition": "local app 자료"},
+    ]
+    text = "flutter_app 얘기하다 나온건데 이건 coding_nomal 말고 local_app에 넣어야지"
+    results = rc.classify_content(text, roots)
+    by_label = {c["rootLabel"]: c for c in results}
+    assert by_label["local_app"]["matchedKeywordRoles"].get("app") == "target"
+    assert by_label["flutter_App"]["matchedKeywordRoles"].get("app") == "neutral"
+    assert by_label["local_app"]["score"] > by_label["flutter_App"]["score"]
+
+
+def test_classify_content_cli_output_includes_matched_keyword_roles(tmp_path):
+    """D-063 신규 필드가 CLI JSON 출력에도 실려나가는지(shape 계약 확인)."""
+    root_dir = tmp_path / "flutter_App"
+    root_dir.mkdir()
+    registry = tmp_path / "ssot-roots.json"
+    registry.write_text(json.dumps({
+        "roots": [{"label": "flutter_App", "path": str(root_dir), "scope": "플러터 앱 개발", "referenceCondition": ""}],
+    }), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, rc.__file__, "--text", "플러터 앱 개발 메모", "--registry", str(registry)],
+        capture_output=True, text=True, encoding="utf-8", timeout=15,
+    )
+    payload = json.loads(result.stdout)
+    assert "matchedKeywordRoles" in payload["candidates"][0]
+
+
 def test_cli_registry_load_error_returns_json_error_ascii_safe(tmp_path):
     """D-053(H-010) — _cli_common() 통합 과정에서 에러 출력의 ensure_ascii
     불일치(예전엔 에러만 False, 성공 출력은 기본값 True)를 같이 잡았다 —

@@ -87,17 +87,20 @@ def test_orchestrate_combines_signals_for_same_root(tmp_path):
     assert set(cand["signals"]) == {"키워드겹침", "프로즈검색"}
 
 
-def test_orchestrate_reports_five_steps(tmp_path):
+def test_orchestrate_reports_six_steps(tmp_path):
     """D-044 — 키워드 레지스트리(3.5단계)+시맨틱 스켈레톤(4단계) 추가로
-    3단계였던 파이프라인이 5단계가 됨."""
+    3단계였던 파이프라인이 5단계가 됨. D-063 — AI 판단 스켈레톤(4.5단계)
+    추가로 6단계가 됨."""
     roots = [{"label": "x", "path": str(tmp_path), "scope": "", "referenceCondition": ""}]
     result = ro.orchestrate("아무 내용", roots, log_path=tmp_path / "log.json")
     stage_names = [s["stage"] for s in result["steps"]]
     assert stage_names == [
-        "structured", "prose_scan", "keyword_registry", "semantic", "trust_annotation",
+        "structured", "prose_scan", "keyword_registry", "semantic", "ai_judgment", "trust_annotation",
     ]
     semantic_step = next(s for s in result["steps"] if s["stage"] == "semantic")
     assert semantic_step["skipped"] is True  # 임베딩 프로바이더 미연결(O-009)
+    ai_step = next(s for s in result["steps"] if s["stage"] == "ai_judgment")
+    assert ai_step["skipped"] is True  # AI 판단 프로바이더 미연결(D-063, O-014)
 
 
 # -------------------------------------------------- D-044: 키워드 레지스트리
@@ -184,7 +187,7 @@ def test_orchestrate_logs_run(tmp_path):
     assert len(runs) == 1
     assert runs[0]["candidateCount"] == 1
     assert runs[0]["topCandidate"]["rootLabel"] == "x"
-    assert len(runs[0]["steps"]) == 5  # D-044 — 5단계 파이프라인
+    assert len(runs[0]["steps"]) == 6  # D-063 — 6단계 파이프라인
 
 
 def test_orchestrate_logs_accumulate_across_runs(tmp_path):
@@ -235,6 +238,6 @@ def test_cli_end_to_end(tmp_path):
     assert result.returncode == 0
     payload = json.loads(result.stdout)
     assert payload["candidates"][0]["rootLabel"] == "flutter_App"
-    assert len(payload["steps"]) == 5  # D-044 — 5단계 파이프라인
+    assert len(payload["steps"]) == 6  # D-063 — 6단계 파이프라인
     assert keyword_registry_path.exists()  # --keyword-registry-path가 실제로 거기에 씀
     assert log_path.exists()  # --log-path로 지정한 파일에 기록됐는지(실제 사용자 로그 안 건드림)
