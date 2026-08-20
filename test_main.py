@@ -79,10 +79,19 @@ def isolated_orchestrator_state(tmp_path, monkeypatch):
     문자열을 남기고 있었다(D-032 이후 누적 131건 확인, 이번에 D-044 작업
     중 키워드 레지스트리를 같이 격리하다가 발견). 둘 다 여기서 한 번에
     격리."""
+    import router_embeddings
     import router_keyword_registry
     import router_orchestrator
     monkeypatch.setattr(router_orchestrator, "ORCHESTRATION_LOG_PATH", tmp_path / "orch-log.json")
     monkeypatch.setattr(router_keyword_registry, "KEYWORD_REGISTRY_PATH", tmp_path / "keywords.json")
+    # D-067 — embed_query_text가 이제 진짜 로컬 모델(fastembed)을 돈다.
+    # GUI 분류 테스트가 모델을 실제로 띄울 필요는 없음(D-024) — 다른
+    # 테스트 파일들과 동일하게 기본은 "미연결" 경로로 되돌림.
+    monkeypatch.setattr(
+        router_embeddings,
+        "embed_query_text",
+        lambda text: (_ for _ in ()).throw(router_embeddings.EmbeddingProviderNotConfigured("test stub")),
+    )
     # D-045 — ManagementPanel(D-047 전 이름 ManagementDialog)이
     # SESSION_CONTEXT_LOG_PATH를 읽는다(이 앱은 안 쓰지만, 격리 안 하면
     # 테스트가 실제 사용자 로그 내용에 따라 결과가 갈리는 비결정적

@@ -1,51 +1,96 @@
-"""SSOT_Explorer 라우터 — 임베딩 기반 시맨틱 매칭 스켈레톤(2026-08-14, D-044,
-O-009로 재논의 조건 기록).
+"""SSOT_Explorer 라우터 — 임베딩 기반 시맨틱 매칭(2026-08-14 D-044 틀만 →
+2026-08-21 D-067 실제 연결, O-009 확정).
 
-Lazzy_App_OS_Monorepo/server/core/embeddings.py를 확인 후, **틀만** 이식하기로
-결정(사용자 요청 — "API를 나중에 붙일 경우 대비"). 순수 로직(코사인 유사도,
-랭킹)은 원본과 동일 계약으로 지금 구현하지만, 실제 임베딩 생성(`embed_text`)은
-Gemini 등 외부 API 키+네트워크 호출+비용이 필요해서 아직 안 붙인다 — 지금
-붙이면 이 프로젝트가 D-034(kiwipiepy 채택 이유가 "로컬/오프라인/무료")부터
-지켜온 완전 오프라인 원칙을 처음으로 깨는 결정이라, 사용자가 명시적으로
-"연결해줘"라고 할 때까지는 `EmbeddingProviderNotConfigured`만 던진다
-(D-029 InboxWatcher 스켈레톤의 NotImplementedError와 같은 패턴 — 인터페이스만
-먼저 고정해서, 다음 라운드에 provider 구현만 채우면 되게).
+D-067: 사용자가 AskUserQuestion으로 "로컬 모델(추천)/Gemini API/OpenAI API/
+보류" 중 로컬 모델을 명시적으로 선택 — 이 프로젝트가 D-034부터 지켜온 완전
+오프라인 원칙을 깨지 않는 유일한 선택지였다. `fastembed`(Qdrant, ONNX
+런타임 — torch 의존성 없음, onnxruntime만)로 로컬 실행. API 키/네트워크
+호출/비용/외부 텍스트 전송 전부 없음 — 최초 실행 시 모델 가중치를
+로컬 캐시에 받는 것만 유일한 네트워크 의존(그 이후는 완전 오프라인 추론).
 
-실제로 붙일 때 고려할 것(O-009 참고):
-- provider 선택 필요(Gemini/OpenAI/로컬 모델 등) — API 키 관리, 비용, 폴더
-  내용을 외부 서버로 보내는 것에 대한 사용자 동의가 먼저.
-- Lazzy 실측(embeddings.py 주석): 무관한 문장 쌍도 코사인 유사도 0.55~0.6대가
-  나오는 경향 — MIN_SIMILARITY 기본값 0.7은 그 실측을 그대로 가져온 참고값
-  (프로바이더가 바뀌면 재보정 필요, 다른 임베딩 모델은 분포가 다를 수 있음).
-- 색인용 임베딩과 질의용 임베딩을 다른 task_type으로 구분해야 정확도가
-  올라간다는 Lazzy의 발견(embed_text vs embed_query_text)도 인터페이스에
-  이미 반영해둠 — provider 구현 시 실제로 구분해서 호출할 것.
+**모델 선정 — 계획을 실측으로 바꾼 지점**: 애초 `intfloat/multilingual-e5-
+small`(E5 계열, query/passage 프리픽스로 질의·색인을 구분해 학습된 모델이라
+embed_text/embed_query_text 분리와 정확히 들어맞을 것으로 기대)을 쓰려
+했으나, `TextEmbedding.list_supported_models()`로 fastembed 자체 레지스트리를
+실측 확인하니 small 버전은 없고 `multilingual-e5-large`(2.24GB)뿐이었다 —
+PyInstaller 배포 크기(현재 exe 161MB)를 감안하면 부적합. 대신
+`sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`(0.22GB, 50+
+언어·한국어 포함)로 교체. 이 모델은 E5식 프리픽스 관례가 없어 embed_text/
+embed_query_text 둘 다 원문을 그대로 임베딩한다 — "task_type 분리가
+정확도를 올린다"는 Lazzy(Gemini) 실측이 이 모델 아키텍처엔 직접 적용되지
+않는다는 뜻이다. 인터페이스는 향후 E5류 모델로 교체할 가능성을 위해 그대로
+분리 유지.
+
+모델 로딩은 지연 초기화(첫 호출 시 1회) + 락으로 스레드 세이프하게 캐시.
+`fastembed`가 설치 안 돼 있으면(선택적 의존성) `EmbeddingProviderNotConfigured`
+로 안내 — orchestrator는 이 경우도 여전히 skipped로만 기록하고 결과에
+영향 없음(D-044 계약 유지, 하위호환).
+
+**MIN_SIMILARITY 재보정(O-016) — 실측 2쌍**: "flutter_App은 Flutter 앱들을
+모아둔 프로젝트다"(passage) 대비 "플러터 앱 관련 작업"(관련 query)
+0.6782, "오늘 점심 메뉴 추천"(무관 query) 0.1468. Lazzy(Gemini) 실측을
+그대로 가져온 옛 기본값 0.7은 이 모델에서는 **관련 쌍마저 걸러낼 만큼
+안 맞아** 0.5로 낮췄다 — 다만 표본이 2쌍뿐이라 잠정값이다(이 프로젝트의
+LOW_SAMPLE_THRESHOLD 관례와 같은 정신으로, 실사용 쿼리가 쌓이면 재조정
+필요, O-016에 표시).
+
+fastembed 0.8.0에서 이 모델이 "이제 CLS 대신 mean pooling을 쓴다"는
+런타임 경고가 뜬다(라이브러리 쪽 변경, 우리 코드 아님) — 향후 fastembed
+버전이 다시 바뀌면 벡터 분포가 조용히 달라질 수 있어 requirements.txt에
+`fastembed==0.8.0`으로 버전을 고정했다.
 """
 from __future__ import annotations
 
 import math
+import threading
+
+_MODEL_NAME = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+
+_model = None
+_model_lock = threading.Lock()
 
 
 class EmbeddingProviderNotConfigured(Exception):
-    """embed_text()/embed_query_text()를 실제로 호출하면 이 예외 — 아직
-    프로바이더가 안 붙어 있다는 뜻(O-009, 틀만 구축 단계)."""
+    """embed_text()/embed_query_text()를 실제로 호출했는데 fastembed가
+    설치돼 있지 않을 때(선택적 의존성, D-067). 정상 설치 환경에서는
+    발생하지 않는다."""
+
+
+def _get_model():
+    """지연 초기화 — 첫 호출 시에만 모델을 로드(가중치 다운로드/디스크
+    읽기가 임포트 시점이 아니라 실제 사용 시점에 일어나게). double-checked
+    locking으로 동시 호출 시 중복 로드 방지."""
+    global _model
+    if _model is None:
+        with _model_lock:
+            if _model is None:
+                try:
+                    from fastembed import TextEmbedding
+                except ImportError as exc:
+                    raise EmbeddingProviderNotConfigured(
+                        "fastembed가 설치되지 않았습니다. `pip install fastembed`로 "
+                        "설치하세요(D-067 — 로컬 모델로 확정, requirements.txt 참고)."
+                    ) from exc
+                _model = TextEmbedding(model_name=_MODEL_NAME)
+    return _model
 
 
 def embed_text(text: str) -> list[float]:
-    """색인(저장) 대상 텍스트를 임베딩 — 아직 프로바이더 미연결."""
-    raise EmbeddingProviderNotConfigured(
-        "임베딩 API가 아직 연결되지 않았습니다(D-044 — 틀만 구축, O-009 참고). "
-        "실제로 쓰려면 프로바이더(Gemini 등) 선택 + API 키 설정이 먼저 필요합니다."
-    )
+    """색인(저장) 대상 텍스트를 임베딩. MiniLM은 E5류 프리픽스 관례가 없어
+    원문을 그대로 넘긴다 — embed_query_text와 지금은 동일 동작이지만,
+    인터페이스는 향후 프리픽스 기반 모델로 교체할 가능성을 위해 분리
+    유지(D-067)."""
+    model = _get_model()
+    (vector,) = model.embed([text])
+    return vector.tolist()
 
 
 def embed_query_text(text: str) -> list[float]:
-    """검색 질의 전용 임베딩 — Lazzy 실측(embeddings.py)상 색인용과 다른
-    task_type으로 임베딩해야 짧은 키워드형 질의가 부당하게 낮은 유사도로
-    나오는 문제가 줄어든다는 근거가 있어, 인터페이스를 처음부터 분리해둠."""
-    raise EmbeddingProviderNotConfigured(
-        "임베딩 API가 아직 연결되지 않았습니다(D-044 — 틀만 구축, O-009 참고)."
-    )
+    """검색 질의 전용 임베딩. 현재 모델(MiniLM)에서는 embed_text와 동일
+    동작 — D-067 참고."""
+    model = _get_model()
+    (vector,) = model.embed([text])
+    return vector.tolist()
 
 
 def cosine_similarity(a: list[float], b: list[float]) -> float:
@@ -61,9 +106,8 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     return dot / (norm_a * norm_b)
 
 
-# Lazzy 실측(embeddings.py) 그대로 가져온 참고값 — 실제 프로바이더가 붙으면
-# 그 모델의 분포로 재보정 필요(주석 참고).
-DEFAULT_MIN_SIMILARITY = 0.7
+# D-067 실측 재보정값(표본 2쌍, 잠정 — O-016). 모듈 docstring 참고.
+DEFAULT_MIN_SIMILARITY = 0.5
 DEFAULT_TOP_K = 5
 
 

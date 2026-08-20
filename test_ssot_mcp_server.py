@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 import main as m
+import router_embeddings as re_
 import router_keyword_registry as kr
 import router_orchestrator as ro
 import router_proposals as rp
@@ -37,6 +38,15 @@ def isolated_orchestrator_state(tmp_path, monkeypatch):
     monkeypatch.setattr(kr, "KEYWORD_REGISTRY_PATH", tmp_path / "keywords.json")
     monkeypatch.setattr(rp, "PROPOSALS_LOG_PATH", tmp_path / "proposals.json")
     monkeypatch.setattr(rp, "TRUST_STATE_PATH", tmp_path / "trust.json")
+    # D-067 — embed_query_text가 이제 진짜 로컬 모델(fastembed)을 돈다.
+    # 이 파일은 classify_content()의 MCP 계약(입출력 shape)을 검증하는
+    # 게 목적이라, 매 테스트마다 실제 모델을 띄울 필요 없음(D-024) —
+    # test_router_orchestrator.py와 동일하게 기본은 "미연결" 경로로.
+    monkeypatch.setattr(
+        re_,
+        "embed_query_text",
+        lambda text: (_ for _ in ()).throw(re_.EmbeddingProviderNotConfigured("test stub")),
+    )
     yield
 
 

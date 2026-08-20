@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+import router_embeddings as re_
 import router_keyword_registry as kr
 import router_orchestrator as ro
 import router_proposals as rp
@@ -25,6 +26,17 @@ def isolated_router_state(tmp_path, monkeypatch):
     # keyword_registry_path를 명시 안 하는 기존 테스트들이 실제 사용자
     # 파일(~/.claude/scripts/ssot_keyword_registry.json)을 건드리게 된다.
     monkeypatch.setattr(kr, "KEYWORD_REGISTRY_PATH", tmp_path / "keywords.json")
+    # D-067 — embed_query_text가 이제 진짜 로컬 모델을 돈다(fastembed).
+    # 이 파일의 테스트들은 orchestrator가 semantic 단계를 "제대로 호출하고
+    # 결과를 기록하는지"만 검증하면 되지, 매번 수백MB 모델을 실제로 띄울
+    # 필요는 없다(D-024 결정적/빠른 테스트 원칙) — 기본값은 예전과 같은
+    # "미연결" 경로로 되돌려두고, 실제 연결 시 동작만 별도 테스트에서
+    # 명시적으로 확인한다.
+    monkeypatch.setattr(
+        re_,
+        "embed_query_text",
+        lambda text: (_ for _ in ()).throw(re_.EmbeddingProviderNotConfigured("test stub")),
+    )
     yield
 
 
@@ -90,7 +102,10 @@ def test_orchestrate_combines_signals_for_same_root(tmp_path):
 def test_orchestrate_reports_six_steps(tmp_path):
     """D-044 — 키워드 레지스트리(3.5단계)+시맨틱 스켈레톤(4단계) 추가로
     3단계였던 파이프라인이 5단계가 됨. D-063 — AI 판단 스켈레톤(4.5단계)
-    추가로 6단계가 됨."""
+    추가로 6단계가 됨. semantic 단계는 D-067로 실제 연결됐지만, 이 파일의
+    autouse 픽스처(isolated_router_state)가 기본적으로 "미연결" 경로로
+    되돌려두므로 아래는 여전히 그 폴백 계약을 검증한다 — "연결됨" 경로는
+    test_orchestrate_semantic_stage_runs_when_provider_available 참고."""
     roots = [{"label": "x", "path": str(tmp_path), "scope": "", "referenceCondition": ""}]
     result = ro.orchestrate("아무 내용", roots, log_path=tmp_path / "log.json")
     stage_names = [s["stage"] for s in result["steps"]]
@@ -98,9 +113,20 @@ def test_orchestrate_reports_six_steps(tmp_path):
         "structured", "prose_scan", "keyword_registry", "semantic", "ai_judgment", "trust_annotation",
     ]
     semantic_step = next(s for s in result["steps"] if s["stage"] == "semantic")
-    assert semantic_step["skipped"] is True  # 임베딩 프로바이더 미연결(O-009)
+    assert semantic_step["skipped"] is True  # 임베딩 프로바이더 미연결 스텁(테스트 격리)
     ai_step = next(s for s in result["steps"] if s["stage"] == "ai_judgment")
     assert ai_step["skipped"] is True  # AI 판단 프로바이더 미연결(D-063, O-014)
+
+
+def test_orchestrate_semantic_stage_runs_when_provider_available(tmp_path, monkeypatch):
+    """D-067 — 임베딩 프로바이더가 실제로 연결돼 있으면 semantic 단계가
+    skipped=False로 기록돼야 한다(결과 랭킹엔 아직 영향 없음 — 그건 별도
+    후속 작업, router_orchestrator.py 195번째 줄 주석 참고)."""
+    monkeypatch.setattr(re_, "embed_query_text", lambda text: [0.1, 0.2, 0.3])
+    roots = [{"label": "x", "path": str(tmp_path), "scope": "", "referenceCondition": ""}]
+    result = ro.orchestrate("아무 내용", roots, log_path=tmp_path / "log.json")
+    semantic_step = next(s for s in result["steps"] if s["stage"] == "semantic")
+    assert semantic_step["skipped"] is False
 
 
 # -------------------------------------------------- D-044: 키워드 레지스트리
