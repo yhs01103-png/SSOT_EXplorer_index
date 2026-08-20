@@ -904,6 +904,155 @@ def test_update_relations_panel_shows_and_hides(isolated_registry, isolated_qset
         win.close()
 
 
+# ------------------------------------------------- D-066: 뷰어 렌더링(on_selection_changed)
+#
+# D-001부터 "트리 뷰 + CLAUDE.md/README.md 뷰어"가 이 앱의 존재 이유였는데,
+# 그 뷰어가 실제로 뭘 보여주는지(on_selection_changed)는 지금까지 테스트가
+# 0개였다(2026-08-19, Part1 진단 아티팩트에서 지적받은 "Qt 렌더링 자체를
+# 겨냥한 테스트가 구조적으로 없다"는 약점의 가장 핵심적인 사례). 픽셀
+# 스크린샷 diff는 폰트 렌더링 차이로 환경마다 깨지기 쉬워서(false positive
+# 위험) 이 프로젝트의 "낮은 비용/결정적 테스트" 원칙(D-024)에 안 맞는다 —
+# 대신 뷰어에 실제로 어떤 텍스트가 들어갔는지(toPlainText/toMarkdown)를
+# 확인하는 속성 기반 테스트로 커버한다.
+
+def _find_tree_item(tree, target: Path):
+    for i in range(tree.topLevelItemCount()):
+        item = tree.topLevelItem(i)
+        data = item.data(0, Qt.UserRole)
+        if data and Path(data) == target:
+            return item
+    return None
+
+
+def test_on_selection_changed_hints_when_registered_root_has_no_index_files(isolated_registry, isolated_qsettings, tmp_path):
+    """등록된 루트는 앱 시작 시 _ensure_all_roots_initialized()(D-031,
+    RootInitWorker)가 자동으로 init CLAUDE.md를 만든다 — "아예 없는 상태"를
+    보려면 그 배경 작업이 끝나길 기다린 뒤(_wait_for_root_init) 일부러
+    지워서 재현해야 한다(안 그러면 타이밍에 따라 있다/없다가 갈리는
+    비결정적 테스트가 됨 — 처음 버전이 실제로 이렇게 flaky했다)."""
+    root_dir = tmp_path / "empty_root"
+    root_dir.mkdir()
+    m.save_roots([{"label": "empty_root", "path": str(root_dir), "referenceCondition": ""}])
+    win = m.SSOTExplorer()
+    try:
+        win.root_init_worker.wait()
+        QApplication.processEvents()
+        (root_dir / "CLAUDE.md").unlink(missing_ok=True)  # 자동 init 결과 되돌려서 "없음" 상태 재현
+        item = _find_tree_item(win.tree, root_dir)
+        assert item is not None
+        win.tree.setCurrentItem(item)
+        win.on_selection_changed()
+        text = win.viewer.toPlainText()
+        assert "CLAUDE.md/README.md가 없습니다" in text
+        assert "선택 루트 CLAUDE.md 동기화" in text  # 등록된 루트 전용 힌트(D-001 뷰어 계약)
+    finally:
+        win.close()
+
+
+def test_on_selection_changed_hints_differently_for_unregistered_folder(isolated_registry, isolated_qsettings, tmp_path):
+    """등록 안 된 폴더는 다른 힌트(자동 생성 대상 아님)를 보여줘야 한다 —
+    on_selection_changed의 is_root 분기 회귀 테스트."""
+    root_dir = tmp_path / "registered_root"
+    root_dir.mkdir()
+    sub_dir = root_dir / "unregistered_sub"
+    sub_dir.mkdir()
+    m.save_roots([{"label": "registered_root", "path": str(root_dir), "referenceCondition": ""}])
+    win = m.SSOTExplorer()
+    try:
+        win.on_item_expanded(_find_tree_item(win.tree, root_dir))
+        item = _find_tree_item_recursive(win.tree, sub_dir)
+        assert item is not None
+        win.tree.setCurrentItem(item)
+        win.on_selection_changed()
+        text = win.viewer.toPlainText()
+        assert "직접 작성하거나 Claude Code에게 요청하세요" in text
+        assert "선택 루트 CLAUDE.md 동기화" not in text
+    finally:
+        win.close()
+
+
+def test_on_selection_changed_renders_single_index_file_as_markdown(isolated_registry, isolated_qsettings, tmp_path):
+    root_dir = tmp_path / "doc_root"
+    root_dir.mkdir()
+    (root_dir / "CLAUDE.md").write_text("# 이 루트 인덱스\n\n인덱싱 전용 문서.", encoding="utf-8")
+    m.save_roots([{"label": "doc_root", "path": str(root_dir), "referenceCondition": ""}])
+    win = m.SSOTExplorer()
+    try:
+        item = _find_tree_item(win.tree, root_dir)
+        win.tree.setCurrentItem(item)
+        win.on_selection_changed()
+        text = win.viewer.toPlainText()
+        assert "CLAUDE.md" in text
+        assert "이 루트 인덱스" in text
+        assert "인덱싱 전용 문서" in text
+        assert "---" not in text  # 파일 하나뿐이면 구분선 없어야 함
+    finally:
+        win.close()
+
+
+def test_on_selection_changed_shows_both_index_files_separated(isolated_registry, isolated_qsettings, tmp_path):
+    root_dir = tmp_path / "doc_root2"
+    root_dir.mkdir()
+    (root_dir / "CLAUDE.md").write_text("클로드용 인덱스 내용", encoding="utf-8")
+    (root_dir / "README.md").write_text("리드미 실제 규칙 내용", encoding="utf-8")
+    m.save_roots([{"label": "doc_root2", "path": str(root_dir), "referenceCondition": ""}])
+    win = m.SSOTExplorer()
+    try:
+        item = _find_tree_item(win.tree, root_dir)
+        win.tree.setCurrentItem(item)
+        win.on_selection_changed()
+        text = win.viewer.toPlainText()
+        assert "클로드용 인덱스 내용" in text
+        assert "리드미 실제 규칙 내용" in text
+        # "---"는 마크다운 수평선이라 렌더링되면 평문에는 안 남는다(정상
+        # 동작 — 렌더러가 실제로 수평선으로 바꿨다는 뜻) — 원본 마크다운
+        # 소스로 왕복하는 toMarkdown()에서 구분선 존재를 확인한다(Qt가
+        # "---"를 "- - -"로 정규화해서 왕복시킴 — 실측 확인).
+        assert "- - -" in win.viewer.toMarkdown()
+    finally:
+        win.close()
+
+
+def test_on_selection_changed_for_file_shows_double_click_hint(isolated_registry, isolated_qsettings, tmp_path):
+    root_dir = tmp_path / "file_root"
+    root_dir.mkdir()
+    (root_dir / "CLAUDE.md").write_text("인덱스", encoding="utf-8")
+    plain_file = root_dir / "notes.txt"
+    plain_file.write_text("아무 파일", encoding="utf-8")
+    m.save_roots([{"label": "file_root", "path": str(root_dir), "referenceCondition": ""}])
+    win = m.SSOTExplorer()
+    try:
+        win.on_item_expanded(_find_tree_item(win.tree, root_dir))
+        item = _find_tree_item_recursive(win.tree, plain_file)
+        assert item is not None
+        win.tree.setCurrentItem(item)
+        win.on_selection_changed()
+        text = win.viewer.toPlainText()
+        assert "더블클릭하면 기본 프로그램으로 엽니다" in text
+        assert win.current_folder is None  # 파일 선택 시 current_folder는 클리어돼야 함(동기화 대상 판단 기준)
+    finally:
+        win.close()
+
+
+def _find_tree_item_recursive(tree, target: Path):
+    for i in range(tree.topLevelItemCount()):
+        found = _search_item_recursive(tree.topLevelItem(i), target)
+        if found is not None:
+            return found
+    return None
+
+
+def _search_item_recursive(item, target: Path):
+    data = item.data(0, Qt.UserRole)
+    if data and Path(data) == target:
+        return item
+    for i in range(item.childCount()):
+        found = _search_item_recursive(item.child(i), target)
+        if found is not None:
+            return found
+    return None
+
+
 # --------------------------------------------------- D-029: 새 문서 저장(라우터)
 
 def _run_classification_sync(dlg):
