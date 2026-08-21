@@ -640,12 +640,24 @@ class SearchDialog(QDialog):
         items = self.listw.selectedItems()
         if items and items[0].text() not in ("(결과 없음)", "🔎 검색 중..."):
             self.result_path = items[0].text()
+            self._stop_worker()
             self.accept()
 
     def _stop_worker(self):
+        """2026-08-21(D-072, GitHub Actions ubuntu-latest 실측 발견) — 예전엔
+        `wait(300)`(고정 타임아웃)이었다. cancel()이 os.walk 루프 중간
+        체크포인트에서만 반영되므로, 느리거나 부하가 큰 환경(CI 등)에선
+        300ms 안에 실제로 안 끝날 수 있다 — 타임아웃이 지나면 `_stop_
+        worker`는 그냥 반환해버려서, 다이얼로그/윈도우는 파괴됐는데
+        스레드는 백그라운드에서 계속 도는 상태가 남는다. 그 상태로 프로세스
+        가 종료되면 Qt가 "QThread: Destroyed while thread '' is still
+        running"로 abort(core dumped)한다 — 개별 테스트는 전부 성공으로
+        리포트된 뒤 pytest 프로세스 자체가 죽는 형태라 원인 추적이 어려움.
+        인자 없는 `wait()`는 스레드가 실제로 끝날 때까지 블로킹 — 검색은
+        300개 매치 제한이 있어 무한히 안 끝날 일이 없으므로 안전하다."""
         if self.worker.isRunning():
             self.worker.cancel()
-            self.worker.wait(300)
+            self.worker.wait()
 
     def reject(self):
         self._stop_worker()
@@ -1087,14 +1099,26 @@ class SaveDocumentDialog(QDialog):
         """SearchDialog(D-013)와 같은 이유 — 다이얼로그가 닫히는 동안 백그
         라운드 스레드가 끝나서 이미 파괴된 위젯에 신호를 쏘는 걸 막는다.
         orchestrate()는 SearchWorker처럼 중간에 끊을 체크포인트가 없는
-        단일 호출이라(취소 플래그 대신) 신호만 먼저 끊고 최대 2초 기다린다
-        — kiwipiepy 콜드인잇 포함 실측 ~1.4초(D-034)라 충분한 여유."""
+        단일 호출이라(취소 플래그 대신) 신호만 먼저 끊고 끝날 때까지
+        기다린다.
+
+        2026-08-21(D-072, GitHub Actions ubuntu-latest 실측 발견) — 예전엔
+        `wait(2000)`(고정 2초 타임아웃, "kiwipiepy 콜드인잇 포함 실측
+        ~1.4초라 충분한 여유"라는 로컬 Windows 실측 기준)이었다. 부하가 더
+        큰/공유된 CI 러너에서는 콜드인잇이 2초를 넘을 수 있고, 타임아웃이
+        지나면 `_stop_worker`는 그냥 반환해버려서 다이얼로그는 파괴됐는데
+        스레드는 백그라운드에서 계속 도는 상태가 남는다 — 프로세스 종료
+        시점에 Qt가 "QThread: Destroyed while thread '' is still
+        running"로 abort(core dumped)하는 원인이었음(개별 테스트는 전부
+        성공으로 리포트된 뒤 pytest 프로세스 자체가 죽는 형태라 원인
+        추적이 어려웠음). 인자 없는 `wait()`는 실제로 끝날 때까지 블로킹
+        — orchestrate()는 유한 호출(무한루프 아님)이라 안전하다."""
         if self.worker is not None and self.worker.isRunning():
             try:
                 self.worker.result_ready.disconnect(self._on_classification_result)
             except (RuntimeError, TypeError):
                 pass
-            self.worker.wait(2000)
+            self.worker.wait()
 
     def reject(self):
         self._stop_worker()
@@ -1251,9 +1275,16 @@ class SSOTExplorer(QMainWindow):
             self.settings.setValue("lastSelectedPath", selected[0].data(0, Qt.UserRole))
         if self.inbox_watcher_thread is not None:
             self.inbox_watcher_thread.stop()
-            self.inbox_watcher_thread.wait(3000)
+            self.inbox_watcher_thread.wait()
+        # 2026-08-21(D-072, GitHub Actions ubuntu-latest 실측 발견) — 예전엔
+        # wait(3000)이었다. RootInitWorker.run()은 self.roots 개수만큼
+        # is_dir()/exists()/쓰기를 순차 실행하는 유한 루프라 무한히 안
+        # 끝날 일이 없다 — 고정 타임아웃 대신 실제로 끝날 때까지 블로킹해서,
+        # 느린 CI 환경에서 타임아웃이 지나 스레드가 백그라운드에 남는 것을
+        # 원천 차단한다(그 상태로 프로세스가 종료되면 Qt가 "QThread:
+        # Destroyed while thread '' is still running"로 abort함).
         if self.root_init_worker is not None and self.root_init_worker.isRunning():
-            self.root_init_worker.wait(3000)
+            self.root_init_worker.wait()
         super().closeEvent(event)
 
     # ------------------------------------------------------------ 툴바

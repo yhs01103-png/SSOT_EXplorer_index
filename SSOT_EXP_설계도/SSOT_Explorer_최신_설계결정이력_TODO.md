@@ -2305,9 +2305,35 @@ D-071의 수동 venv 검증을 CI로 이관)
       ...)` 마커 추가(제품 코드는 안 건드림 — Windows 전용 기능을
       크로스플랫폼으로 바꾸는 건 이번 범위 밖이자 이 앱의 설계 의도와도
       안 맞음). 로컬(win32)에서 297개 그대로 전부 통과 재확인 후 재푸시.
-      Actions 최종 결과는 아래 갱신 예정.
+
+      **재확인에서 세 번째 진짜 버그 발견**: 5개 skip 반영 후 pytest 자체는
+      `292 passed, 5 skipped`로 완전히 성공했는데, 그 직후 `QThread:
+      Destroyed while thread '' is still running` + `Aborted (core
+      dumped)`(exit 134)로 프로세스가 죽어 잡이 여전히 failure. 1차 시도로
+      "순환참조 때문에 GC가 늦게 돈다"는 가설로 매 테스트 뒤 `gc.collect()`
+      autouse 픽스처를 추가했으나 재푸시 결과 **효과 없음**(정확히 같은
+      크래시, 같은 타이밍) — 가설이 틀렸다는 뜻이라 되돌리고 코드를 다시
+      읽음. 진짜 원인: `SaveDocumentDialog._stop_worker()`가
+      `self.worker.wait(2000)`(고정 2초)로 ClassificationWorker를
+      기다리는데, 그 주석 자체가 "kiwipiepy 콜드인잇 포함 실측 ~1.4초라
+      충분한 여유"라고 **로컬 Windows 기준**으로 적혀 있었다 — 공유된/
+      부하가 더 큰 GitHub Actions 러너에서는 콜드인잇이 2초를 넘을 수
+      있고, 그러면 `_stop_worker`가 타임아웃으로 그냥 반환해버려서
+      다이얼로그는 파괴됐는데 스레드는 백그라운드에서 계속 도는 상태가
+      남는다 — 프로세스 종료 시점에 하나라도 이 상태면 Qt가 abort한다.
+      `SearchDialog._stop_worker()`의 `wait(300)`(더 짧음, 게다가
+      `accept_selection()` 경로는 아예 `_stop_worker()` 호출 자체가
+      없었음 — reject()/closeEvent()만 호출)과 `SSOTExplorer.closeEvent`의
+      `root_init_worker.wait(3000)`/`inbox_watcher_thread.wait(3000)`도
+      같은 패턴(추측성 고정 타임아웃)이라 한꺼번에 점검. 셋 다 인자 없는
+      `wait()`(실제로 끝날 때까지 블로킹)로 교체 — 전부 유한 루프/단일
+      호출이라(무한루프 없음) 안전하게 블로킹 가능하다고 코드 확인 후
+      결정. `accept_selection()`에도 `_stop_worker()` 호출 추가(그동안
+      빠져 있던 경로). 로컬(win32) 297개 재확인 후 재푸시 — Actions 최종
+      결과는 아래 갱신 예정.
 관련 D-번호: D-070, D-071(둘 다 이 잡이 자동화하는 수동 검증의 출처),
-      D-038(기존 CI 신설).
+      D-038(기존 CI 신설), D-013(SearchWorker 원조), D-051/H-008
+      (ClassificationWorker 원조), H-009(RootInitWorker 원조).
 
 ================================================================
 PART 2 — TODO

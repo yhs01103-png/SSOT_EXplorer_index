@@ -35,36 +35,6 @@ def qapp():
 
 
 @pytest.fixture(autouse=True)
-def _flush_qt_deferred_deletion():
-    """2026-08-21(D-072, GitHub Actions ubuntu-latest 실측 발견) — 매 테스트가
-    끝날 때 `QApplication.processEvents()` + `gc.collect()`를 강제한다.
-
-    SSOTExplorer가 QThread 워커(RootInitWorker 등)를 `self.worker = ...
-    Worker(...)`로 들고 있고, 그 워커의 signal을 `self`(윈도우)의 바운드
-    메서드에 connect한다 — 윈도우→워커(속성)와 워커→윈도우(연결된 슬롯의
-    바운드 self) 양방향 참조라 순환참조가 된다. CPython은 순환참조를
-    레퍼런스카운트만으로 못 끊고 주기적 GC가 돌 때까지 기다리는데, 그
-    GC가 이 프로세스 생애 동안 한 번도 안 돌면(테스트 22개가 전부 `win.
-    close()`로 정리하는데도) 그 객체들이 프로세스 종료 시점까지 살아남을
-    수 있다 — `closeEvent()`가 워커를 `wait(3000)`으로 기다리긴 하지만,
-    그동안 만들어진 워커 인스턴스 자체는 여전히 순환참조 그래프 안에
-    남아있어서 즉시 회수되지 않는다. 로컬 Windows에서는 재현 안 됐지만
-    (GC 타이밍/Qt 빌드 차이 추정), ubuntu-latest에서는 전체 테스트가 다
-    끝난 뒤(292 passed, 5 skipped 출력 이후) `QThread: Destroyed while
-    thread '' is still running` + `Aborted (core dumped)`(exit 134)로
-    pytest 프로세스 자체가 죽었다 — 개별 테스트는 전부 성공으로 리포트된
-    뒤에 벌어지는 크래시라 pytest 결과만 봐서는 원인을 못 찾음, Actions
-    로그의 마지막 몇 줄을 직접 봐야 드러남. `gc.collect()`를 매 테스트
-    뒤에 강제해서 이 순환참조들이 그때그때 끊기게 하면(그 시점엔 해당
-    테스트의 closeEvent가 이미 워커를 기다린 뒤라 안전하게 회수 가능),
-    누적되다 프로세스 종료 시점에 한꺼번에 터지는 상황 자체를 없앤다."""
-    yield
-    QApplication.processEvents()
-    import gc
-    gc.collect()
-
-
-@pytest.fixture(autouse=True)
 def isolated_registry(tmp_path, monkeypatch):
     """모든 테스트가 실제 사용자 레지스트리
     (flutter_App\\.claude\\ssot-roots.json)를 절대 안 건드리게 REGISTRY_PATH를
