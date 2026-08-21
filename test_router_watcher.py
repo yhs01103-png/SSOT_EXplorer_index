@@ -91,3 +91,20 @@ def test_inbox_watcher_stop_sets_running_false_without_error():
     watcher = InboxWatcher(Path("C:\\inbox"), on_new_file=lambda name: None)
     watcher.stop()  # start() 호출 전에 stop()해도 예외 없어야 함
     assert watcher._running is False
+
+
+def test_inbox_watcher_stop_before_start_prevents_loop_from_ever_running(tmp_path):
+    """2026-08-21(D-072) — 실제 QThread 타이밍 경쟁(QThread.start() 호출과
+    OS 스레드가 실제로 run()에 진입하는 시점 사이의 지연) 재현: toggle_
+    inbox_watcher()를 딜레이 없이 두 번 연속 호출하면 stop()이 start()의
+    "진짜 스레드 진입"보다 먼저 실행될 수 있다. 그 경쟁을 스레드 없이도
+    결정적으로 재현 — stop()을 먼저 호출한 뒤 start()를 부르면, 예전
+    구현(`self._running = True`를 무조건 첫 줄에서 재설정)은 이 정지
+    신호를 지우고 루프에 진입해서 poll_interval마다 영원히 깨어났다(실제
+    로컬 테스트 실행에서 pytest 프로세스가 무한 hang으로 재현·확인된
+    버그). poll_interval을 0으로 줘서, 고쳐지지 않았다면 이 테스트 자체가
+    타임아웃 없이 CPU를 100% 쓰며 절대 안 끝나는 방식으로 회귀를 잡는다."""
+    watcher = InboxWatcher(tmp_path, on_new_file=lambda name: None, poll_interval=0)
+    watcher.stop()  # start()보다 먼저 — 실제 QThread 타이밍 경쟁 재현
+    watcher.start()  # 고쳐졌다면 즉시 반환, 안 고쳐졌다면 이 줄에서 영원히 안 돌아옴
+    assert watcher._running is False

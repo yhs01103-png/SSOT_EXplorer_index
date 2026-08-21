@@ -2329,11 +2329,46 @@ D-071의 수동 venv 검증을 CI로 이관)
       `wait()`(실제로 끝날 때까지 블로킹)로 교체 — 전부 유한 루프/단일
       호출이라(무한루프 없음) 안전하게 블로킹 가능하다고 코드 확인 후
       결정. `accept_selection()`에도 `_stop_worker()` 호출 추가(그동안
-      빠져 있던 경로). 로컬(win32) 297개 재확인 후 재푸시 — Actions 최종
-      결과는 아래 갱신 예정.
+      빠져 있던 경로). 로컬(win32) 297개 재확인 후 재푸시 — Actions에
+      재확인했으나 **정확히 같은 크래시가 같은 타이밍(25~26초)으로 계속
+      재현**됨. 셋 다 unconditional wait()로 바꿨는데도 안 고쳐졌다는 건
+      "타임아웃이 부족해서 못 기다렸다"는 가설 자체가 틀렸다는 뜻.
+
+      **재확인에서 네 번째, 그리고 진짜 근본 원인 발견**: `toggle_inbox_
+      watcher()` 안에 `closeEvent`와는 **별개의** `inbox_watcher_thread.
+      wait(3000)` 호출이 하나 더 있었는데(감시를 토글로 직접 켰다 끌 때
+      쓰는 경로 — `test_toggle_inbox_watcher_starts_and_stops`가 실제로
+      타는 경로), 이걸 놓치고 안 고쳤었음. 이걸 unconditional wait()로
+      고치고 로컬에서 재실행하자 **이번엔 CI가 아니라 로컬(Windows)에서
+      pytest 프로세스 자체가 무한 hang**(2분+ 안 끝남, 프로세스 강제
+      종료 후 `-v`로 재실행해 정확히 `test_toggle_inbox_watcher_starts_
+      and_stops`에서 멈추는 걸 확인) — 타임아웃을 없앤 게 로컬에 숨어있던
+      **진짜 데드락**을 드러낸 것. 근본 원인은 `router_watcher.
+      InboxWatcher.start()`가 첫 줄에서 무조건 `self._running = True`를
+      설정하는 것 — `QThread.start()` 호출과 OS 스레드가 실제로
+      `run()`(→`InboxWatcher.start()`)에 진입하는 시점 사이엔 보장된
+      순서가 없어서, 딜레이 없이 연속으로 토글하면 `stop()`(→
+      `_running=False`)이 먼저 실행된 뒤, 뒤늦게 진짜로 시작된 스레드가
+      `start()`의 그 무조건 대입으로 정지 신호를 다시 `True`로 덮어써버려
+      영원히 도는 경쟁조건이었다 — 예전 `wait(3000)` 고정 타임아웃은 이
+      경쟁이 실제로 발생해도 3초 뒤 그냥 진행해버려서 증상을 안 보이게
+      가려왔을 뿐(스레드는 백그라운드에 계속 살아있었음), CI에선 매번
+      이 경쟁이 걸렸고(왜 CI에서 매번 100% 재현됐는지는 불명 — 스레드
+      스케줄링 차이로 추정, 로컬은 지금까지 운이 좋았을 뿐 같은 위험을
+      안고 있었음) 로컬에선 타임아웃을 없앤 이번에 우연히 처음 걸림.
+      `router_watcher.py`에 `_stop_requested` 플래그를 별도로 둬서
+      `start()` 진입 시 이미 stop()이 불렸으면 루프에 아예 안 들어가게
+      수정(main.py/`toggle_inbox_watcher`가 아니라 순수 로직 쪽인
+      router_watcher.py에서 고침 — 이 프로젝트 관례). `test_router_
+      watcher.py`에 회귀 테스트 신규(`test_inbox_watcher_stop_before_
+      start_prevents_loop_from_ever_running` — poll_interval=0으로 줘서
+      안 고쳐졌으면 테스트 자체가 타임아웃 없이 CPU 100%로 절대 안
+      끝나는 방식으로 회귀를 잡음). 로컬 298개(297+회귀 1개) 재확인 —
+      29초, 정상 속도로 복귀. Actions 최종 확인은 이 커밋 이후 진행.
 관련 D-번호: D-070, D-071(둘 다 이 잡이 자동화하는 수동 검증의 출처),
       D-038(기존 CI 신설), D-013(SearchWorker 원조), D-051/H-008
-      (ClassificationWorker 원조), H-009(RootInitWorker 원조).
+      (ClassificationWorker 원조), H-009(RootInitWorker 원조), D-042
+      (InboxWatcherThread/router_watcher.InboxWatcher 원조).
 
 ================================================================
 PART 2 — TODO

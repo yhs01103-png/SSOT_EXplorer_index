@@ -1443,7 +1443,19 @@ class SSOTExplorer(QMainWindow):
         ssot_watcher_log.json에 기록만 한다(router_watcher.py 참고)."""
         if self.inbox_watcher_thread is not None:
             self.inbox_watcher_thread.stop()
-            self.inbox_watcher_thread.wait(3000)
+            # 2026-08-21(D-072, GitHub Actions ubuntu-latest 실측 발견) —
+            # 예전엔 wait(3000)이었다. 이 메서드는 closeEvent와 별개 경로
+            # (토글로 직접 켰다 끌 때)라 closeEvent 쪽만 고쳐서는 이 경로가
+            # 안 고쳐진다 — 실제로 이게 진짜 leak의 원인이었다: wait(3000)이
+            # 타임아웃돼도 바로 다음 줄에서 `self.inbox_watcher_thread =
+            # None`으로 참조를 놓아버려서, 그 이후로는 누구도 다시 stop()을
+            # 호출할 방법이 없어 폴링 스레드가 프로세스 종료 때까지 무한히
+            # 계속 돎(poll_interval마다 깨어나 확인하는 루프라 멈출 방법이
+            # 완전히 사라짐) — 프로세스 종료 시점에 Qt가 "QThread:
+            # Destroyed while thread '' is still running"로 abort. 인자
+            # 없는 wait()는 stop()이 실제로 반영될 때까지(최대 poll_
+            # interval, 기본 2초) 블로킹 — 무한루프가 아니라 안전하다.
+            self.inbox_watcher_thread.wait()
             self.inbox_watcher_thread = None
             self.inbox_watch_action.setText("Inbox 감시 시작")
             self.inbox_watch_action.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))

@@ -95,6 +95,9 @@ class InboxWatcher:
         self.on_new_file = on_new_file
         self.poll_interval = poll_interval
         self._running = False
+        # 2026-08-21(D-072) — start()보다 stop()이 먼저 불리는 경쟁을 별도
+        # 플래그로 기억(아래 start()/stop() 주석 참고).
+        self._stop_requested = False
         self._known = snapshot_dir(watch_dir)
 
     def poll_once(self) -> list[str]:
@@ -109,7 +112,20 @@ class InboxWatcher:
 
     def start(self) -> None:
         """블로킹 폴링 루프 — GUI에서는 반드시 QThread 등 별도 스레드에서
-        호출해야 Qt 이벤트 루프를 안 막는다(SearchWorker와 같은 원칙)."""
+        호출해야 Qt 이벤트 루프를 안 막는다(SearchWorker와 같은 원칙).
+
+        2026-08-21(D-072, 실측 발견) — 예전엔 이 메서드 첫 줄이 무조건
+        `self._running = True`였다. QThread.start()는 실제 OS 스레드가
+        이 메서드에 진입하는 시점을 보장 안 하므로, 호출 쪽(toggle_inbox_
+        watcher 등)이 시작 직후 곧바로 stop()을 부르면(테스트에서 딜레이
+        없이 두 번 연속 토글하는 경우 등) `stop()`이 먼저 실행돼
+        `_running=False`를 세팅해놔도, 뒤늦게 진짜로 시작된 이 스레드가
+        그 값을 다시 `True`로 덮어써버려 정지 신호가 통째로 사라지고
+        폴링 루프가 영원히 도는 경쟁조건이 있었다(로컬 테스트에서 실제로
+        무한 hang으로 재현·확인). `_stop_requested`를 먼저 확인해서,
+        start() 진입 전에 이미 stop()이 불렸으면 루프에 아예 안 들어간다."""
+        if self._stop_requested:
+            return
         self._running = True
         while self._running:
             time.sleep(self.poll_interval)
@@ -118,4 +134,5 @@ class InboxWatcher:
             self.poll_once()
 
     def stop(self) -> None:
+        self._stop_requested = True
         self._running = False
