@@ -9,6 +9,36 @@ SSOT 인덱싱 트리 전용 탐색기 대체 뷰어 + 다중 AI 툴 규칙 동�
 Windsurf(`.windsurf/rules/`)로 동시에 맞출 수 있다(레거시 `.cursorrules`/
 `.windsurfrules`는 이미 있을 때만 동기화, D-036).
 
+## 설치 — CLI(전역, GUI 없이)
+
+`ssot` 커맨드는 GUI(PySide6) 없이 동작한다(D-068~D-070) — `pipx`로 설치하면
+다른 파이썬 프로젝트와 의존성이 안 섞인 채로 전역에서 바로 쓸 수 있다:
+
+```bash
+pipx install .          # 이 폴더에서, 또는 git+https://... 로 원격 설치
+ssot --help
+ssot register <path> --label <name>   # 새 프로젝트 루트 등록
+ssot classify "이 텍스트가 어디 것인지"  # 기본은 빠른 1단계(오프라인)
+ssot classify "..." --full             # 6단계 전체(시맨틱 포함, 느릴 수 있음)
+ssot sync <label>                      # CLAUDE.md/AGENTS.md/Cursor/Windsurf 동시 갱신
+ssot init [path]                       # 등록 후보 폴더만 나열(자동 등록 안 함)
+```
+
+기능별로 선택 설치 가능(전부 선택지 `[all]`이면 GUI+시맨틱+MCP 전부):
+
+| extras | 뭐가 늘어나는지 | 언제 필요 |
+|---|---|---|
+| (기본) | jsonschema, kiwipiepy만 | `ssot` CLI 전체(classify 기본 경로 포함) |
+| `semantic` | fastembed(ONNX, ~0.2GB) | `ssot classify --full`의 시맨틱 단계(D-067) |
+| `gui` | PySide6 | `ssot-gui`(아래 GUI 실행)와 `main.py` |
+| `mcp` | mcp SDK | Claude Code/Cursor 등 MCP 연동 — **현재 `gui`도 같이 필요**(O-010, 아래 참고) |
+| `all` | 위 전부 | "일단 다 되게" |
+
+```bash
+pip install ".[semantic]"   # classify --full까지
+pip install ".[all]"        # 전부
+```
+
 ## 실행
 
 - 배포용: `dist\SSOT_Explorer.exe` 더블클릭(설치 불필요, 단일 실행파일)

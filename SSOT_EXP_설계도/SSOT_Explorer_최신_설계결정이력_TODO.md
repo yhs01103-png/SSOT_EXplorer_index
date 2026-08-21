@@ -2,7 +2,7 @@
 SSOT_Explorer — 최신 설계결정이력 + TODO
 ================================================================
 기준 버전: v1.0
-최종수정: 2026-08-21 (D-069)
+최종수정: 2026-08-21 (D-070)
 원칙: 가장 최근 라운드의 신규 결정(D-번호)과 전체 TODO(H-번호)만 담는다.
       더 오래된 결정은 레거시 파일로 이동.
 
@@ -2148,6 +2148,51 @@ SyncFormatsDialog)에서 뽑아냄
 관련 D-번호: D-024, D-068(같은 패턴), D-055/D-043(atomic_write_json 위임
       원조).
 
+[D-070] cli.py + pyproject.toml — "멀티리포 개발자 CLI 확장"의 첫 배포
+가능한 형태(O-017 3개 항목 전부 확정)
+결정: `cli.py`(argparse, 서브커맨드 5개: classify/sync/register/init/list)
+      + `pyproject.toml`(`[project.scripts] ssot = "cli:main"`,
+      `py-modules`로 기존 플랫 모듈 레이아웃 그대로 패키징 — src/ 패키지
+      디렉토리로 재구조화하는 건 이번 범위 밖, 모든 내부 import가 flat
+      sibling 방식이라 그 리팩터는 기능 이득 없이 위험만 큼). 의존성을
+      4개 extras로 분리: 기본(core, jsonschema+kiwipiepy만)/`semantic`
+      (fastembed)/`gui`(PySide6)/`mcp`(mcp SDK)/`all`(전부, self-referential
+      extra `ssot-explorer[gui,semantic,mcp]`). `ssot-gui = "main:main"`도
+      등록 — "패키지 하나 설치하면 CLI도 GUI도 전역 명령"이 목표.
+      **`ssot_mcp_server.py`가 여전히 main.py를 통해 PySide6를 끌어온다는
+      건(O-010, 기존에 이미 추적됨) 이번에 안 고쳤다** — mcp extra는
+      의도(향후 mcp 패키지만으로 충분해질 자리)를 미리 표시해두는 용도로만
+      만들고, README에 "지금은 gui도 같이 필요"라고 정직하게 적어둠(silent
+      하게 mcp extra 안에 PySide6를 끼워넣는 대신).
+이유: O-017의 3가지(패키징/extras분리/커맨드) 중 3번(커맨드)이 없으면
+      1번(패키징)이 아무 의미가 없어서 동시에 처리 — "기능마다 패키징 +
+      전체 패키징해서 전역으로"라는 사용자 요청을 그대로 반영.
+검증: **새 venv에 실제로 설치해서 확인**(사용자와 명시적으로 합의한 검증
+      기준 — 코드 리뷰만으론 안 됨). `pip install -e .`(core만) → `ssot
+      --help`가 실제 크래시남을 발견: Windows 기본 콘솔(cp949)이 help
+      텍스트의 한글/em-dash를 못 씀(UnicodeEncodeError) — 이 프로젝트가
+      D-030 등에서 반복 겪은 것과 같은 부류의 버그를 이번에도 실측으로
+      새로 재현. `sys.stdout/stderr.reconfigure(encoding="utf-8")`를
+      `main()` 진입 시 시도(reconfigure 없는 스트림이면 조용히 통과)로
+      수정 후 재검증 — `ssot --help`/`list`/`register` 전부 정상 출력
+      확인. `pip install --dry-run ".[gui]"`/`".[all]"`로 extras가 의도대로
+      해석되는지(PySide6만, 또는 fastembed+mcp+PySide6 전부) 확인. `ssot
+      classify`(기본, 1단계)가 임베딩 모델을 절대 안 건드리는지도 스모크
+      테스트 중 실측으로 발견 — 처음엔 TMPDIR 환경변수를 바꿔 테스트하다가
+      fastembed가 새 캐시 디렉터리에 모델을 다시 받으려 해서 60초 타임아웃
+      — "clasify 기본값이 무거운 6단계 전체를 돈다"는 원래 설계가 콜드
+      캐시 환경(새 머신/CI/Docker)에서 위험하다는 걸 실측으로 확인하고,
+      기본값을 1단계(빠름/오프라인)로 뒤집고 `--full`을 옵트인으로
+      바꿈(원래 계획엔 없던 즉석 설계 변경 — 실측이 계획을 이겼다).
+      test_cli.py 21개(라우팅/JSON출력/stdin/needs-confirmation 흐름/
+      인코딩 회귀 포함) 신규. pytest 297개 전부 통과.
+[비고] O-010(MCP 서버의 main.py 의존)은 여전히 미해결 — 다음 라운드
+      후보. `ssot-mcp` 전역 커맨드도 아직 없음(ssot_mcp_server.py가
+      `if __name__` 블록에 로직이 있어 entry_point화하려면 O-010과 같이
+      풀어야 자연스러움).
+관련 D-번호: D-053, D-068, D-069(이 셋이 전제조건), O-017(이 결정으로
+      확정됨), O-010(여전히 미해결로 남음).
+
 ================================================================
 PART 2 — TODO
 ================================================================
@@ -2475,6 +2520,7 @@ D-067에서 의도적으로 분리해둔 나머지 절반.
 재논의 조건: 1번(패키징)부터 실제 착수하기로 사용자와 합의되면.
 관련 D-번호: D-053(classify CLI 계약 원조), D-068(sync를 GUI에서 뽑아낸
       전제조건).
+**D-069/D-070으로 3개 전부 확정됨(2026-08-21)** — 상세는 해당 D-번호 참고.
 
 ================================================================
 변경이력

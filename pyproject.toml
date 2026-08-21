@@ -1,0 +1,80 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ssot-explorer"
+version = "0.1.0"
+description = "Sync one canonical rule file across CLAUDE.md/AGENTS.md/.cursorrules/.windsurfrules for many independent repos, and classify arbitrary text to the right one — CLI, MCP server, and a Windows GUI viewer."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    # core — everything cli.py needs (classify/sync/register/init/list).
+    # No GUI, no embedding model: this install stays small and offline.
+    "jsonschema",
+    "kiwipiepy",
+]
+
+[project.optional-dependencies]
+# GUI viewer (main.py, PySide6) — optional because the CLI/MCP paths never
+# import main.py's Qt code (D-068/D-069 extracted the shared logic out).
+gui = ["PySide6"]
+
+# Real local embedding provider for router_embeddings.py (D-067) — semantic
+# stage of `ssot classify --full`. Optional because it's a genuinely heavy
+# dependency (onnxruntime + a downloaded model, ~0.2GB on first run) and
+# `ssot classify`'s default (fast) path never touches it.
+semantic = ["fastembed==0.8.0"]
+
+# MCP server (ssot_mcp_server.py) for Claude Code/Cursor/other MCP-capable
+# agents. NOTE (O-010, tracked debt): ssot_mcp_server.py still imports
+# load_roots/find_index_files from main.py, which pulls in PySide6 — so
+# right now this extra alone is not enough to actually run the server; you
+# also need `gui` until O-010 decouples that import. Kept as its own extra
+# anyway so the *intent* (mcp server needs the `mcp` package, nothing else)
+# stays visible, and so this becomes a one-line fix once O-010 lands.
+mcp = ["mcp"]
+
+# Everything — the GUI app, the CLI, the MCP server, and real semantic
+# matching. `pip install ssot-explorer[all]` (or pipx) is the "just give me
+# every feature globally" install.
+all = ["ssot-explorer[gui,semantic,mcp]"]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[project.scripts]
+# The CLI (cli.py) — works with only the `core` deps above, no extras
+# needed. This is the command meant to be installed globally (pipx install
+# ssot-explorer) so `ssot classify/sync/register/init/list` work without
+# ever launching the GUI.
+ssot = "cli:main"
+# The PySide6 viewer (main.py) — only works if installed with the `gui`
+# extra (`pip install ssot-explorer[gui]` / `[all]`).
+ssot-gui = "main:main"
+
+[tool.setuptools]
+# Flat modules, not a src/ssot_explorer/ package — main.py/router_*.py/
+# cli.py/ssot_mcp_server.py/dev_console_server.py already import each other
+# as flat siblings (`import router_classifier`, not
+# `from ssot_explorer import router_classifier`) throughout the codebase
+# and its ~295 tests. Restructuring into a proper package directory would
+# touch every import in every file for no functional benefit right now —
+# py-modules packages a flat layout as-is, so that refactor stays a
+# separate, optional future decision instead of a packaging prerequisite.
+py-modules = [
+    "cli",
+    "main",
+    "dev_console_server",
+    "ssot_mcp_server",
+    "router_ai_judgment",
+    "router_classifier",
+    "router_embeddings",
+    "router_keyword_registry",
+    "router_orchestrator",
+    "router_proposals",
+    "router_registry",
+    "router_sync",
+    "router_watcher",
+]
