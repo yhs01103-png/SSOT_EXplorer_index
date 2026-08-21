@@ -2364,7 +2364,21 @@ D-071의 수동 venv 검증을 CI로 이관)
       start_prevents_loop_from_ever_running` — poll_interval=0으로 줘서
       안 고쳐졌으면 테스트 자체가 타임아웃 없이 CPU 100%로 절대 안
       끝나는 방식으로 회귀를 잡음). 로컬 298개(297+회귀 1개) 재확인 —
-      29초, 정상 속도로 복귀. Actions 최종 확인은 이 커밋 이후 진행.
+      29초, 정상 속도로 복귀.
+
+      **최종 확인(2026-08-21, 같은 날): 실제 GitHub Actions에서 6개 잡
+      전부 성공** — `pytest`(297+1 신규 = 298개) + `packaging-boundary`
+      매트릭스 5개(core/gui/semantic/mcp/all) 전부 success. 총 4번의
+      재확인(libEGL 부재 → Windows전용 테스트 5개 skip → 워커 wait()
+      무제한화(부분적으로 틀림) → InboxWatcher 경쟁조건(진짜 근본원인))을
+      거쳐 도달 — "1번 CI 자동화"는 코드만 작성하고 끝난 게 아니라, 실제
+      Actions 실행 결과를 확인하고 실패할 때마다 로그를 직접 읽어 원인을
+      추적하는 과정에서 이 프로젝트가 여태 몰랐던 실제 버그 4개(libEGL
+      의존 누락/Windows전용 테스트의 크로스플랫폼 미검증/워커 정지
+      타임아웃의 근본적 불안정성/InboxWatcher 경쟁조건)를 전부 실측으로
+      찾아 고쳤다 — CI가 "코드를 push하면 초록불이 뜬다"를 실제로
+      증명하기 전까지는 "당연히 통과하겠지"가 전부 검증 안 된 가정이었단
+      뜻.
 관련 D-번호: D-070, D-071(둘 다 이 잡이 자동화하는 수동 검증의 출처),
       D-038(기존 CI 신설), D-013(SearchWorker 원조), D-051/H-008
       (ClassificationWorker 원조), H-009(RootInitWorker 원조), D-042
