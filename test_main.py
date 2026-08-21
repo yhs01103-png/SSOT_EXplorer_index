@@ -715,12 +715,27 @@ def test_excepthook_logs_and_shows_dialog_without_blocking(monkeypatch):
 
 # ------------------------------------------------------- D-028: 관계 + 전체탐색기
 
+# 2026-08-21(D-072) — 아래 5개는 Windows 드라이브 문자(`C:\` 등)를 하드
+# 코딩으로 가정한다(get_available_drives 자체가 Windows 전용, main.py:511
+# 참고) — POSIX(Linux CI)에서는 `Path("C:\\a\\b")`가 백슬래시를 구분자로
+# 안 취급해서 완전히 다르게 파싱되므로, 실제 제품 버그가 아니라 테스트가
+# 애초에 이 앱의 배포 대상(Windows 데스크톱)만 가정하고 짜여 있는 것 —
+# GitHub Actions(ubuntu-latest)에서 처음 pytest를 끝까지 돌려보고서야
+# 드러남(그 전엔 CI가 libEGL 부재로 이 지점까지 못 갔음).
+_WINDOWS_ONLY = pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Windows 드라이브 문자(C:\\ 등)를 하드코딩으로 가정 — POSIX에서는 의미 없음",
+)
+
+
+@_WINDOWS_ONLY
 def test_get_available_drives_includes_current_drive():
     drives = m.get_available_drives()
     current_drive = Path(__file__).drive + "\\"  # 예: "C:\\"
     assert current_drive in drives
 
 
+@_WINDOWS_ONLY
 def test_is_or_under_matches_equal_and_descendant_but_not_unrelated():
     base = Path("C:\\a\\b")
     assert m._is_or_under(base, base)  # 자기 자신
@@ -729,6 +744,7 @@ def test_is_or_under_matches_equal_and_descendant_but_not_unrelated():
     assert not m._is_or_under(Path("C:\\a"), base)  # 상위(반대 방향은 매치 안 함)
 
 
+@_WINDOWS_ONLY
 def test_find_relations_for_path_matches_from_side():
     relations = [{"fromPath": "C:\\x", "toPath": "C:\\y", "reason": "테스트", "bidirectional": True}]
     matches = m.find_relations_for_path(Path("C:\\x\\sub"), relations)
@@ -785,6 +801,7 @@ def test_save_roots_preserves_relations(isolated_registry):
     assert payload["relations"] == [{"fromPath": "C:\\x", "toPath": "C:\\y", "reason": "보존 확인용"}]
 
 
+@_WINDOWS_ONLY
 def test_populate_roots_adds_drive_section_without_crashing_reveal(isolated_registry, isolated_qsettings):
     """구분선(경로데이터 없음)이 섞여도 reveal_path가 안 죽는지 — D-028 도입
     중 실제로 발견해서 고친 버그의 회귀 테스트."""
@@ -798,6 +815,7 @@ def test_populate_roots_adds_drive_section_without_crashing_reveal(isolated_regi
         win.close()
 
 
+@_WINDOWS_ONLY
 def test_update_relations_panel_shows_and_hides(isolated_registry, isolated_qsettings, monkeypatch):
     monkeypatch.setattr(
         m, "load_relations",

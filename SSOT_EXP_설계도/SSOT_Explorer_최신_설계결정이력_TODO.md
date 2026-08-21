@@ -2283,8 +2283,29 @@ D-071의 수동 venv 검증을 CI로 이관)
       "CI도 당연히 통과했겠지"로 오판하기 쉬운 사각지대였음. `sudo apt-get
       install -y libegl1 libgl1 libxkbcommon0 libdbus-1-3`를 PySide6를
       실제로 import하는 스텝(`pytest` 잡 전체, `packaging-boundary`의
-      gui/all 레그) 앞에 추가해 수정 — 재푸시 후 재확인 결과는 아래 갱신
-      예정(작성 시점엔 아직 진행 중).
+      gui/all 레그) 앞에 추가해 수정, 재푸시 후 재확인 — `packaging-
+      boundary` 5개 레그 전부 성공(libEGL 문제 해결 확인).
+
+      **재확인에서 두 번째 진짜 버그 발견**: `pytest` 잡은 이번엔 libEGL을
+      넘어서서 실제로 pytest를 끝까지 돌리는 데까지 처음 도달했는데, 5개
+      테스트가 실패(`test_get_available_drives_includes_current_drive`/
+      `test_is_or_under_matches_equal_and_descendant_but_not_unrelated`/
+      `test_find_relations_for_path_matches_from_side`/
+      `test_populate_roots_adds_drive_section_without_crashing_reveal`/
+      `test_update_relations_panel_shows_and_hides`, 292 passed 5 failed).
+      원인: 전부 `Path("C:\\a\\b")`처럼 Windows 드라이브 문자를 하드코딩한
+      테스트 — POSIX(ubuntu-latest)에서는 `pathlib.Path`가 백슬래시를
+      구분자로 안 취급해서 완전히 다르게 파싱된다. `get_available_drives()`
+      자체가 애초에 Windows 드라이브 전용 함수(main.py:511)라 제품 코드
+      버그가 아니라 "이 앱의 배포 대상(Windows 데스크톱)만 가정한 테스트를
+      리눅스 CI에서 처음 끝까지 돌려본" 것. **이것도 D-072 이전부터 있던
+      상태였을 가능성이 높음** — CI가 libEGL 때문에 이 지점까지 한 번도
+      못 왔었다는 뜻이라, 이번이 이 5개 테스트가 리눅스에서 실행된 최초
+      기록. 5개 테스트에 `@pytest.mark.skipif(sys.platform != "win32",
+      ...)` 마커 추가(제품 코드는 안 건드림 — Windows 전용 기능을
+      크로스플랫폼으로 바꾸는 건 이번 범위 밖이자 이 앱의 설계 의도와도
+      안 맞음). 로컬(win32)에서 297개 그대로 전부 통과 재확인 후 재푸시.
+      Actions 최종 결과는 아래 갱신 예정.
 관련 D-번호: D-070, D-071(둘 다 이 잡이 자동화하는 수동 검증의 출처),
       D-038(기존 CI 신설).
 
