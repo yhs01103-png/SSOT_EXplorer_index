@@ -2263,10 +2263,28 @@ D-071의 수동 venv 검증을 CI로 이관)
       성공 + `ssot --help` 정상 출력까지 5개 전부 통과. `pytest` 잡의
       새 설치 소스(`pip install -e ".[all]" -r requirements-dev.txt`)로도
       실제로 pytest 297개 전부 통과 확인(requirements.txt 기반 설치와
-      동등함을 재확인) — YAML 자체는 `python -c "import yaml; yaml.safe_
-      load(...)"`로 파싱 가능성만 별도 확인(GitHub Actions 러너 자체는
-      로컬에서 못 돌림, 실제 push 후 Actions 탭에서 최종 확인 필요 —
-      아직 안 함).
+      동등함을 재확인).
+
+      **실제 push 후 GitHub Actions 최종 확인에서 진짜 버그를 발견**(사용자
+      요청으로 push, GitHub REST API로 실제 실행 결과 조회 — gh CLI
+      미설치라 `git credential fill`로 자격증명을 받아 API 직접 호출).
+      1차 실행 결과: `pytest` 잡과 `packaging-boundary`의 gui/all 레그가
+      전부 `ImportError: libEGL.so.1: cannot open shared object file`로
+      실패. 원인: `QT_QPA_PLATFORM=offscreen`을 줘도 PySide6는 여전히
+      libEGL을 동적 링크하려 시도하는데, `ubuntu-latest` 기본 이미지엔 이
+      시스템 라이브러리가 없음 — **로컬 Windows 개발환경에선 재현이 아예
+      안 되는 리눅스 전용 함정**이라 이번에 처음 실측으로 드러남. 더 중요한
+      발견: 이 프로젝트 CI 실행이력을 API로 조회해보니 **이 문제가 D-072
+      이전, 이번 세션 시작 전부터 이미 있었다** — 직전 2개 실행(커밋
+      9e781e78/7b72db5a, 전부 이번 세션 이전 커밋)도 같은 `pytest -q`
+      단계에서 이미 실패하고 있었음. 즉 CI가 언제부턴가 조용히 계속
+      빨간불이었는데 아무도 GitHub Actions 탭을 직접 확인한 적이 없어서
+      몰랐던 것 — 로컬 Windows 개발환경(pytest 297개 항상 통과)만 보고는
+      "CI도 당연히 통과했겠지"로 오판하기 쉬운 사각지대였음. `sudo apt-get
+      install -y libegl1 libgl1 libxkbcommon0 libdbus-1-3`를 PySide6를
+      실제로 import하는 스텝(`pytest` 잡 전체, `packaging-boundary`의
+      gui/all 레그) 앞에 추가해 수정 — 재푸시 후 재확인 결과는 아래 갱신
+      예정(작성 시점엔 아직 진행 중).
 관련 D-번호: D-070, D-071(둘 다 이 잡이 자동화하는 수동 검증의 출처),
       D-038(기존 CI 신설).
 
