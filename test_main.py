@@ -501,63 +501,8 @@ def test_management_panel_shows_session_context_log(isolated_registry, isolated_
     assert "없음" in panel.session_context_log_view.toPlainText()
 
 
-# ---------------------------------------------- D-041(H-003): 대소문자 중복 방지
-
-def test_pick_canonical_index_file_prefers_canonical_casing():
-    upper = Path("C:\\proj\\CLAUDE.md")
-    lower = Path("C:\\proj\\claude.md")
-    assert m.pick_canonical_index_file("claude.md", [lower, upper]) == upper
-    assert m.pick_canonical_index_file("claude.md", [upper, lower]) == upper  # 순서 무관
-
-
-def test_pick_canonical_index_file_falls_back_to_sorted_name_when_no_canonical():
-    a = Path("C:\\proj\\Claude.MD")
-    b = Path("C:\\proj\\CLAUDE.MD")
-    # 어느 쪽도 CANONICAL_INDEX_NAMES("CLAUDE.md")와 정확히 안 맞음 — 사전순 결정
-    assert m.pick_canonical_index_file("claude.md", [b, a]) == sorted([a, b], key=lambda p: p.name)[0]
-
-
-def test_find_index_files_single_file_normal_case(tmp_path):
-    (tmp_path / "CLAUDE.md").write_text("x", encoding="utf-8")
-    result = m.find_index_files(tmp_path)
-    assert result["claude.md"] == tmp_path / "CLAUDE.md"
-    assert "readme.md" not in result
-
-
-def test_find_index_files_prefers_flat_over_dot_claude_subdir(tmp_path):
-    (tmp_path / "CLAUDE.md").write_text("flat", encoding="utf-8")
-    dot_claude = tmp_path / ".claude"
-    dot_claude.mkdir()
-    (dot_claude / "CLAUDE.md").write_text("nested", encoding="utf-8")
-    result = m.find_index_files(tmp_path)
-    assert result["claude.md"] == tmp_path / "CLAUDE.md"
-
-
-def test_find_index_files_deterministic_on_case_duplicate(tmp_path, monkeypatch):
-    """이 환경(Windows)은 대소문자 구분 파일시스템이 아니라 CLAUDE.md/claude.md를
-    실제로 동시에 만들 수 없다(그게 바로 H-003의 전제) — iterdir/is_file을 이
-    테스트 범위에서만 목업해서, 케이스-센서티브 파일시스템에서 실제로 이 상황이
-    발생했을 때의 동작을 회귀 검증한다."""
-    upper = tmp_path / "CLAUDE.md"
-    lower = tmp_path / "claude.md"
-
-    def fake_iterdir(self):
-        if self == tmp_path:
-            return iter([lower, upper])  # 일부러 lower를 먼저 — 예전 setdefault 방식이면 lower가 이겼음
-        return iter([])
-
-    monkeypatch.setattr(Path, "iterdir", fake_iterdir)
-    monkeypatch.setattr(Path, "is_file", lambda self: self in (upper, lower))
-    # 이 분기가 실제 사용자 로그 파일(~/.claude/scripts/ssot_explorer.log)에
-    # 쓰지 않게 log.warning 자체를 목업(D-025 기존 테스트와 같은 관례).
-    monkeypatch.setattr(m.log, "warning", lambda *a, **k: None)
-
-    result = m.find_index_files(tmp_path)
-    assert result["claude.md"] == upper
-
-
-def test_find_index_files_missing_folder_returns_empty(tmp_path):
-    assert m.find_index_files(tmp_path / "no-such-folder") == {}
+# find_index_files/pick_canonical_index_file 테스트는 router_registry.py로
+# 이관됨(D-071) — test_router_registry.py 참고.
 
 
 # -------------------------------------------------------------------- D-022: UI

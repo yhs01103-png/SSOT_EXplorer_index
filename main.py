@@ -41,6 +41,7 @@ import router_classifier
 import router_keyword_registry
 import router_orchestrator
 import router_proposals
+import router_registry
 import router_watcher
 
 # 2026-08-14(D-038, H-005 다음 항목) — 레지스트리 스키마 검증. jsonschema는
@@ -138,7 +139,10 @@ def resolve_registry_path() -> Path:
 
 
 REGISTRY_PATH = resolve_registry_path()
-INDEX_FILENAMES = {"claude.md", "readme.md"}
+# find_index_files/pick_canonical_index_file/INDEX_FILENAMES/CANONICAL_INDEX_NAMES는
+# router_registry.py로 이관됨(D-071, O-010 해소) — 아래는 기존 호출부를 안
+# 고치기 위한 얇은 별칭.
+INDEX_FILENAMES = router_registry.INDEX_FILENAMES
 
 
 # ---------------------------------------------------------------- 레지스트리
@@ -155,8 +159,6 @@ INDEX_FILENAMES = {"claude.md", "readme.md"}
 # router_registry.py로 이관됨(D-069, router_sync.py/D-068과 같은 이유 —
 # "메인은 오케스트레이션 호출만"). 아래는 기존 호출부(`load_roots()`,
 # `save_roots(roots)`, `RegistryConflictError`)를 안 고치기 위한 얇은 별칭.
-import router_registry
-
 RegistryConflictError = router_registry.RegistryConflictError
 
 
@@ -521,60 +523,20 @@ def get_available_drives() -> list[str]:
     return drives
 
 
-# 2026-08-14(D-041, H-003) — 대소문자만 다른 CLAUDE.md/claude.md가 한 폴더에
-# 동시에 존재하는 경우의 방어 코드. Windows는 파일시스템이 대소문자를 구분 안
-# 해서 이 상황 자체가 발생 안 하지만, 이 프로젝트는 크로스플랫폼을 표방하고
-# (D-019 순수 Python 스크립트, D-039 경로 이식성) 대소문자 구분 파일시스템
-# (Linux 등)에서는 실제로 둘 다 존재할 수 있음 — 실사용에서 재현된 적은
-# 없지만(H-003 원 결정문 그대로), 재현을 기다리지 않고 이번 라운드에서 미리
-# 방어. CANONICAL_INDEX_NAMES를 우선 채택, 그래도 안 갈리면(둘 다 비표준
-# 표기) 이름 사전순 — 실행마다 같은 선택이 나오게(OS 디렉토리 순회 순서에
-# 의존하던 기존 setdefault 방식은 결정적이지 않았음).
-CANONICAL_INDEX_NAMES = {"claude.md": "CLAUDE.md", "readme.md": "README.md"}
+# find_index_files/pick_canonical_index_file/CANONICAL_INDEX_NAMES(D-041,
+# H-003 대소문자 중복 방지)는 router_registry.py로 이관됨(D-071, O-010
+# 해소 — ssot_mcp_server.py가 이 순수 함수들 때문에 main.py를 통째로
+# 임포트해서 PySide6까지 끌려왔음). 아래는 기존 호출부를 안 고치기 위한
+# 얇은 별칭.
+CANONICAL_INDEX_NAMES = router_registry.CANONICAL_INDEX_NAMES
 
 
 def pick_canonical_index_file(key: str, paths: list[Path]) -> Path:
-    """같은 폴더에 대소문자만 다른 인덱스 파일이 여러 개일 때 어느 걸 쓸지
-    결정적으로 고른다 — find_index_files에서 분리한 순수 함수(디스크 접근
-    없이 테스트 가능, 실제 케이스-센서티브 파일시스템 없이도 회귀 검증)."""
-    canonical = CANONICAL_INDEX_NAMES.get(key)
-    chosen = next((p for p in paths if p.name == canonical), None)
-    return chosen if chosen is not None else sorted(paths, key=lambda p: p.name)[0]
+    return router_registry.pick_canonical_index_file(key, paths)
 
 
 def find_index_files(folder: Path) -> dict:
-    """folder 바로 밑, 그리고 folder\\.claude 밑 양쪽에서 CLAUDE.md/README.md를
-    찾는다 — 플랫 컨벤션과 `.claude` 하위 컨벤션 둘 다 지원. 바로 밑 파일이
-    있으면 그쪽을 우선한다."""
-    found = {}
-    if not folder.is_dir():
-        return found
-    candidates = [folder]
-    claude_sub = folder / ".claude"
-    if claude_sub.is_dir():
-        candidates.append(claude_sub)
-    for base in candidates:
-        try:
-            matches: dict[str, list[Path]] = {}
-            for entry in base.iterdir():
-                if entry.is_file() and entry.name.lower() in INDEX_FILENAMES:
-                    matches.setdefault(entry.name.lower(), []).append(entry)
-        except (PermissionError, OSError):
-            continue
-        for key, paths in matches.items():
-            if key in found:
-                continue  # 상위 base(폴더 바로 밑)가 이미 채웠으면 유지 — 기존 우선순위
-            if len(paths) == 1:
-                found[key] = paths[0]
-                continue
-            chosen = pick_canonical_index_file(key, paths)
-            found[key] = chosen
-            others = ", ".join(p.name for p in paths if p != chosen)
-            log.warning(
-                f"{base}에 대소문자만 다른 인덱스 파일 {len(paths)}개 발견 — "
-                f"'{chosen.name}' 사용, 무시됨: {others}"
-            )
-    return found
+    return router_registry.find_index_files(folder)
 
 
 # ---------------------------------------------------------------- Inbox 감시

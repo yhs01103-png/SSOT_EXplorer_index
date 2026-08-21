@@ -23,8 +23,14 @@ import ssot_mcp_server as mcp_srv
 
 @pytest.fixture(autouse=True)
 def isolated_registry(tmp_path, monkeypatch):
-    monkeypatch.setattr(m, "REGISTRY_PATH", tmp_path / "ssot-roots.json")
-    m._LAST_KNOWN_HASH = ""
+    """D-071 — ssot_mcp_server.py가 이제 main.py를 안 거치고 자기 REGISTRY_PATH를
+    top-level에서 직접 계산한다(더 이상 지연 import로 main.REGISTRY_PATH를
+    안 읽음) — 그래서 m.REGISTRY_PATH만 패치하면 mcp_srv 쪽 tool 함수들은
+    여전히 실제 사용자 레지스트리를 읽는다. 둘 다 같은 tmp_path로 패치해서
+    m.save_roots(...)(테스트 셋업)와 mcp_srv 쪽 조회가 같은 파일을 보게 한다."""
+    registry_path = tmp_path / "ssot-roots.json"
+    monkeypatch.setattr(m, "REGISTRY_PATH", registry_path)
+    monkeypatch.setattr(mcp_srv, "REGISTRY_PATH", registry_path)
     yield
 
 

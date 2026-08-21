@@ -64,7 +64,7 @@ PROSE_MATCH_WEIGHT = 0.4  # D-033: 프로즈검색 신호가 additive로 기여�
 
 
 def _find_readme(root_path: Path) -> Path | None:
-    """find_index_files(main.py)와 같은 두 위치(플랫 루트 / .claude 하위)를
+    """find_index_files(router_registry.py)와 같은 두 위치(플랫 루트 / .claude 하위)를
     본다 — 컨벤션이 갈리는 루트(flutter_App은 .claude 하위, 나머지는 플랫)
     둘 다 놓치지 않기 위함. Qt 의존 없이 이 모듈 안에서 독립적으로 재구현
     (router_classifier.py처럼 Qt 미의존 순수 모듈 유지 원칙)."""

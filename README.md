@@ -31,7 +31,7 @@ ssot init [path]                       # 등록 후보 폴더만 나열(자동 �
 | (기본) | jsonschema, kiwipiepy만 | `ssot` CLI 전체(classify 기본 경로 포함) |
 | `semantic` | fastembed(ONNX, ~0.2GB) | `ssot classify --full`의 시맨틱 단계(D-067) |
 | `gui` | PySide6 | `ssot-gui`(아래 GUI 실행)와 `main.py` |
-| `mcp` | mcp SDK | Claude Code/Cursor 등 MCP 연동 — **현재 `gui`도 같이 필요**(O-010, 아래 참고) |
+| `mcp` | mcp SDK | Claude Code/Cursor 등 MCP 연동(`ssot-mcp`) — GUI 없이 단독 동작(D-071) |
 | `all` | 위 전부 | "일단 다 되게" |
 
 ```bash

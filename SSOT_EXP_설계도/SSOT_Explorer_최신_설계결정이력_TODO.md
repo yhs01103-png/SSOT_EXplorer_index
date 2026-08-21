@@ -2,7 +2,7 @@
 SSOT_Explorer — 최신 설계결정이력 + TODO
 ================================================================
 기준 버전: v1.0
-최종수정: 2026-08-21 (D-070)
+최종수정: 2026-08-21 (D-071)
 원칙: 가장 최근 라운드의 신규 결정(D-번호)과 전체 TODO(H-번호)만 담는다.
       더 오래된 결정은 레거시 파일로 이동.
 
@@ -2160,10 +2160,13 @@ SyncFormatsDialog)에서 뽑아냄
       extra `ssot-explorer[gui,semantic,mcp]`). `ssot-gui = "main:main"`도
       등록 — "패키지 하나 설치하면 CLI도 GUI도 전역 명령"이 목표.
       **`ssot_mcp_server.py`가 여전히 main.py를 통해 PySide6를 끌어온다는
-      건(O-010, 기존에 이미 추적됨) 이번에 안 고쳤다** — mcp extra는
-      의도(향후 mcp 패키지만으로 충분해질 자리)를 미리 표시해두는 용도로만
-      만들고, README에 "지금은 gui도 같이 필요"라고 정직하게 적어둠(silent
-      하게 mcp extra 안에 PySide6를 끼워넣는 대신).
+      건 이번에 안 고쳤다** — mcp extra는 의도(향후 mcp 패키지만으로
+      충분해질 자리)를 미리 표시해두는 용도로만 만들고, README에 "지금은
+      gui도 같이 필요"라고 정직하게 적어둠(silent하게 mcp extra 안에
+      PySide6를 끼워넣는 대신). [2026-08-21 정정] 아래 [비고]에서 이 부채를
+      "O-010"이라고 불렀는데 잘못된 번호였다 — 실제 O-010은 개발자 콘솔
+      통합(dev_console_server.py)이고 이미 D-057로 해결됨. 이 MCP/PySide6
+      부채는 정식 O-번호 없이 [비고]에만 있다가 D-071로 바로 해소됨.
 이유: O-017의 3가지(패키징/extras분리/커맨드) 중 3번(커맨드)이 없으면
       1번(패키징)이 아무 의미가 없어서 동시에 처리 — "기능마다 패키징 +
       전체 패키징해서 전역으로"라는 사용자 요청을 그대로 반영.
@@ -2186,12 +2189,54 @@ SyncFormatsDialog)에서 뽑아냄
       바꿈(원래 계획엔 없던 즉석 설계 변경 — 실측이 계획을 이겼다).
       test_cli.py 21개(라우팅/JSON출력/stdin/needs-confirmation 흐름/
       인코딩 회귀 포함) 신규. pytest 297개 전부 통과.
-[비고] O-010(MCP 서버의 main.py 의존)은 여전히 미해결 — 다음 라운드
-      후보. `ssot-mcp` 전역 커맨드도 아직 없음(ssot_mcp_server.py가
-      `if __name__` 블록에 로직이 있어 entry_point화하려면 O-010과 같이
-      풀어야 자연스러움).
+[비고] MCP 서버의 main.py 의존(PySide6 강제 로드)은 여전히 미해결 —
+      다음 라운드 후보. `ssot-mcp` 전역 커맨드도 아직 없음(ssot_mcp_
+      server.py가 `if __name__` 블록에 로직이 있어 entry_point화하려면
+      같이 풀어야 자연스러움). **→ D-071로 해소됨(2026-08-21).**
 관련 D-번호: D-053, D-068, D-069(이 셋이 전제조건), O-017(이 결정으로
-      확정됨), O-010(여전히 미해결로 남음).
+      확정됨), D-071(위 [비고] 부채 해소).
+
+[D-071] router_registry.py에 find_index_files/pick_canonical_index_file
+합류 — ssot_mcp_server.py가 main.py(PySide6)를 완전히 안 거치게 됨
+결정: main.py의 `find_index_files`/`pick_canonical_index_file`/
+      `CANONICAL_INDEX_NAMES`(D-041, H-003 대소문자 중복 방지)를
+      router_registry.py로 이관(순수 파일시스템 스캔, Qt 의존 전혀 없었음
+      — router_registry.py/D-069와 같은 패턴). ssot_mcp_server.py의
+      6곳(list_ssot_roots/check_readme_freshness/classify_content/
+      list_triggered_actions/list_registered_actions/
+      list_missing_index_folders)에 있던 `from main import REGISTRY_PATH,
+      load_roots[, find_index_files]` 지연 import를 전부 제거, 모듈
+      top-level에서 `router_registry`+`router_proposals.
+      resolve_registry_path()`만 쓰도록 교체 — 더는 순환참조 회피용
+      지연 import가 필요 없다(애초에 main.py를 아예 안 거치므로). `main.py`
+      쪽은 D-068/D-069와 동일하게 얇은 별칭만 남김(`find_index_files`/
+      `pick_canonical_index_file`가 router_registry로 위임). 덤으로
+      `ssot_mcp_server.py`에 `main()` 함수 추가 + `pyproject.toml`에
+      `ssot-mcp = "ssot_mcp_server:main"` 엔트리포인트 등록(D-070이
+      "main.py 의존 때문에 자연스럽지 않다"고 미뤄뒀던 것 — 이제 막힌 게
+      없어져서 바로 처리).
+이유: D-070 작업 중 [비고]로 남겨둔 부채를 사용자가 바로 이어서 요청
+      ("미해결 분리해줘") — D-070 시점엔 이 부채를 "O-010"이라고 잘못
+      불렀는데(진짜 O-010은 dev_console_server.py 통합, D-057로 이미
+      해결됨 — 번호 오기), 실제로는 정식 O-번호가 매겨진 적 없는 [비고]
+      항목이었다. 확인 과정에서 이 오기를 발견해 router_proposals.py
+      is_developer_mode() 독스트링에 같은 오기가 있던 것도 같이 정정.
+검증: pytest 297개 전부 통과(find_index_files 관련 테스트 6개를
+      test_main.py에서 test_router_registry.py로 이관 — router_sync.py/
+      D-068과 같은 이관 관례. 순증감 없음). test_ssot_mcp_server.py의
+      `isolated_registry` 픽스처가 `m.REGISTRY_PATH`만 패치하던 걸 실제로
+      돌려보다 발견한 문제 — ssot_mcp_server.py가 이제 자기 REGISTRY_PATH를
+      top-level에서 독자적으로 계산해서, main.REGISTRY_PATH를 패치해도
+      mcp_srv 쪽 tool 함수들은 실제 사용자 레지스트리를 읽고 있었음(격리
+      깨짐, 실행 전엔 안 드러났을 조용한 버그) — `mcp_srv.REGISTRY_PATH`도
+      같이 패치하도록 수정. **새 venv 실측**(D-070과 같은 검증 기준):
+      `pip install -e ".[mcp]"`(gui 없이 mcp만) → PySide6 미설치 확인 →
+      `import ssot_mcp_server` 성공 확인 → `router_registry.add_root()`로
+      임시 레지스트리에 루트 하나 등록 후 `list_ssot_roots()` 실제 호출해
+      결과 확인 → `ssot_mcp_server.main`이 callable인지(엔트리포인트
+      타겟 유효성) 확인. 전부 통과.
+관련 D-번호: D-069(같은 이관 패턴), D-068, D-070([비고] 부채의 출처),
+      D-041/H-003(find_index_files/pick_canonical_index_file 원 결정).
 
 ================================================================
 PART 2 — TODO

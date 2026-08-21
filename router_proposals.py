@@ -51,8 +51,8 @@ def is_developer_mode(registry_path: Path | None = None) -> bool:
     tool 호출을 게이팅할 때 둘 다 이 하나의 플래그를 같은 레지스트리
     파일에서 읽는다 — router_proposals.py는 Qt 미의존이라 ssot_mcp_
     server.py가 이 체크 하나 때문에 추가로 PySide6를 로드할 일은 없다
-    (기존 `from main import load_roots` lazy import는 여전히 필요, 그건
-    O-010에 이미 기록된 별개 부채).
+    (2026-08-21, D-071 — `load_roots`/`find_index_files`도 router_registry.py로
+    옮겨서 ssot_mcp_server.py는 이제 어떤 이유로도 main.py를 안 거친다).
 
     registry_path를 생략하면 resolve_registry_path()(기본 위치) — main.py
     는 자기 REGISTRY_PATH를 명시로 넘겨서 테스트 격리와 일관되게 맞춘다

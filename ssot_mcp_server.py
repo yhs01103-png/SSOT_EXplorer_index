@@ -54,12 +54,10 @@ IDE/에이전트가 알아서 판단해서 (필요하면) 자기 도구로 직�
 registry.json`)에는 계속 기록을 쌓는다 — 이건 MCP라서 새로 생긴 게 아니라
 D-044부터 GUI/CLI가 이미 하던 동작 그대로 재사용한 것뿐.
 
-**알려진 절충**(dev_console_server.py의 D-046 절충과 동일 계열): 아래
-`from main import ...`가 PySide6까지 로드한다 — `load_roots`/
-`find_index_files`가 지금 main.py에만 있어서다. 완전히 헤드리스하게 쓰고
-싶어지면 그 함수들을 Qt 미의존 모듈로 옮기는 리팩터가 필요(O-010이 이미
-같은 부채를 기록해뒀음 — 이제 두 파일이 공유하는 부채라 다음 라운드
-우선순위가 자연히 올라감).
+2026-08-21(D-071, O-010 해소) — `load_roots`/`find_index_files`가
+router_registry.py로 이관되면서, 이 서버는 이제 PySide6를 전혀 로드하지
+않고도 완전히 헤드리스하게 동작한다(예전엔 `from main import ...`가
+main.py 전체(PySide6 포함)를 끌어왔음).
 
 사용법(단독 실행, stdio transport):
     python ssot_mcp_server.py
@@ -76,7 +74,13 @@ from pathlib import Path
 from mcp.server import MCPServer
 
 import router_orchestrator  # Qt 미의존 순수 모듈 — main.py와 달리 순환참조 없이 top-level import 가능
-from router_proposals import is_developer_mode  # Qt 미의존, 안전하게 top-level import
+import router_registry  # Qt 미의존(D-069/D-071) — load_roots/find_index_files
+from router_proposals import is_developer_mode, resolve_registry_path  # Qt 미의존, 안전하게 top-level import
+
+# 2026-08-21(D-071) — main.py의 REGISTRY_PATH와 같은 로직(router_proposals.
+# resolve_registry_path())을 이 모듈도 top-level에서 직접 계산한다 — 이제
+# main.py를 전혀 안 거치므로 지연 import가 필요 없다.
+REGISTRY_PATH = resolve_registry_path()
 
 # mtime 기반이라 사람 리뷰 주기(REVIEW_STALE_DAYS=180, D-018)보다 훨씬
 # 짧게 잡는다 — 이건 "실제 파일 변경 대비 문서가 며칠 뒤처졌는지"라, 활발히
@@ -125,15 +129,13 @@ def _max_other_mtime(root_path: Path, exclude: Path) -> float | None:
 
 
 def _check_one_root(entry: dict, stale_days: int) -> dict:
-    from main import find_index_files  # 지연 import, 순환참조 회피(dev_console_server.py와 동일 사유)
-
     label = entry.get("label", "")
     path_str = entry.get("path", "")
     root_path = Path(path_str)
     if not root_path.is_dir():
         return {"label": label, "path": path_str, "status": "root_missing"}
 
-    index = find_index_files(root_path)
+    index = router_registry.find_index_files(root_path)
     readme_path = index.get("readme.md")
     if readme_path is None:
         return {"label": label, "path": path_str, "status": "no_readme"}
@@ -177,8 +179,6 @@ def list_ssot_roots() -> list[dict]:
 
     2026-08-17(D-057) — 개발자 모드가 꺼져 있으면 빈 응답 대신 명시적
     에러 dict 하나만 반환(아래 게이트 3곳 전부 공통)."""
-    from main import REGISTRY_PATH, load_roots
-
     if not is_developer_mode(REGISTRY_PATH):
         return [_DEV_MODE_OFF]
 
@@ -190,7 +190,7 @@ def list_ssot_roots() -> list[dict]:
             "referenceCondition": (r.get("referenceCondition") or "")[:200],
             "pathExists": Path(r.get("path", "")).is_dir(),
         }
-        for r in load_roots()
+        for r in router_registry.load_roots(REGISTRY_PATH)
     ]
 
 
@@ -203,12 +203,10 @@ def check_readme_freshness(
     루트 하나만, 안 주면 등록된 전체를 확인한다. 파일을 절대 고치지 않는다
     — status가 "stale"이면 호출한 에이전트/사람이 README를 검토할지
     판단한다. 개발자 모드가 꺼져 있으면 에러 dict 하나만 반환(D-057)."""
-    from main import REGISTRY_PATH, load_roots
-
     if not is_developer_mode(REGISTRY_PATH):
         return [_DEV_MODE_OFF]
 
-    roots = load_roots()
+    roots = router_registry.load_roots(REGISTRY_PATH)
     if root_label is not None:
         roots = [r for r in roots if r.get("label") == root_label]
         if not roots:
@@ -232,12 +230,10 @@ def classify_content(text: str) -> dict:
 
     개발자 모드가 꺼져 있으면 분류를 아예 실행하지 않고 에러 dict만
     반환한다(D-057) — 내부 로그도 안 쌓인다."""
-    from main import REGISTRY_PATH, load_roots
-
     if not is_developer_mode(REGISTRY_PATH):
         return _DEV_MODE_OFF
 
-    return router_orchestrator.orchestrate(text, load_roots())
+    return router_orchestrator.orchestrate(text, router_registry.load_roots(REGISTRY_PATH))
 
 
 @server.tool()
@@ -258,12 +254,10 @@ def list_triggered_actions(root_label: str, changed_paths: list[str]) -> list[di
     root_label을 못 찾으면 check_readme_freshness와 동일하게
     label_not_found 신호 하나만 반환. 개발자 모드가 꺼져 있으면 다른
     tool과 동일하게 에러 dict 하나만 반환한다(D-057 게이팅 관례)."""
-    from main import REGISTRY_PATH, load_roots
-
     if not is_developer_mode(REGISTRY_PATH):
         return [_DEV_MODE_OFF]
 
-    roots = [r for r in load_roots() if r.get("label") == root_label]
+    roots = [r for r in router_registry.load_roots(REGISTRY_PATH) if r.get("label") == root_label]
     if not roots:
         return [{"status": "label_not_found", "label": root_label}]
 
@@ -307,12 +301,10 @@ def list_registered_actions(root_label: str | None = None) -> list[dict]:
 
     root_label을 줬는데 못 찾으면 다른 tool과 동일하게 label_not_found.
     개발자 모드가 꺼져 있으면 에러 dict 하나만(D-057 게이팅 관례)."""
-    from main import REGISTRY_PATH, load_roots
-
     if not is_developer_mode(REGISTRY_PATH):
         return [_DEV_MODE_OFF]
 
-    roots = load_roots()
+    roots = router_registry.load_roots(REGISTRY_PATH)
     if root_label is not None:
         roots = [r for r in roots if r.get("label") == root_label]
         if not roots:
@@ -358,12 +350,10 @@ def list_missing_index_folders(root_label: str) -> list[dict]:
     root_label을 못 찾으면 다른 tool과 동일하게 label_not_found 신호.
     개발자 모드가 꺼져 있으면 다른 tool과 동일하게 에러 dict 하나만
     반환한다(D-057 게이팅 관례)."""
-    from main import REGISTRY_PATH, find_index_files, load_roots
-
     if not is_developer_mode(REGISTRY_PATH):
         return [_DEV_MODE_OFF]
 
-    roots = [r for r in load_roots() if r.get("label") == root_label]
+    roots = [r for r in router_registry.load_roots(REGISTRY_PATH) if r.get("label") == root_label]
     if not roots:
         return [{"status": "label_not_found", "label": root_label}]
 
@@ -381,7 +371,7 @@ def list_missing_index_folders(root_label: str) -> list[dict]:
             continue
         if entry.name.startswith(".") or entry.name in _NOISE_DIR_NAMES:
             continue
-        index = find_index_files(entry)
+        index = router_registry.find_index_files(entry)
         has_claude = "claude.md" in index
         has_readme = "readme.md" in index
         if has_claude and has_readme:
@@ -392,5 +382,9 @@ def list_missing_index_folders(root_label: str) -> list[dict]:
     return candidates
 
 
-if __name__ == "__main__":
+def main() -> None:
     server.run(transport="stdio")
+
+
+if __name__ == "__main__":
+    main()

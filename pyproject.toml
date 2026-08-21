@@ -28,12 +28,10 @@ gui = ["PySide6"]
 semantic = ["fastembed==0.8.0"]
 
 # MCP server (ssot_mcp_server.py) for Claude Code/Cursor/other MCP-capable
-# agents. NOTE (O-010, tracked debt): ssot_mcp_server.py still imports
-# load_roots/find_index_files from main.py, which pulls in PySide6 — so
-# right now this extra alone is not enough to actually run the server; you
-# also need `gui` until O-010 decouples that import. Kept as its own extra
-# anyway so the *intent* (mcp server needs the `mcp` package, nothing else)
-# stays visible, and so this becomes a one-line fix once O-010 lands.
+# agents. Genuinely standalone as of D-071 — ssot_mcp_server.py no longer
+# imports anything from main.py (load_roots/find_index_files moved to
+# router_registry.py), so this extra alone (no `gui`) is enough to run the
+# server headlessly.
 mcp = ["mcp"]
 
 # Everything — the GUI app, the CLI, the MCP server, and real semantic
@@ -53,6 +51,9 @@ ssot = "cli:main"
 # The PySide6 viewer (main.py) — only works if installed with the `gui`
 # extra (`pip install ssot-explorer[gui]` / `[all]`).
 ssot-gui = "main:main"
+# The MCP server (ssot_mcp_server.py) — only works if installed with the
+# `mcp` extra. Standalone as of D-071 — does not need `gui`.
+ssot-mcp = "ssot_mcp_server:main"
 
 [tool.setuptools]
 # Flat modules, not a src/ssot_explorer/ package — main.py/router_*.py/
