@@ -2,7 +2,7 @@
 SSOT_Explorer — 최신 설계결정이력 + TODO
 ================================================================
 기준 버전: v1.0
-최종수정: 2026-08-21 (D-071)
+최종수정: 2026-08-21 (D-072)
 원칙: 가장 최근 라운드의 신규 결정(D-번호)과 전체 TODO(H-번호)만 담는다.
       더 오래된 결정은 레거시 파일로 이동.
 
@@ -2237,6 +2237,38 @@ SyncFormatsDialog)에서 뽑아냄
       타겟 유효성) 확인. 전부 통과.
 관련 D-번호: D-069(같은 이관 패턴), D-068, D-070([비고] 부채의 출처),
       D-041/H-003(find_index_files/pick_canonical_index_file 원 결정).
+
+[D-072] CI에 packaging-boundary 잡 신설 — extras 경계 자동 검증(D-070/
+D-071의 수동 venv 검증을 CI로 이관)
+결정: `.github/workflows/tests.yml`에 잡 2개 체제 도입. 기존 `pytest` 잡은
+      의존성 소스를 `requirements.txt`에서 `pip install -e ".[all]" -r
+      requirements-dev.txt`로 교체(pyproject.toml 자체가 실제로 맞는지도
+      이 잡이 매번 같이 검증하게 됨). 신규 `packaging-boundary` 잡은
+      매트릭스로 core("")/gui/semantic/mcp/all 5개 조합을 각각 실제
+      `pip install -e ".[extra]"`로 설치한 뒤 (1) 그 조합에 있으면 안
+      되는 무거운 패키지(`pip show`로 확인, 예: core엔 PySide6/fastembed/
+      mcp 전부 없어야 함)가 진짜 없는지 (2) 기대하는 모듈이 실제로
+      import되는지(`python -c "import ..."`) (3) `ssot --help`가 어느
+      조합에서도 콘솔 인코딩 에러 없이 도는지(core 의존성은 모든 extra에
+      항상 같이 깔리므로) 3가지를 검증.
+이유: D-070/D-071에서 "core만 설치해도 PySide6 없이 동작한다"/"mcp
+      extra만으로 MCP 서버가 단독 동작한다"는 주장을 전부 사람이 손으로
+      새 venv를 만들어 확인했는데, 이 절차가 CI에 없어서 다음에 누가
+      실수로 결합을 다시 만들어도 안 잡히는 상태였음(직전 [비고]에서
+      본인이 직접 "다음 스텝 후보"로 남긴 항목) — 사용자가 "1번 가보자"로
+      바로 착수 확정.
+검증: 로컬에서 CI와 동일한 5개 조합을 실제 새 venv에 설치해 매트릭스
+      로직을 먼저 검증(YAML을 신뢰하고 그냥 푸시하지 않음) — core/gui/
+      semantic/mcp/all 전부 forbidden 패키지 부재 확인 + smoke import
+      성공 + `ssot --help` 정상 출력까지 5개 전부 통과. `pytest` 잡의
+      새 설치 소스(`pip install -e ".[all]" -r requirements-dev.txt`)로도
+      실제로 pytest 297개 전부 통과 확인(requirements.txt 기반 설치와
+      동등함을 재확인) — YAML 자체는 `python -c "import yaml; yaml.safe_
+      load(...)"`로 파싱 가능성만 별도 확인(GitHub Actions 러너 자체는
+      로컬에서 못 돌림, 실제 push 후 Actions 탭에서 최종 확인 필요 —
+      아직 안 함).
+관련 D-번호: D-070, D-071(둘 다 이 잡이 자동화하는 수동 검증의 출처),
+      D-038(기존 CI 신설).
 
 ================================================================
 PART 2 — TODO

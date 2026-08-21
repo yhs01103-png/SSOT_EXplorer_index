@@ -18,5 +18,71 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -r requirements.txt -r requirements-dev.txt
+      # pyproject.toml의 [all] extra로 설치(requirements.txt 대신, D-072) —
+      # 이러면 이 잡 자체가 pyproject.toml이 실제로 맞는지도 매번 검증해준다.
+      # pytest 버전은 requirements-dev.txt 핀 그대로 유지.
+      - run: pip install -e ".[all]" -r requirements-dev.txt
       - run: pytest -q
+
+  # D-072 — "core만 설치해도 PySide6/fastembed/mcp 없이 동작한다"는 주장을
+  # 사람이 손으로 새 venv를 만들어 확인하던 것(D-070/D-071, 매번 수동)을
+  # 자동화. 매트릭스 각 행이 실제 extra 조합 하나를 설치해서 (1) 그 조합에
+  # 있으면 안 되는 무거운 패키지가 진짜로 없는지 (2) 기대하는 모듈이 실제로
+  # import되는지 둘 다 검증한다. requirements.txt는 이 경계를 아예 표현 못
+  # 하므로(전부 필수) 이 잡은 pyproject.toml만 대상으로 한다.
+  packaging-boundary:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: core
+            extra: ""
+            forbidden: "PySide6 fastembed mcp"
+            smoke: "import cli"
+          - name: gui
+            extra: "gui"
+            forbidden: "fastembed mcp"
+            smoke: "import main"
+          - name: semantic
+            extra: "semantic"
+            forbidden: "PySide6 mcp"
+            smoke: "import router_embeddings"
+          - name: mcp
+            extra: "mcp"
+            forbidden: "PySide6 fastembed"
+            smoke: "import ssot_mcp_server"
+          - name: all
+            extra: "all"
+            forbidden: ""
+            smoke: "import cli, main, ssot_mcp_server, router_embeddings"
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: install (${{ matrix.name }})
+        run: |
+          if [ -z "${{ matrix.extra }}" ]; then
+            pip install -e .
+          else
+            pip install -e ".[${{ matrix.extra }}]"
+          fi
+      - name: assert forbidden packages absent
+        if: matrix.forbidden != ''
+        run: |
+          for pkg in ${{ matrix.forbidden }}; do
+            if pip show "$pkg" >/dev/null 2>&1; then
+              echo "FAIL: '$pkg' got installed with extra='${{ matrix.extra }}' — it shouldn't be, that defeats the point of the extras split (D-070/D-071)."
+              exit 1
+            fi
+          done
+      - name: smoke import (${{ matrix.name }})
+        run: python -c "${{ matrix.smoke }}"
+      # core 의존성은 어떤 extra를 골라도 항상 같이 깔리므로, ssot CLI는
+      # 매 조합에서 다 동작해야 한다(콘솔 인코딩 회귀도 여기서 같이 잡힘,
+      # D-070 cp949 --help 크래시 참고).
+      - name: ssot --help works regardless of extra
+        run: ssot --help

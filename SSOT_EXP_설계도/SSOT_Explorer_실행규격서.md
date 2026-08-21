@@ -2,24 +2,47 @@
 SSOT_Explorer — 실행규격서
 ================================================================
 기준 버전: v1.0
-최종수정: 2026-08-14 (D-047 — 개발자 탭 승격까지 반영)
+최종수정: 2026-08-21 (D-071 기준 — [1][3][7][8][9] 갱신, [2][4][5][6]은
+          D-047 시점 그대로 미검증 상태로 남음, 아래 ⚠️ 참고)
 원칙: 지금 코드가 정확히 어떻게 동작하는지만 기록한다. "왜"는 결정이력
       파일(D-번호)에, 계획/예정 항목은 넣지 않는다(구현 완료분만).
 
-⚠️ 이전 판(2026-08-13 표기, 실제로는 v1.0 MVP 시절 그대로 방치)은 레지스트리
-도입 이전(D-006 이전) 상태만 기록하고 있었다 — 이번 판은 main.py 1635줄 +
-router_*.py 4개 파일을 직접 다시 읽고 전면 재작성한 것.
+⚠️ 2026-08-21 부분 갱신 — MCP 서버/CLI/패키징(D-048~D-071, 24개 결정)이
+반영 안 된 채 이 문서가 D-047 시점(2026-08-14)에 멈춰 있던 걸 발견해
+[1](시스템 개요)/[3](컴포넌트 구조)/[7](자동실행)/[8](API/CLI)/[9](실행방법)
+5개 섹션만 지금 코드 기준으로 다시 맞췄다. [2](데이터 구조)/[4](유틸 함수
+목록)/[5](핵심 로직 명세)/[6](화면 구성)은 이번 라운드에서 재검증 안 함 —
+큰 틀은 여전히 유효할 가능성이 높지만(D-048~D-071이 주로 CLI/MCP/패키징
+쪽이라 GUI 내부 로직은 상대적으로 덜 바뀜), H-007(D-037)/이전 판처럼
+main.py를 처음부터 다시 읽는 전면 재작성은 아직 못 함 — 다음 전면 재작성
+때 이 4개 섹션부터 우선 검증할 것.
+
+⚠️(기존) 이전 판(2026-08-13 표기, 실제로는 v1.0 MVP 시절 그대로 방치)은
+레지스트리 도입 이전(D-006 이전) 상태만 기록하고 있었다 — 그 판을 main.py
+1635줄 + router_*.py 4개 파일을 직접 다시 읽고 전면 재작성한 게 D-037/H-007
+판(2026-08-14)이었다.
 
 [1] 시스템 개요
 - 단일 프로세스 데스크톱 GUI 앱(main.py, ~1750줄) + 이 앱과 완전히 독립적으로
-  동작하는 순수함수 모듈 6개(router_classifier.py/router_orchestrator.py/
+  동작하는 순수함수 모듈 8개(router_classifier.py/router_orchestrator.py/
   router_proposals.py/router_watcher.py/router_keyword_registry.py/
-  router_embeddings.py, Qt 미의존 — CLI로도 단독 호출 가능). GUI는 PySide6.
+  router_embeddings.py/router_sync.py(D-068)/router_registry.py(D-069/
+  D-071), Qt 미의존 — CLI로도 단독 호출 가능). GUI는 PySide6.
+- 2026-08-21(D-070/D-071) 추가 — `cli.py`(`ssot` 커맨드, 서브커맨드
+  classify/sync/register/init/list 5개)와 `ssot_mcp_server.py`(MCP 서버,
+  `ssot-mcp` 커맨드, D-048~D-071) 둘 다 GUI 없이 완전히 헤드리스로 동작
+  — main.py를 어떤 경로로도 안 거친다([3][8] 참고). `pyproject.toml`로
+  `pip install`/`pipx install` 가능, 의존성은 core/gui(PySide6)/
+  semantic(fastembed)/mcp(mcp SDK)/all 4+1개 extras로 분리(D-070).
 - 2026-08-14(D-046) 추가 — `dev_console_server.py`(+ `dev_console_static/
   dev_console.html`): 위 앱과는 별도로 켜는 로컬 HTTP 서버(stdlib
   `http.server`만, 새 의존성 없음) — 관리자 패널과 같은 4개 데이터를
   브라우저로 보여준다. main.py에서 자동으로 안 켜짐(수동 실행 전용,
-  [7] 참고) — 아직 스켈레톤 단계(O-010).
+  [7] 참고). **O-010(개발자 콘솔을 main.py에 통합)은 D-057로 해결됨** —
+  MCP 서버(D-048~050)가 "앱을 안 열어도 개발자 데이터를 볼 수 있어야
+  한다"는 같은 목표를 대체 달성해서 웹서빙 전환 계획은 폐기됐고,
+  dev_console_server.py는 스켈레톤 그대로 유지되지만 주 사용 경로는
+  더는 아님(주 경로는 MCP 서버 + 개발자 모드 토글).
 - 목적: (1) 여러 개의 독립된 프로젝트 루트("SSOT 루트")를 하나의 트리에서
   탐색 + 각 폴더의 CLAUDE.md/README.md를 옆에서 바로 읽는 뷰어(Windows
   탐색기 보조/대체) (2) 등록된 루트의 AI 툴별 규칙 파일(CLAUDE.md/AGENTS.md/
@@ -110,22 +133,48 @@ router_*.py 4개 파일을 직접 다시 읽고 전면 재작성한 것.
 - 폴더 구조:
   ```
   Local_APP\SSOT_Explorer\
-    ├── main.py                     (GUI 전체, ~1750줄)
+    ├── main.py                     (GUI 전체, ~1750줄 — 얇은 오케스트레이션
+    │                                 wrapper 다수, 실로직은 router_sync/
+    │                                 router_registry로 이관됨, D-068/D-069)
+    ├── cli.py                      (`ssot` 커맨드, D-070 — classify/sync/
+    │                                 register/init/list 5개 서브커맨드)
+    ├── ssot_mcp_server.py          (MCP 서버, `ssot-mcp` 커맨드, D-048~D-071
+    │                                 — main.py를 어떤 경로로도 안 거침)
     ├── router_classifier.py        (분류 "서버" 두뇌, Qt 미의존)
-    ├── router_orchestrator.py      (5단계 캐스케이드 디스패처)
+    ├── router_orchestrator.py      (6단계 캐스케이드 디스패처)
     ├── router_proposals.py         (제안/승인/취소 이력 + 신뢰 폐루프 +
     │                                 resolve_registry_path 공유 위치)
     ├── router_watcher.py           (InboxWatcher, D-042 실제 구현)
     ├── router_keyword_registry.py  (키워드 candidate→active 자동승급, D-044)
-    ├── router_embeddings.py        (임베딩 스켈레톤, 틀만, D-044/O-009)
-    ├── dev_console_server.py       (로컬 웹콘솔 스켈레톤, D-046/O-010)
+    ├── router_embeddings.py        (로컬 임베딩, fastembed 연결, D-067)
+    ├── router_sync.py              (AI 툴 포맷 동기화 순수 로직, D-068 —
+    │                                 main.py SyncFormatsDialog에서 뽑아냄)
+    ├── router_registry.py          (레지스트리 load/save/add_root +
+    │                                 find_index_files, D-069/D-071 —
+    │                                 main.py에서 뽑아냄, Qt 미의존)
+    ├── dev_console_server.py       (로컬 웹콘솔 스켈레톤, D-046 — O-010은
+    │                                 D-057로 대체 해결됨, [1] 참고)
     ├── dev_console_static\dev_console.html  (위 서버가 서빙하는 정적 페이지)
     ├── LICENSE                     (MIT, D-039)
-    ├── test_main.py / test_router_*.py / test_dev_console_server.py
-    │                                 (pytest, 총 169개)
-    ├── requirements.txt            (PySide6, kiwipiepy, jsonschema)
+    ├── pyproject.toml              (D-070 — `pip install`/`pipx install`용,
+    │                                 [project.scripts]로 ssot/ssot-gui/
+    │                                 ssot-mcp 3개 엔트리포인트, extras 4개)
+    ├── test_main.py / test_router_*.py / test_cli.py /
+    │   test_ssot_mcp_server.py / test_dev_console_server.py
+    │                                 (pytest, 총 297개)
+    ├── requirements.txt            (레거시 — PySide6/kiwipiepy/jsonschema/
+    │                                 mcp/fastembed 전부 필수 취급, exe 빌드용
+    │                                 `python main.py` 개발경로만 아직 이걸
+    │                                 씀. pyproject.toml의 extras 분리와
+    │                                 별개 시스템이지만, CI는 D-072부터
+    │                                 pyproject.toml만 씀 — 드리프트가 CI에
+    │                                 안 걸리는 건 이 파일 하나뿐)
     ├── requirements-dev.txt        (pytest==9.1.1, pyinstaller==6.22.0)
-    ├── .github\workflows\tests.yml (CI, D-038)
+    ├── .github\workflows\tests.yml (CI, D-038 — D-072부터 잡 2개: pytest는
+    │                                 pyproject.toml[all]+requirements-dev.txt
+    │                                 기준, packaging-boundary는 core/gui/
+    │                                 semantic/mcp/all 5개 조합을 매트릭스로
+    │                                 실제 설치해 extras 경계를 자동 검증)
     ├── README.md
     ├── .claude\CLAUDE.md
     └── SSOT_EXP_설계도\
@@ -140,12 +189,14 @@ router_*.py 4개 파일을 직접 다시 읽고 전면 재작성한 것.
   (QDialog)`(백그라운드 재귀 검색), `ManagementPanel(QWidget)`(D-047 —
   구 `ManagementDialog(QDialog)`에서 이름+베이스클래스만 바뀜, 레지스트리+
   스키마검증+Inbox감시로그+키워드레지스트리+세션컨텍스트로그+드리프트 뷰),
-  `SyncFormatsDialog(QDialog)`(포맷별 동기화), `SaveDocumentDialog(QDialog)`
-  (새 문서 저장 라우팅 UI).
-- router_*.py/dev_console_server.py는 GUI에 의존하지 않는 순수 함수/얇은
-  클래스라 CLI/단독 실행으로도 동작(아래 [7][8]) — 단, `dev_console_
-  server.py`는 main.py를 import해서 PySide6까지 딸려온다(알려진 절충,
-  D-046 주석 참고, O-010에서 재논의 예정).
+  `SyncFormatsDialog(QDialog)`(포맷별 동기화 — 실로직은 router_sync.py
+  위임, D-068), `SaveDocumentDialog(QDialog)`(새 문서 저장 라우팅 UI).
+- router_*.py/cli.py/ssot_mcp_server.py는 GUI에 의존하지 않는 순수 함수/
+  얇은 클래스라 CLI/단독 실행으로도 동작(아래 [7][8]). `dev_console_
+  server.py`만 예외로 여전히 main.py를 import해서 PySide6까지 딸려온다
+  (알려진 절충, D-046 주석 참고) — 다만 O-010(개발자 콘솔 통합 목표)
+  자체는 D-057로 이미 대체 해결됐으므로, 이 절충을 굳이 지금 풀 필요는
+  낮음(주 사용 경로가 아니게 됨).
 
 [4] 유틸 함수 목록(주요 것만 — 전체는 main.py 참고)
 
@@ -257,11 +308,16 @@ router_embeddings.py(D-044, 틀만 — O-009):
 - `cosine_similarity(a, b) -> float` / `rank_by_similarity(query_
   embedding, items, embedding_key="embedding", top_k=5, min_
   similarity=0.7) -> list[dict]` — 순수 계산, 지금 완성.
-- `embed_text(text)` / `embed_query_text(text)` — 호출하면 항상
-  `EmbeddingProviderNotConfigured` 예외(프로바이더 미연결, 의도된
-  스켈레톤).
+- `embed_text(text)` / `embed_query_text(text)` — ⚠️D-067로 갱신, 아래는
+  최신 상태(이 섹션 나머지는 D-047 시점 미검증이지만 이 항목은 D-071
+  갱신 중 확인함): 이제 로컬 모델(fastembed,
+  `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`)을 실제로
+  돌려 벡터를 반환. `fastembed` 미설치 환경(core-only install)에서만
+  `EmbeddingProviderNotConfigured`. `DEFAULT_MIN_SIMILARITY=0.5`(재보정,
+  O-016 계속 관찰 중).
 
-dev_console_server.py(D-046, 로컬 웹콘솔 스켈레톤 — O-010):
+dev_console_server.py(D-046, 로컬 웹콘솔 스켈레톤 — O-010은 D-057로
+해결됨, [1] 참고):
 - `DevConsoleHandler(BaseHTTPRequestHandler)` — `/`·`/dev-console`은
   `dev_console_static/dev_console.html`을 그대로 반환, `/api/schema`·
   `/api/watcher-log`·`/api/keyword-registry`·`/api/session-log`는 위
@@ -269,8 +325,8 @@ dev_console_server.py(D-046, 로컬 웹콘솔 스켈레톤 — O-010):
   딕셔너리 1곳에 매핑).
 - `start(host="127.0.0.1", port=8765) -> ThreadingHTTPServer` — 인스턴스만
   생성(blocking 여부는 호출부 책임) / `serve_forever(...)` — CLI 직접
-  실행용(`python dev_console_server.py`). main.py UI에서 자동으로 안
-  켜짐(O-010).
+  실행용(`python dev_console_server.py`). main.py UI에서 자동으로 안 켜짐
+  (수동 실행 전용, [7]/[8-4] 참고).
 
 [5] 핵심 로직 명세
 
@@ -425,52 +481,126 @@ excepthook도 호출. 슬롯(버튼 클릭 등) 안 예외는 이벤트 루프�
      GitHub 쪽 트리거.
 - **`dev_console_server.py`(D-046)는 스케줄러/훅 어디에도 안 걸려 있음**
   — 원할 때 `python dev_console_server.py`로 수동 실행해야만 뜨는 별도
-  프로세스([9] 참고), 자동시작 없음(O-010).
+  프로세스([9] 참고), 자동시작 없음.
+- **MCP 서버**(`ssot_mcp_server.py`, D-048~D-071)도 자동시작 없음 — IDE(예:
+  Claude Code)가 `.mcp.json` 설정을 보고 세션 시작 시 자체적으로
+  `ssot-mcp`(또는 `python ssot_mcp_server.py`)를 실행·유지하는 방식이라,
+  이 레포 안 스케줄러 관점에선 "IDE가 트리거하는 프로세스"로 분류됨(D-038
+  CI 트리거가 GitHub 쪽인 것과 같은 종류의 "레포 밖 트리거").
 
 [8] API/CLI 명세
 - GUI 네트워크 API는 없지만, D-046부터 **로컬 전용**(127.0.0.1) HTTP
   API는 있음(수동 실행 시에만, [7] 참고) — 인증 없음, 외부 노출 안 됨
-  전제(O-010, 재논의 조건 참고).
-- 대신 router 모듈 2개가 독립 CLI로 동작:
+  전제. (예전엔 이 전제를 "O-010, 재논의 조건 참고"로 표기했으나 O-010은
+  D-057로 이미 해결됨 — 아래 참고).
+
+[8-1] `ssot` CLI(cli.py, D-070) — 패키징된 전역 명령
+  - `ssot classify "텍스트" [--registry PATH] [--full] [--json]` — 기본은
+    1단계(구조화 신호, router_classifier.classify_content, 빠름/오프라인).
+    `--full`이면 6단계 전체(router_orchestrator.orchestrate, 시맨틱 포함,
+    콜드 캐시에서 느릴 수 있음 — D-070에서 기본값을 일부러 이렇게
+    뒤집음, 결정이력 D-070 "실측이 계획을 이겼다" 참고). 텍스트가 `-`면
+    stdin에서 읽음.
+  - `ssot register <path> --label <name> [--condition TEXT] [--registry PATH]`
+    — 새 루트 등록(router_registry.add_root, 중복 label이면 실패).
+  - `ssot sync <label> [--formats FMT...] [--force] [--yes] [--registry PATH]`
+    — CLAUDE.md/AGENTS.md/Cursor/Windsurf 동시 갱신(router_sync.sync_root).
+    손으로 수정된 파일이 있으면 대화형 확인(비대화형이면 `--yes`/`--force`
+    필요, [7] 대화형 확인 흐름은 D-070 test_cli.py 참고).
+  - `ssot init [path] [--registry PATH] [--json]` — 등록 후보 폴더만
+    나열, 자동 등록 안 함(P-01).
+  - `ssot list [--registry PATH] [--json]` — 등록된 루트 목록.
+  - 전부 `sys.stdout/stderr.reconfigure(encoding="utf-8")`를 진입 시
+    시도(D-070 — Windows 기본 콘솔 cp949에서 `ssot --help` 자체가
+    UnicodeEncodeError로 죽던 실측 버그의 수정).
+
+[8-2] MCP 서버(ssot_mcp_server.py, D-048~D-071) — tool 6개, 전부 읽기
+전용(P-01)이고 레지스트리 최상위 `developerMode`(기본 True, D-057)가
+꺼져 있으면 전부 에러 dict 하나만 반환:
+  - `list_ssot_roots()` — 등록 루트 요약(label/path/scope/referenceCondition
+    앞 200자/pathExists).
+  - `check_readme_freshness(root_label?, stale_days=30)` — README.md가
+    폴더 안 다른 파일 대비 며칠 뒤처졌는지(mtime 비교).
+  - `classify_content(text)` — router_orchestrator.orchestrate() 그대로
+    재사용(6단계 전체).
+  - `list_triggered_actions(root_label, changed_paths)` /
+    `list_registered_actions(root_label?)` — 레지스트리 `actions`(D-058/
+    D-061) 조회·매칭, 스크립트는 절대 실행 안 함.
+  - `list_missing_index_folders(root_label)` — 등록 루트 바로 밑(depth=1)
+    CLAUDE.md/README.md 둘 다 없는 하위 폴더 후보(노이즈 디렉토리 제외).
+  - D-071부터 main.py를 어떤 이유로도 안 거침(REGISTRY_PATH를 모듈
+    top-level에서 `router_proposals.resolve_registry_path()`로 직접
+    계산, `load_roots`/`find_index_files`는 router_registry.py 호출) —
+    `pip install ssot-explorer[mcp]` 하나만으로 PySide6 없이 단독 동작.
+
+[8-3] router 모듈 2개의 원조 CLI(cli.py 이전부터 있던 저수준 계약,
+여전히 유효 — cli.py의 `ssot classify`가 내부적으로 이걸 그대로 씀):
   - `python router_classifier.py --text "..." [--registry PATH]` —
     구조화 신호(classify_content)만, 더 빠름. `--text -`면 stdin에서 읽음.
     stdout에 JSON(ensure_ascii=True, 인코딩 사고 방지) 후보 목록.
   - `python router_orchestrator.py --text "..." [--registry PATH]
-    [--log-path PATH] [--keyword-registry-path PATH]` — 5단계 캐스케이드
-    전부 거친 최종 결과(권장, SaveDocumentDialog와 동일 로직). 매 실행이
-    `ssot_orchestrator_log.json`(또는 `--log-path`)에 누적 기록되고,
-    키워드 레지스트리도 `ssot_keyword_registry.json`(또는 `--keyword-
-    registry-path`)에 갱신됨.
-  - 용도: Claude Code 세션 중 "이 대화 내용을 규칙으로 정리해줘" 같은
-    요청을 받았을 때, GUI 없이 이 CLI로 목적지 후보를 먼저 조회.
-- `python dev_console_server.py`(D-046) — 위 CLI 2개와 달리 1회성 실행이
-  아니라 `serve_forever()`로 계속 떠있는 로컬 HTTP 서버(`127.0.0.1:8765`
-  기본). 브라우저로 `http://127.0.0.1:8765/`를 열면 개발자 탭과 같은 4개
-  데이터(`/api/schema`, `/api/watcher-log`, `/api/keyword-registry`,
-  `/api/session-log`)를 정적 HTML+JS로 조회. main.py 프로세스와 완전히
-  별개(같이 안 떠도 됨, main.py를 import만 하고 QApplication은 안 띄움).
+    [--log-path PATH] [--keyword-registry-path PATH]` — 6단계 캐스케이드
+    전부 거친 최종 결과. 매 실행이 `ssot_orchestrator_log.json`(또는
+    `--log-path`)에 누적 기록되고, 키워드 레지스트리도 `ssot_keyword_
+    registry.json`(또는 `--keyword-registry-path`)에 갱신됨.
+
+[8-4] `python dev_console_server.py`(D-046) — 1회성 실행이 아니라
+`serve_forever()`로 계속 떠있는 로컬 HTTP 서버(`127.0.0.1:8765` 기본).
+브라우저로 `http://127.0.0.1:8765/`를 열면 개발자 탭과 같은 4개 데이터
+(`/api/schema`, `/api/watcher-log`, `/api/keyword-registry`,
+`/api/session-log`)를 정적 HTML+JS로 조회. main.py 프로세스와 완전히
+별개(같이 안 떠도 됨, main.py를 import만 하고 QApplication은 안 띄움).
+MCP 서버(8-2)가 같은 데이터 대부분을 IDE 안에서 더 간단히 제공하게 된
+뒤로는(D-057) 이게 주 사용 경로는 아님 — [1]/[3] 참고.
 
 [9] 실행 방법
-- 배포용: `dist\SSOT_Explorer.exe` 더블클릭(설치 불필요, 단일 실행파일,
+- **전역 CLI/MCP 설치(D-070, 권장)**: `pipx install .`(이 폴더에서) 또는
+  `pip install ".[all]"`(GUI+시맨틱+MCP 전부) / `pip install .`(core만,
+  `ssot classify`/`register`/`sync`/`init`/`list` 전부 동작, PySide6·
+  fastembed 없음) — 설치 후 `ssot`/`ssot-gui`/`ssot-mcp` 3개 명령이 전역
+  PATH에 생김([8] 참고). extras별 세부는 README.md "설치 — CLI(전역, GUI
+  없이)" 표 참고.
+- 배포용(GUI 단일 실행파일): `dist\SSOT_Explorer.exe` 더블클릭(설치 불필요,
   kiwipiepy 모델 포함 ~152MB).
-- 개발용: `pip install -r requirements.txt` 후 `python main.py`.
+- 개발용(레거시 경로, GUI): `pip install -r requirements.txt` 후
+  `python main.py`. ⚠️ `requirements.txt`는 D-070의 pyproject.toml extras
+  분리 이전 방식 그대로 PySide6/fastembed/mcp를 전부 필수로 설치한다 —
+  core만 써보고 싶으면 이 경로 대신 `pip install .`(위) 사용.
 - exe 재빌드: `pip install -r requirements-dev.txt` 후
   `python -m PyInstaller --noconfirm --windowed --onefile --name
   "SSOT_Explorer" --collect-all kiwipiepy_model --collect-all kiwipiepy
   main.py`(D-034 — `--collect-all` 2개 필수, 없으면 kiwipiepy 모델이 안
   담겨 조용히 정규식 폴백으로 빠짐).
 - 회귀 테스트: `pip install -r requirements-dev.txt` 후 `pytest -q` —
-  169개(test_main.py + test_router_classifier.py + test_router_
-  orchestrator.py + test_router_proposals.py + test_router_watcher.py +
-  test_router_keyword_registry.py(신규, D-044) + test_router_embeddings.py
-  (신규, D-044) + test_dev_console_server.py(신규, D-046)), 전부 실제
-  사용자 레지스트리/QSettings/로그 파일을 안 건드리는 격리된 임시 경로에서
-  실행(autouse fixture — `isolated_orchestrator_state`가 D-044부터
-  `ORCHESTRATION_LOG_PATH`+`KEYWORD_REGISTRY_PATH` 둘 다 격리).
+  297개(test_main.py + test_router_*.py(9개) + test_cli.py(D-070, 23개) +
+  test_ssot_mcp_server.py + test_dev_console_server.py), 전부 실제 사용자
+  레지스트리/QSettings/로그 파일을 안 건드리는 격리된 임시 경로에서 실행
+  (autouse fixture — `isolated_orchestrator_state`가 `ORCHESTRATION_
+  LOG_PATH`+`KEYWORD_REGISTRY_PATH` 둘 다 격리, D-071부터 test_ssot_
+  mcp_server.py의 `isolated_registry`도 `m.REGISTRY_PATH`뿐 아니라
+  `ssot_mcp_server.REGISTRY_PATH`까지 같이 패치 — 안 그러면 mcp_srv가
+  독자적으로 계산한 REGISTRY_PATH가 실제 사용자 레지스트리를 가리킴).
+  **패키징 extras 경계(core만 설치해도 PySide6/fastembed 없이 동작하는지)
+  는 D-072부터 CI가 자동 검증한다**(`packaging-boundary` 잡, 아래) —
+  D-070/D-071 시점엔 새 venv에 수동으로 설치해 확인(`pip install -e .`,
+  `pip install -e ".[mcp]"` 등)했던 걸, 그 수동 절차 그대로 CI 매트릭스로
+  옮김.
 - 개발자 콘솔(선택, D-046): `python dev_console_server.py` 실행 후 브라우저로
   `http://127.0.0.1:8765/` 접속. main.py 실행 여부와 무관하게 단독으로도
-  뜸([8] 참고).
+  뜸([8-4] 참고) — MCP 서버(아래)가 IDE 안에서 같은 데이터 대부분을 더
+  간단히 제공하게 된 뒤로는 주 경로가 아님.
+- MCP 서버(선택, D-048~D-071): IDE의 MCP 설정(예: Claude Code
+  `.mcp.json`)에 `ssot-mcp`(pipx/pip 설치 후) 또는
+  `python ssot_mcp_server.py`를 커맨드로 등록 — stdio transport로 IDE가
+  자동으로 띄우고 끔([7-8] 참고). Claude Code 등록·연결은 실제로 확인됨
+  (O-011, `/mcp`로 `connected · tools` 실측) — Cursor/Windsurf는 아직
+  미등록(필요성 미확인 상태 유지).
 - GitHub 원격(D-038): `origin` = `github.com/yhs01103-png/
   SSOT_EXplorer_index`. `.github/workflows/tests.yml`이 push/PR마다
-  ubuntu-latest에서 위 pytest를 자동 실행(`QT_QPA_PLATFORM=offscreen`으로
-  디스플레이 없이 PySide6 QApplication 인스턴스화, Python 3.12 고정).
+  ubuntu-latest에서 잡 2개를 자동 실행(D-072): `pytest`(`pip install -e
+  ".[all]" -r requirements-dev.txt` 후 `pytest -q`, `QT_QPA_PLATFORM=
+  offscreen`으로 디스플레이 없이 PySide6 QApplication 인스턴스화, Python
+  3.12 고정) + `packaging-boundary`(core/gui/semantic/mcp/all 5개 조합을
+  매트릭스로 각각 실제 설치해서 있으면 안 되는 무거운 패키지가 없는지 +
+  기대하는 모듈이 import되는지 + `ssot --help`가 콘솔 인코딩 에러 없이
+  도는지 검증).
