@@ -250,29 +250,6 @@ def test_primary_source_web_is_preserved(isolated_registry):
     assert m.load_roots()[0]["primarySource"] == "web"
 
 
-def test_init_pointer_marks_web_as_sole_source():
-    entry = {"label": "a", "webArtifactUrl": "https://example.com", "primarySource": "web"}
-    text = m.generate_init_pointer(entry, "CLAUDE.md")
-    assert "유일한 정본" in text
-    assert "⚠️" in text
-
-
-def test_init_pointer_marks_local_as_reference_only():
-    entry = {"label": "a", "webArtifactUrl": "https://example.com", "primarySource": "local"}
-    text = m.generate_init_pointer(entry, "CLAUDE.md")
-    assert "참고, 정본 아님" in text
-    assert "유일한 정본" not in text
-
-
-def test_full_export_pointer_warns_when_web_primary():
-    entry = {
-        "label": "a", "webArtifactUrl": "https://example.com",
-        "primarySource": "web", "referenceCondition": "x",
-    }
-    text = m.generate_full_export_pointer(entry, "CLAUDE.md")
-    assert text.split("## 참조 조건")[0].count("⚠️") >= 1
-
-
 def test_format_registry_text_tags_web_primary():
     entry = {"label": "a", "path": "C:\\a", "primarySource": "web"}
     text = m.format_registry_text([entry])
@@ -329,44 +306,27 @@ def test_resolve_format_target_directory_formats():
     )
 
 
-def test_sync_dialog_creates_directory_format_with_frontmatter(tmp_path):
+def test_sync_dialog_confirms_before_overwriting_hand_edited_file(monkeypatch, tmp_path):
+    """D-068 — router_sync.sync_root()가 "needs-confirmation"을 반환하면
+    다이얼로그가 QMessageBox로 물어보고, Yes면 force=True로 재호출해
+    실제로 덮어써야 한다."""
     entry = {"label": "a", "path": str(tmp_path)}
+    (tmp_path / "CLAUDE.md").write_text("손으로 쓴 내용", encoding="utf-8")
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.Yes))
     dlg = m.SyncFormatsDialog(tmp_path, entry)
-    result = dlg._write_one(".cursor/rules/ssot-index.mdc", force=False)
-    assert result == "ok"
-    target = tmp_path / ".cursor" / "rules" / "ssot-index.mdc"
-    assert target.exists()
-    text = target.read_text(encoding="utf-8")
-    assert text.startswith("---\n")
-    assert "alwaysApply: true" in text
-    assert m.SYNC_MARKER in text
+    dlg.sync_one("CLAUDE.md")
+    assert m.router_sync.SYNC_MARKER in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "ok" in dlg.status_label.text()
 
 
-def test_sync_dialog_windsurf_directory_frontmatter(tmp_path):
+def test_sync_dialog_skips_when_user_declines_overwrite(monkeypatch, tmp_path):
     entry = {"label": "a", "path": str(tmp_path)}
+    (tmp_path / "CLAUDE.md").write_text("손으로 쓴 내용", encoding="utf-8")
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.No))
     dlg = m.SyncFormatsDialog(tmp_path, entry)
-    result = dlg._write_one(".windsurf/rules/ssot-index.md", force=False)
-    assert result == "ok"
-    text = (tmp_path / ".windsurf" / "rules" / "ssot-index.md").read_text(encoding="utf-8")
-    assert "trigger: always_on" in text
-
-
-def test_sync_dialog_legacy_format_not_created_when_missing(tmp_path):
-    entry = {"label": "a", "path": str(tmp_path)}
-    dlg = m.SyncFormatsDialog(tmp_path, entry)
-    result = dlg._write_one(".cursorrules", force=False)
-    assert result == "skip-legacy"
-    assert not (tmp_path / ".cursorrules").exists()
-
-
-def test_sync_dialog_legacy_format_updated_when_already_exists(tmp_path):
-    entry = {"label": "a", "path": str(tmp_path)}
-    existing = tmp_path / ".cursorrules"
-    existing.write_text(f"old ({m.SYNC_MARKER})", encoding="utf-8")
-    dlg = m.SyncFormatsDialog(tmp_path, entry)
-    result = dlg._write_one(".cursorrules", force=False)
-    assert result == "ok"
-    assert "old" not in existing.read_text(encoding="utf-8")
+    dlg.sync_one("CLAUDE.md")
+    assert (tmp_path / "CLAUDE.md").read_text(encoding="utf-8") == "손으로 쓴 내용"
+    assert "skip" in dlg.status_label.text()
 
 
 def test_sync_all_reports_every_format(tmp_path):

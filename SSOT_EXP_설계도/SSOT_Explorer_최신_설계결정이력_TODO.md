@@ -2,7 +2,7 @@
 SSOT_Explorer — 최신 설계결정이력 + TODO
 ================================================================
 기준 버전: v1.0
-최종수정: 2026-08-21 (D-067)
+최종수정: 2026-08-21 (D-068)
 원칙: 가장 최근 라운드의 신규 결정(D-번호)과 전체 TODO(H-번호)만 담는다.
       더 오래된 결정은 레거시 파일로 이동.
 
@@ -2077,6 +2077,49 @@ D-013(SearchWorker dot-폴더 제외 관례).
 관련 D-번호: D-034(오프라인 원칙), D-044(스켈레톤 신설), O-009(이 결정으로
       확정됨), D-063/D-064(같은 날 AI 판단 스켈레톤과 짝을 이루던 결정).
 
+[D-068] router_sync.py 신설 — AI 툴별 규칙 파일 동기화를 GUI(main.py의
+SyncFormatsDialog)에서 뽑아냄
+결정: "멀티리포 개발자 CLI 확장으로 가려면 어떻게 나아가야 하나"를 사용자와
+      논의하다가 발견된 결정적 구멍 — 이 프로젝트의 두 축(분류/동기화) 중
+      **동기화 쪽은 CLI/MCP 어디에도 노출이 안 돼 있었다**(MCP 6개 도구는
+      P-01상 읽기 전용, classify CLI 2개는 classify만 함, 실제 파일 쓰기는
+      SyncFormatsDialog.sync_one()/sync_all() 안에서만 일어났음). 실측해보니
+      FORMAT_TARGETS/generate_* 콘텐츠 생성부는 이미 순수 함수였고, Qt에
+      진짜 묶인 건 손편집 파일 덮어쓰기 확인(QMessageBox.question) 단
+      한 곳뿐이었다 — 그래서 "쓸지 말지 판단"과 "어떻게 확인받을지"를
+      분리: `router_sync.sync_root(root_path, entry, registry_path, formats=,
+      force=)`가 확인이 필요한 포맷은 실제로 안 쓰고 `"needs-confirmation"`
+      만 반환, 호출자가 사용자에게 물어본 뒤 `force=True`로 그 포맷만
+      재호출하는 2단계 흐름으로 재설계. `generate_init_pointer`/
+      `generate_init_readme_md`는 `REGISTRY_PATH`를 모듈 전역으로 읽던 것도
+      `registry_path` 명시 인자로 바꿔 순환import 없이 재사용 가능하게 함.
+      `main.py`는 `generate_init_claude_md(entry)` 등 기존 호출부 시그니처를
+      그대로 유지하는 얇은 wrapper만 남기고(호출부 3곳 — RootInitWorker,
+      루트 추가, export_all_roots — 전부 무수정으로 계속 동작), SyncFormatsDialog
+      는 `_sync()` 하나로 통합해 router_sync.sync_root()를 부르고
+      "needs-confirmation"만 QMessageBox로 처리.
+이유: CLI/MCP 확장의 첫 단계는 패키징(pyproject.toml)이 아니라 이 분리였다
+      — 패키징을 먼저 해도 동기화 자체가 여전히 GUI 전용이면 "앱 없이도
+      sync 가능"이라는 목표에 못 미친다. "메인은 오케스트레이션 호출만"
+      원칙(router_orchestrator.py가 classify 쪽에서 이미 하던 것)을 sync
+      쪽에도 적용.
+검증: 기존 sync 관련 테스트 7개(다이얼로그 인스턴스가 있어야 `_write_one`을
+      부를 수 있던 것들)를 `test_router_sync.py`로 이전 — Qt 위젯 생성 없이
+      `router_sync.write_one_format()`/`generate_init_pointer()`를 직접
+      호출하도록 재작성(이 자체가 "이제 진짜 GUI-프리"라는 걸 테스트
+      구조로도 증명). 신규 13개(needs_confirmation/sync_root 경로) 추가.
+      기존 다이얼로그 레벨 테스트 2개(웹정본 경고, sync_all 리포트)는
+      그대로 통과 확인 + 확인창 수락/거부 두 경로 신규 테스트 2개 추가
+      (QMessageBox.question 몽키패치, 기존 critical/information 몽키패치
+      패턴과 동일). pytest 272개 전부 통과(D-067 257 + 신규 15).
+[비고] 아직 CLI 명령(`ssot sync` 등)이나 패키징(pyproject.toml)은 없다 —
+      이번 라운드는 "GUI 없이 호출 가능한 순수 함수"까지만. 다음 단계는
+      이 함수를 감싸는 argparse/typer 서브커맨드 + entry_points, 그리고
+      PySide6/fastembed를 optional extras로 분리하는 것(O-017).
+관련 D-번호: D-001(뷰어가 핵심), D-024(결정적 테스트 원칙), D-053(CLI
+      계약을 처음 세운 router_classifier/orchestrator와 같은 정신을 sync에
+      적용).
+
 ================================================================
 PART 2 — TODO
 ================================================================
@@ -2386,6 +2429,24 @@ D-067에서 의도적으로 분리해둔 나머지 절반.
 별도 후보 소스?)부터 새로 결정 필요(D-033 additive 원칙과 궤를 같이
 할지 검토).
 관련 D-번호: D-067, O-009(이 결정으로 확정됨).
+
+[O-017] 멀티리포 개발자 CLI 확장으로 가는 다음 단계 — router_sync.py(D-068)
+로 "GUI 없이 호출 가능한 순수 함수"는 갖췄지만, 그 함수를 실제로 앱 없이
+부를 방법(CLI 커맨드)도, 설치 방법(패키징)도 아직 없음.
+임시결정: 미착수. 우선순위(사용자와 논의한 순서):
+  1. pyproject.toml + `[project.scripts] ssot = ...` 엔트리포인트 — 지금은
+     `pip install -r requirements.txt` 후 `python router_orchestrator.py`
+     처럼 스크립트를 직접 실행해야 함, `pip install ssot-explorer`가 안 됨.
+  2. PySide6(GUI)/fastembed(D-067, 임베딩)를 optional extras로 분리 —
+     지금 requirements.txt에 둘 다 필수라, 분류만 쓰고 싶은 CLI 유저도
+     무거운 GUI 프레임워크+ONNX 런타임+모델 다운로드를 강제로 겪음.
+  3. `ssot sync`/`ssot register`/`ssot init` 커맨드 신설 — classify는
+     이미 CLI 계약이 있지만(router_classifier.py/router_orchestrator.py
+     의 `--text`), sync/register/init은 아직 없음. sync는 D-068로 순수
+     함수가 준비됐으니 이제 argparse/typer 래퍼만 얹으면 됨.
+재논의 조건: 1번(패키징)부터 실제 착수하기로 사용자와 합의되면.
+관련 D-번호: D-053(classify CLI 계약 원조), D-068(sync를 GUI에서 뽑아낸
+      전제조건).
 
 ================================================================
 변경이력

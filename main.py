@@ -498,192 +498,31 @@ def save_roots(roots: list[dict]) -> None:
     _LAST_KNOWN_HASH = _hash_bytes(raw)
 
 
-SYNC_MARKER = "SSOT Explorer가 동기화"  # 두 생성 모드(포인터/전체복제) 공통 마커
-
-
-def resolve_claude_md_target(folder: Path) -> Path:
-    """이 폴더의 CLAUDE.md를 어디에 쓰거나 읽어야 하는지 결정한다 — 이미
-    `.claude\\CLAUDE.md`(flutter_App 등의 컨벤션)가 있으면 그쪽, 아니면
-    플랫 루트(새 루트는 기본이 플랫). find_index_files와 같은 두 위치를
-    본다 — 여기서 어긋나면 엉뚱한 곳에 새 파일이 생기고 기존 파일은 안 지켜짐."""
-    nested = folder / ".claude" / "CLAUDE.md"
-    if nested.exists():
-        return nested
-    return folder / "CLAUDE.md"
-
-
-# --------------------------------------------------------- AI 툴 포맷 어댑터
-#
-# 2026-08-13: CLAUDE.md 전용이던 걸 여러 AI 코딩 툴 포맷으로 확장. 같은
-# referenceCondition(레지스트리, 단일 소스)에서 툴별 규칙 파일을 각각 생성 —
-# "여러 AI 툴을 섞어 쓰는데 지침 파일이 서로 어긋난다"는 문제를 정면으로 겨냥.
-#
-# 2026-08-14(D-036, H-006): `.cursorrules`/`.windsurfrules`(플랫 단일파일)가
-# 실제로는 이미 폐기된 레거시 포맷임을 상용비교분석(D-027) 중 발견 — Cursor는
-# `.cursor/rules/*.mdc`(디렉토리, MDC 프론트매터), Windsurf는
-# `.windsurf/rules/*.md`(디렉토리)로 이전됨. 신규 생성은 디렉토리 포맷을
-# 우선하고, 레거시 플랫 파일은 "이미 있을 때만" 계속 동기화(legacy=True) —
-# 새로 만들지는 않되 과거에 만들어둔 파일이 낡은 채로 방치되지도 않게.
-# AGENTS.md는 30개+ 툴이 네이티브 지원하는 1차 공용 포맷으로 재포지셔닝.
-# 포맷을 추가하려면 FORMAT_TARGETS에 한 줄만 추가하면 됨(파일명 + 경로 함수).
-
-FORMAT_TARGETS: dict[str, dict] = {
-    "CLAUDE.md": {
-        "tool": "Claude Code",
-        "resolver": lambda root: resolve_claude_md_target(root),
-    },
-    "AGENTS.md": {
-        "tool": "범용(AGENTS.md 표준 — 30개+ 툴 네이티브 지원)",
-        "resolver": lambda root: root / "AGENTS.md",
-    },
-    ".cursor/rules/ssot-index.mdc": {
-        "tool": "Cursor",
-        "resolver": lambda root: root / ".cursor" / "rules" / "ssot-index.mdc",
-        "frontmatter": "---\ndescription: SSOT 인덱스 포인터\nalwaysApply: true\n---\n\n",
-    },
-    ".windsurf/rules/ssot-index.md": {
-        "tool": "Windsurf",
-        "resolver": lambda root: root / ".windsurf" / "rules" / "ssot-index.md",
-        "frontmatter": "---\ntrigger: always_on\n---\n\n",
-    },
-    ".cursorrules": {
-        "tool": "Cursor(레거시 — 이미 있을 때만 동기화, 신규 생성 안 함)",
-        "resolver": lambda root: root / ".cursorrules",
-        "legacy": True,
-    },
-    ".windsurfrules": {
-        "tool": "Windsurf(레거시 — 이미 있을 때만 동기화, 신규 생성 안 함)",
-        "resolver": lambda root: root / ".windsurfrules",
-        "legacy": True,
-    },
-}
-
-_RESULT_ICONS = {
-    "ok": "✅",
-    "skip": "⏭ 건너뜀(손편집 보호)",
-    "skip-legacy": "⏭ 건너뜀(레거시, 신규생성 안 함)",
-    "fail": "❌ 실패",
-}
-
-
-def resolve_format_target(root: Path, format_name: str) -> Path:
-    return FORMAT_TARGETS[format_name]["resolver"](root)
-
-
-def generate_init_pointer(entry: dict, format_name: str) -> str:
-    """평소 모드 — 순수 포인터. 어떤 포맷(CLAUDE.md/AGENTS.md/Cursor/Windsurf 등)
-    이든 내용은 동일 — 파일명만 다르다. 레지스트리가 곧 SSOT라 내용을 여기
-    박아넣지 않는다(중복 없음)."""
-    today = datetime.now().strftime("%Y-%m-%d")
-    has_readme_cond = bool((entry.get("readmeReferenceCondition") or "").strip())
-    readme_line = (
-        "\nREADME.md도 있다면 그 참고조건도 같은 항목에 있다.\n"
-        if has_readme_cond else ""
-    )
-    web_url = (entry.get("webArtifactUrl") or "").strip()
-    is_web_primary = entry.get("primarySource") == "web"
-    # 2026-08-13(O-001): "정본"이라는 단어는 실제로 웹이 유일한 정본일 때만
-    # 붙인다 — 예전엔 webArtifactUrl만 있으면 무조건 "정본"이라 적어서, 로컬
-    # referenceCondition이 여전히 메인인 경우까지 오해를 줄 수 있었다.
-    if web_url and is_web_primary:
-        web_line = (
-            f"⚠️ 이 루트는 웹 아티팩트가 유일한 정본이다(로컬 참조조건은 참고용): "
-            f"{web_url}\n"
-        )
-    elif web_url:
-        web_line = f"웹 아티팩트(참고, 정본 아님): {web_url}\n"
-    else:
-        web_line = ""
-    return (
-        f"# {entry['label']} — SSOT 인덱스 ({format_name} init — {SYNC_MARKER}, "
-        "손으로 고치지 말 것)\n\n"
-        "이 폴더는 SSOT 레지스트리에 등록되어 있다. 실제 참조조건/인덱싱 규칙은 "
-        "항상 아래 레지스트리 파일에서 확인한다 — 이 파일은 포인터일 뿐, 내용을 "
-        "여기 복붙하지 않는다. CLAUDE.md/AGENTS.md/Cursor/Windsurf 등 여러 AI 툴 "
-        "포맷 전부 같은 레지스트리 항목에서 나온 동일 내용이다 — 툴마다 따로 안 "
-        "써도 됨.\n\n"
-        f"레지스트리: `{REGISTRY_PATH}`\n"
-        f"이 폴더의 항목: label == \"{entry['label']}\"\n"
-        f"{web_line}"
-        f"{readme_line}\n"
-        "---\n"
-        f"동기화: {today} (SSOT Explorer)\n"
-    )
-
-
-def generate_full_export_pointer(entry: dict, format_name: str) -> str:
-    """전체 내보내기 모드 — 참조조건 전문을 그대로 박아넣는다(레지스트리/앱
-    없이도 그 AI 툴이 그대로 읽을 수 있게). 포맷 무관 동일 내용."""
-    today = datetime.now().strftime("%Y-%m-%d")
-    condition = (entry.get("referenceCondition") or "").strip() or "(비어있음)"
-    readme_condition = (entry.get("readmeReferenceCondition") or "").strip()
-    readme_section = (
-        f"\n## README.md 참고 조건\n\n{readme_condition}\n" if readme_condition else ""
-    )
-    web_url = (entry.get("webArtifactUrl") or "").strip()
-    is_web_primary = entry.get("primarySource") == "web"
-    web_section = ""
-    web_warning = ""
-    if web_url and is_web_primary:
-        web_section = f"\n## 웹 아티팩트\n\n**유일한 정본**: {web_url}\n"
-        # O-001: 로컬이 정본이 아닌데 "완전판"으로 내보내면 스냅샷이 금방
-        # 낡아 오해를 줄 수 있어 경고를 맨 앞에 박아둔다.
-        web_warning = (
-            "⚠️ 이 루트는 웹 아티팩트가 정본입니다 — 아래 참조 조건은 내보내기 "
-            f"시점({today}) 로컬 스냅샷일 뿐이며 최신이 아닐 수 있습니다. 최신 "
-            f"내용은 반드시 위 URL에서 확인하세요.\n\n"
-        )
-    elif web_url:
-        web_section = f"\n## 웹 아티팩트\n\n참고(정본 아님): {web_url}\n"
-    return (
-        f"# {entry['label']} — SSOT 인덱스 ({format_name} 전체 내보내기 — "
-        f"{SYNC_MARKER}, 손으로 고치지 말 것)\n\n"
-        "이 파일은 SSOT 레지스트리에서 전체 내보내기(export)로 생성됐다 — 레지스트리나 "
-        "SSOT Explorer 없이도 이 파일 하나만으로 완결된다.\n\n"
-        f"{web_warning}"
-        "## 참조 조건\n\n"
-        f"{condition}\n"
-        f"{readme_section}"
-        f"{web_section}\n"
-        "---\n"
-        f"내보내기: {today} (SSOT Explorer)\n"
-    )
+# AI 툴별 규칙 파일 동기화(FORMAT_TARGETS/generate_*/SYNC_MARKER 등)는
+# router_sync.py로 이관됨(D-068, "메인은 오케스트레이션 호출만" 원칙 —
+# router_orchestrator.py가 classify 쪽에서 이미 하던 분리를 sync 쪽에도
+# 적용). 이 파일에서 GUI가 필요로 하는 이름들은 아래에서 재노출만 한다
+# (호출부를 전부 안 고치기 위한 얇은 별칭 — 새 코드는 router_sync를 직접
+# 쓸 것).
+import router_sync
+from router_sync import (
+    FORMAT_TARGETS,
+    SYNC_MARKER,
+    resolve_claude_md_target,
+    resolve_format_target,
+)
 
 
 def generate_init_claude_md(entry: dict) -> str:
-    """하위호환 wrapper — CLAUDE.md는 generate_init_pointer의 특수 케이스."""
-    return generate_init_pointer(entry, "CLAUDE.md")
-
-
-def generate_init_readme_md(entry: dict) -> str:
-    """README도 평소엔 순수 포인터 — README 참고조건은 레지스트리에 있다."""
-    today = datetime.now().strftime("%Y-%m-%d")
-    return (
-        f"# {entry['label']} (init — {SYNC_MARKER}, 손으로 고치지 말 것)\n\n"
-        "이 폴더의 README 참고조건은 SSOT 레지스트리(`readmeReferenceCondition`)에 "
-        "있다 — 여기 복붙하지 않는다.\n\n"
-        f"레지스트리: `{REGISTRY_PATH}`\n"
-        f"이 폴더의 항목: label == \"{entry['label']}\"\n\n"
-        "---\n"
-        f"동기화: {today} (SSOT Explorer)\n"
-    )
-
-
-def generate_full_export_readme_md(entry: dict) -> str:
-    """전체 내보내기 모드의 README — readmeReferenceCondition 전체를 그대로 박아넣는다."""
-    today = datetime.now().strftime("%Y-%m-%d")
-    condition = (entry.get("readmeReferenceCondition") or "").strip() or "(비어있음)"
-    return (
-        f"# {entry['label']} (전체 내보내기 — {SYNC_MARKER}, 손으로 고치지 말 것)\n\n"
-        f"{condition}\n\n"
-        "---\n"
-        f"내보내기: {today} (SSOT Explorer)\n"
-    )
+    return router_sync.generate_init_claude_md(entry, REGISTRY_PATH)
 
 
 def generate_full_export_claude_md(entry: dict) -> str:
-    """하위호환 wrapper — CLAUDE.md는 generate_full_export_pointer의 특수 케이스."""
-    return generate_full_export_pointer(entry, "CLAUDE.md")
+    return router_sync.generate_full_export_claude_md(entry)
+
+
+def generate_full_export_readme_md(entry: dict) -> str:
+    return router_sync.generate_full_export_readme_md(entry)
 
 
 def format_registry_text(roots: list[dict]) -> str:
@@ -1153,47 +992,43 @@ class SyncFormatsDialog(QDialog):
         close_btn.clicked.connect(self.accept)
         layout.addWidget(close_btn)
 
-    def _write_one(self, format_name: str, force: bool) -> str:
-        info = FORMAT_TARGETS[format_name]
-        target = info["resolver"](self.root_path)
-        if info.get("legacy") and not target.exists():
-            return "skip-legacy"  # 레거시 포맷은 이미 있을 때만 갱신, 신규 생성 안 함
-        if target.exists() and not force:
-            existing = target.read_text(encoding="utf-8", errors="replace")
-            if SYNC_MARKER not in existing:
-                return "skip"
-        try:
-            target.parent.mkdir(parents=True, exist_ok=True)  # .cursor/rules 등 신규 디렉토리
-            body = info.get("frontmatter", "") + generate_init_pointer(self.entry, format_name)
-            target.write_text(body, encoding="utf-8")
-            return "ok"
-        except OSError:
-            return "fail"
+    def _sync(self, formats: list[str]):
+        """router_sync.sync_root()를 부르고, "needs-confirmation"이 나온
+        포맷만 이 자리에서 QMessageBox로 물어본 뒤 force=True로 재호출한다
+        (D-068 — 실제 쓰기 판단/생성 로직은 router_sync에 있고, 여기는
+        "어떻게 확인받을지"만 안다 — GUI만의 책임)."""
+        first = router_sync.sync_root(self.root_path, self.entry, REGISTRY_PATH, formats=formats)
+        needs_confirm = [f for f, r in first.items() if r == "needs-confirmation"]
+        confirmed = []
+        for fmt in needs_confirm:
+            target = router_sync.resolve_format_target(self.root_path, fmt)
+            resp = QMessageBox.question(
+                self, "덮어쓰기 확인",
+                f"{target}\n\n이미 있고 자동생성 표식이 없습니다 — 손으로 쓴 "
+                "내용일 수 있습니다. 그래도 덮어쓸까요?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if resp == QMessageBox.Yes:
+                confirmed.append(fmt)
+        if confirmed:
+            second = router_sync.sync_root(
+                self.root_path, self.entry, REGISTRY_PATH, formats=confirmed, force=True
+            )
+            first.update(second)
+        for fmt in needs_confirm:
+            if fmt not in confirmed:
+                first[fmt] = "skip"  # 사용자가 거부 — "건너뜀"으로 표시(취소와 동일 취급)
+        return first
 
     def sync_one(self, format_name: str):
-        target = resolve_format_target(self.root_path, format_name)
-        force = False
-        if target.exists():
-            existing = target.read_text(encoding="utf-8", errors="replace")
-            if SYNC_MARKER not in existing:
-                resp = QMessageBox.question(
-                    self, "덮어쓰기 확인",
-                    f"{target}\n\n이미 있고 자동생성 표식이 없습니다 — 손으로 쓴 "
-                    "내용일 수 있습니다. 그래도 덮어쓸까요?",
-                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-                )
-                if resp != QMessageBox.Yes:
-                    self.status_label.setText(f"{format_name}: 건너뜀(취소)")
-                    return
-                force = True
-        result = self._write_one(format_name, force)
-        self.status_label.setText(f"{_RESULT_ICONS[result]} {format_name}: {result} → {target}")
+        results = self._sync([format_name])
+        target = router_sync.resolve_format_target(self.root_path, format_name)
+        result = results[format_name]
+        self.status_label.setText(f"{router_sync.RESULT_ICONS[result]} {format_name}: {result} → {target}")
 
     def sync_all(self):
-        lines = []
-        for fmt in FORMAT_TARGETS:
-            result = self._write_one(fmt, force=False)
-            lines.append(f"{fmt}: {_RESULT_ICONS[result]}")
+        results = self._sync(list(FORMAT_TARGETS))
+        lines = [f"{fmt}: {router_sync.RESULT_ICONS[result]}" for fmt, result in results.items()]
         self.status_label.setText("\n".join(lines))
 
     def mark_reviewed(self):
