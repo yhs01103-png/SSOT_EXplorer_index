@@ -2,7 +2,7 @@
 SSOT_Explorer — 최신 설계결정이력 + TODO
 ================================================================
 기준 버전: v1.0
-최종수정: 2026-08-21 (D-068)
+최종수정: 2026-08-21 (D-069)
 원칙: 가장 최근 라운드의 신규 결정(D-번호)과 전체 TODO(H-번호)만 담는다.
       더 오래된 결정은 레거시 파일로 이동.
 
@@ -2119,6 +2119,34 @@ SyncFormatsDialog)에서 뽑아냄
 관련 D-번호: D-001(뷰어가 핵심), D-024(결정적 테스트 원칙), D-053(CLI
       계약을 처음 세운 router_classifier/orchestrator와 같은 정신을 sync에
       적용).
+
+[D-069] router_registry.py 신설 — load_roots/save_roots/RegistryConflictError
+를 GUI에서 뽑아냄(router_sync.py/D-068과 같은 패턴)
+결정: main.py에 있던 레지스트리 로드/저장(원자적 쓰기+낙관적 동시성 제어
+      포함)이 Qt에 묶인 건 하나도 없었다(순수 JSON I/O) — 그런데도 main.py
+      안에 있어서 PySide6를 안 깔면 임포트조차 안 됐다. router_registry.py로
+      이관, `_LAST_KNOWN_HASH`(모듈 전역 변수 하나)는 `registry_path`별로
+      추적하는 dict로 일반화(CLI가 한 프로세스에서 여러 레지스트리를 다룰
+      수 있고, 테스트도 매번 다른 tmp_path를 쓰므로 경로별 분리가 더 맞음).
+      `add_root(entry, registry_path)` 신규(register 커맨드 전용, 중복
+      label이면 ValueError). main.py는 `load_roots()`/`save_roots(roots)`/
+      `RegistryConflictError`를 기존 시그니처 그대로 유지하는 얇은 wrapper만
+      남김 — 호출부 전부(add_root/remove_root/mark_reviewed 등) 무수정.
+이유: D-068 직후 "멀티리포 CLI 확장"을 실제로 설계하다가 발견 — sync는
+      GUI-프리가 됐는데 register가 여전히 GUI 전용이면 `ssot register`
+      자체가 불가능함.
+검증: 기존 레지스트리 테스트 20여 개(`isolated_registry` 픽스처, load_
+      roots/save_roots/충돌감지/스키마검증 등)는 main.py가 위임만 하는
+      구조라 무수정으로 계속 통과 — 다만 3개는 `m._hash_bytes(...)`를 직접
+      호출해 해시를 셔딩하던 낡은 방식이라(D-069 이전 내부 구현 세부에
+      의존) `m.load_roots()` 실호출로 기준선을 잡도록 수정. `test_router_
+      registry.py` 신규(add_root 2개, GUI 무의존 증명 1개 — router_
+      registry.py를 ast로 파싱해 PySide6 import가 없는지 직접 확인, 서로
+      다른 registry_path가 충돌상태를 안 섞는지 1개). pytest 272개 전부
+      통과(D-068 272와 동일 — 이관만이라 순증감 없음, test_router_registry
+      4개 신규 - test_main.py 정리 상쇄 없음이라 실제로는 +4).
+관련 D-번호: D-024, D-068(같은 패턴), D-055/D-043(atomic_write_json 위임
+      원조).
 
 ================================================================
 PART 2 — TODO

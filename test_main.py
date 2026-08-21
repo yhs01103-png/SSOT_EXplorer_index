@@ -162,7 +162,7 @@ def test_save_preserves_shared_docs_and_comment(isolated_registry):
         }),
         encoding="utf-8",
     )
-    m._LAST_KNOWN_HASH = m._hash_bytes(isolated_registry.read_bytes())
+    m.load_roots()  # D-069 이전에는 해시를 직접 셔드했는데, 이제 해시 추적은 router_registry 내부에 있어 실제 load_roots() 호출로 기준선을 잡는다(실제 사용과 동일한 경로).
     m.save_roots([{"label": "a", "path": "C:\\a"}])
     payload = json.loads(isolated_registry.read_text(encoding="utf-8"))
     assert payload["sharedDocs"] == [{"label": "doc", "path": "C:\\doc.md"}]
@@ -819,7 +819,7 @@ def test_load_relations_defaults_bidirectional_true(isolated_registry):
         }),
         encoding="utf-8",
     )
-    m._LAST_KNOWN_HASH = m._hash_bytes(isolated_registry.read_bytes())
+    m.load_roots()  # D-069 이전에는 해시를 직접 셔드했는데, 이제 해시 추적은 router_registry 내부에 있어 실제 load_roots() 호출로 기준선을 잡는다(실제 사용과 동일한 경로).
     relations = m.load_relations()
     assert relations[0]["bidirectional"] is True
 
@@ -834,7 +834,7 @@ def test_save_roots_preserves_relations(isolated_registry):
         }),
         encoding="utf-8",
     )
-    m._LAST_KNOWN_HASH = m._hash_bytes(isolated_registry.read_bytes())
+    m.load_roots()  # D-069 이전에는 해시를 직접 셔드했는데, 이제 해시 추적은 router_registry 내부에 있어 실제 load_roots() 호출로 기준선을 잡는다(실제 사용과 동일한 경로).
     m.save_roots([{"label": "a", "path": "C:\\a"}])
     payload = json.loads(isolated_registry.read_text(encoding="utf-8"))
     assert payload["relations"] == [{"fromPath": "C:\\x", "toPath": "C:\\y", "reason": "보존 확인용"}]

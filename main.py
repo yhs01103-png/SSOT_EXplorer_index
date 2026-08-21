@@ -20,7 +20,6 @@ import os
 import shutil
 import webbrowser
 import json
-import hashlib
 import logging
 import subprocess
 import traceback
@@ -152,74 +151,17 @@ INDEX_FILENAMES = {"claude.md", "readme.md"}
 # 항상 레지스트리와 일치해서 이중관리 위험이 원래 우려와 달리 발생하지 않음).
 # referenceCondition은 앱 UI가 아니라 Claude Code가 대화 중에 직접 채운다.
 
-class RegistryConflictError(Exception):
-    """save_roots()가 쓰기 직전 재확인한 디스크 해시가, 마지막으로 읽은 시점의
-    해시(_LAST_KNOWN_HASH)와 다를 때. OneDrive로 여러 기기에 동기화되는
-    레지스트리라 이 세션이 모르는 사이 다른 기기/세션이 먼저 저장했을 수
-    있다는 뜻 — 조용히 덮어쓰지 않고 여기서 멈춘다(낙관적 동시성 제어,
-    2026-08-13. 락 대신 캐시: 이 앱은 단일 프로세스·단일 스레드라 프로세스
-    내부 경합은 없고, 진짜 위험은 외부(다른 기기)라 매번 잠그기보다
-    '마지막으로 확인한 값'을 기억해뒀다가 쓰기 직전에만 비교하는 쪽이 더
-    맞는 해법)."""
+# 레지스트리 로드/저장(RegistryConflictError, load_roots, save_roots)은
+# router_registry.py로 이관됨(D-069, router_sync.py/D-068과 같은 이유 —
+# "메인은 오케스트레이션 호출만"). 아래는 기존 호출부(`load_roots()`,
+# `save_roots(roots)`, `RegistryConflictError`)를 안 고치기 위한 얇은 별칭.
+import router_registry
 
-
-def _hash_bytes(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
-
-
-def _current_registry_hash() -> str:
-    if not REGISTRY_PATH.exists():
-        return ""
-    try:
-        return _hash_bytes(REGISTRY_PATH.read_bytes())
-    except OSError:
-        return ""
-
-
-_LAST_KNOWN_HASH: str = ""  # load_roots/save_roots가 성공할 때마다 갱신하는 기준선
+RegistryConflictError = router_registry.RegistryConflictError
 
 
 def load_roots() -> list[dict]:
-    global _LAST_KNOWN_HASH
-    if not REGISTRY_PATH.exists():
-        _LAST_KNOWN_HASH = ""
-        return []
-    try:
-        raw = REGISTRY_PATH.read_bytes()
-    except OSError:
-        return []
-    _LAST_KNOWN_HASH = _hash_bytes(raw)
-    try:
-        data = json.loads(raw.decode("utf-8-sig"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
-        return []
-    roots = data.get("roots", [])
-    for r in roots:
-        r.setdefault("referenceCondition", "")
-        r.setdefault("readmeReferenceCondition", "")
-        r.setdefault("webArtifactUrl", "")
-        # 2026-08-13: 프로즈+경량 스키마 하이브리드(Backstage catalog-info.yaml
-        # 방식) — 도구가 검증 가능한 필드만 얇게. 나머지(referenceCondition 등)는
-        # 계속 자유 프로즈.
-        r.setdefault("owner", "")
-        r.setdefault("lastReviewed", "")
-        r.setdefault("scope", "")
-        # 2026-08-13: 영향범위 전파(안1 — 명시적 의존성 선언). 이 루트가 실제로
-        # 구조적으로 의존하는 sharedDocs label 목록.
-        r.setdefault("dependsOnDocs", [])
-        # 2026-08-13: Lazzy_App_OS_Monorepo 이식(O-001) — 참조조건이 로컬
-        # referenceCondition이 아니라 webArtifactUrl 자체인 루트 표시.
-        # "local"(기본) = 지금처럼 로컬이 메인, "web" = 로컬은 참고용
-        # 스냅샷일 뿐 웹 아티팩트가 유일한 정본(Lazzy가 결정이력 문서 2개를
-        # 이 방식으로 전환한 사례 — 문서가 너무 커지거나/가독성이 떨어질 때).
-        r.setdefault("primarySource", "local")
-        # 2026-08-17(D-058, O-013): "액션 레지스트리" — 이 루트 밑에서 특정
-        # 경로가 바뀌면 실행할 만한 스크립트를 트리거 조건+정책과 함께
-        # 선언. 이 앱/MCP 서버는 매치되는 항목을 신호로만 반환하고 실제
-        # 실행은 절대 안 함(P-01 그대로) — ssot_mcp_server.list_triggered_
-        # actions() 참고.
-        r.setdefault("actions", [])
-    return roots
+    return router_registry.load_roots(REGISTRY_PATH)
 
 
 def load_shared_docs() -> list[dict]:
@@ -448,54 +390,7 @@ def format_schema_validation_text(errors: list[str]) -> str:
 
 
 def save_roots(roots: list[dict]) -> None:
-    """roots만 갱신 — sharedDocs/$comment 등 다른 최상위 키는 기존 파일에서
-    그대로 보존한다(병합 저장, 2026-08-13 수정 — 예전엔 통째로 덮어써서
-    sharedDocs가 저장할 때마다 사라지는 버그가 있었음).
-
-    2026-08-13 추가 — 원자적 쓰기 + 낙관적 동시성 제어(레지스트리가
-    OneDrive로 여러 기기에 동기화되는 걸 감안):
-    - 원자적 쓰기: 같은 폴더의 임시파일에 먼저 쓰고 os.replace()로 치환.
-      os.replace()는 Windows/POSIX 둘 다 원자적이라, 쓰다가 죽어도(정전,
-      OneDrive 충돌 등) 절반만 쓰인 JSON이 실제 파일명으로 남는 일이 없다.
-      2026-08-17(D-055, H-011) — 이 저수준 temp+replace 시퀀스는
-      router_proposals.atomic_write_json()과 그대로 중복이었어서(D-043
-      코드리뷰 발견) 그쪽으로 위임 — main.py는 이제 이 파일 고유 로직인
-      아래 동시성 검사만 담당한다.
-    - 낙관적 동시성 제어: 쓰기 직전 디스크의 '현재' 해시를 다시 재서
-      _LAST_KNOWN_HASH(마지막으로 load_roots/save_roots가 확인한 값)와
-      비교한다. 다르면 그 사이 다른 기기/세션이 먼저 저장한 것 —
-      RegistryConflictError를 던져서 그 위에 조용히 덮어쓰는 걸 막는다.
-      (OS 파일락은 안 씀 — 이 앱은 단일 프로세스라 프로세스 내부 경합은
-      없고, 진짜 리스크는 프로세스 밖/기기 밖이라 락보다 이 비교가 맞다.)
-    """
-    global _LAST_KNOWN_HASH
-    current_hash = _current_registry_hash()
-    if _LAST_KNOWN_HASH and current_hash != _LAST_KNOWN_HASH:
-        raise RegistryConflictError(
-            "레지스트리가 마지막으로 읽은 이후 다른 곳에서 바뀌었습니다. "
-            "덮어쓰지 않고 중단합니다 — 새로고침 후 다시 시도하세요."
-        )
-
-    payload = {}
-    if REGISTRY_PATH.exists():
-        try:
-            payload = json.loads(REGISTRY_PATH.read_text(encoding="utf-8-sig"))
-        except (OSError, json.JSONDecodeError):
-            payload = {}
-    payload.setdefault(
-        "$comment",
-        "SSOT 인덱싱 루트 레지스트리 — 단일 소스. main.py(SSOT Explorer), "
-        "ssot_index_drift_check.py, ssot_index_reminder.py가 전부 이 파일을 "
-        "읽는다. referenceCondition은 각 루트 CLAUDE.md(init)로 동기화되는 "
-        "실제 규칙 텍스트, dependsOnDocs는 sharedDocs 의존관계(영향범위 전파) "
-        "— 전부 Claude Code가 대화 중 직접 채운다.",
-    )
-    payload.setdefault("sharedDocs", [])
-    payload.setdefault("relations", [])  # D-028 — 병합 보존(sharedDocs와 동일 이유)
-    payload["roots"] = roots
-
-    raw = router_proposals.atomic_write_json(REGISTRY_PATH, payload)
-    _LAST_KNOWN_HASH = _hash_bytes(raw)
+    router_registry.save_roots(roots, REGISTRY_PATH)
 
 
 # AI 툴별 규칙 파일 동기화(FORMAT_TARGETS/generate_*/SYNC_MARKER 등)는
