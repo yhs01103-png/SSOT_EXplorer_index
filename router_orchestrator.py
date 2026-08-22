@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -61,6 +62,12 @@ import router_proposals
 ORCHESTRATION_LOG_PATH = Path.home() / ".claude" / "scripts" / "ssot_orchestrator_log.json"
 README_FILENAME = "readme.md"
 PROSE_MATCH_WEIGHT = 0.4  # D-033: 프로즈검색 신호가 additive로 기여하는 최대 가중치
+
+
+def _elapsed_ms(started_at: float) -> float:
+    """2026-08-23 — 개발자 탭 벤치마크 뷰(D-076)용 스테이지별 소요시간.
+    `time.perf_counter()` 기준(단조 증가, 시스템 시계 변경에 안 흔들림)."""
+    return round((time.perf_counter() - started_at) * 1000, 2)
 
 
 def _find_readme(root_path: Path) -> Path | None:
@@ -112,7 +119,7 @@ def orchestrate(
         registry.py 참고).
       4단계 시맨틱(임베딩) — 아직 틀만(router_embeddings.py, O-009) —
         프로바이더 미연결이라 항상 스킵으로 기록되고 결과엔 영향 없음."""
-    steps = []
+    steps: list[dict] = []
     text_words = router_classifier.tokenize(text)
 
     # 0단계(신호 아님, 준비) — 레지스트리 텍스트 + README 실시간 스캔을
@@ -128,13 +135,15 @@ def orchestrate(
     idf = router_classifier.compute_idf(corpora)
 
     # 1단계 — 구조화 신호(공유 idf 사용)
+    _t = time.perf_counter()
     structured = router_classifier.classify_content(text, roots, idf=idf)
-    steps.append({"stage": "structured", "candidateCount": len(structured)})
+    steps.append({"stage": "structured", "candidateCount": len(structured), "elapsedMs": _elapsed_ms(_t)})
     merged: dict[str, dict] = {
         c["rootLabel"]: {**c, "signals": list(c["signals"])} for c in structured
     }
 
     # 2단계 — 프로즈 검색(같은 idf로 가중치, additive 병합 — floor 아님)
+    _t = time.perf_counter()
     prose_hit_count = 0
     for r in roots:
         label = r["label"]
@@ -163,13 +172,14 @@ def orchestrate(
                 "reason": f"README 검색 겹침(IDF가중, {readme_path}): {preview}",
                 "signals": ["프로즈검색"],
             }
-    steps.append({"stage": "prose_scan", "candidateCount": prose_hit_count})
+    steps.append({"stage": "prose_scan", "candidateCount": prose_hit_count, "elapsedMs": _elapsed_ms(_t)})
 
     # 3.5단계(D-044) — 키워드 레지스트리: 실제 매치에 쓰인 키워드만(모든
     # 단어가 아니라 matchedKeywords — "판단에 실제로 쓰인 단어"만) 관측
     # 기록에 반영. record 직후 바로 승급 체크하는 건 Lazzy 원본과 동일 —
     # 이번 실행에서 임계값을 막 넘겼으면 이번 실행 자체에서 바로 active로
     # 취급돼 점수 보너스가 붙는다.
+    _t = time.perf_counter()
     all_matched: set[str] = set()
     for cand in merged.values():
         all_matched.update(cand.get("matchedKeywords", []))
@@ -190,42 +200,48 @@ def orchestrate(
         "stage": "keyword_registry",
         "promotedCount": len(promoted),
         "bonusAppliedCount": bonus_applied,
+        "elapsedMs": _elapsed_ms(_t),
     })
 
     # 4단계(D-044, O-009) — 시맨틱(임베딩) 매칭: 아직 틀만(router_embeddings.py)
     # — 프로바이더가 안 붙어 있으면 항상 스킵으로 기록만 하고 결과엔 영향
     # 없음. 나중에 프로바이더가 붙으면 이 자리에서 실제 랭킹 신호로 확장.
+    _t = time.perf_counter()
     try:
         router_embeddings.embed_query_text(text)
-        steps.append({"stage": "semantic", "skipped": False})
+        steps.append({"stage": "semantic", "skipped": False, "elapsedMs": _elapsed_ms(_t)})
     except router_embeddings.EmbeddingProviderNotConfigured:
-        steps.append({"stage": "semantic", "skipped": True, "reason": "provider_not_configured"})
+        steps.append({"stage": "semantic", "skipped": True, "reason": "provider_not_configured", "elapsedMs": _elapsed_ms(_t)})
 
     # 4.5단계(D-063, O-014) — 실제 AI 판단: 아직 틀만(router_ai_judgment.py)
     # — 프로바이더가 안 붙어 있으면 항상 스킵으로 기록만 하고 결과엔 영향
     # 없음(semantic 단계와 동일 처리).
+    _t = time.perf_counter()
     try:
         router_ai_judgment.judge_candidates(text, list(merged.values()))
-        steps.append({"stage": "ai_judgment", "skipped": False})
+        steps.append({"stage": "ai_judgment", "skipped": False, "elapsedMs": _elapsed_ms(_t)})
     except router_ai_judgment.AIJudgeProviderNotConfigured:
-        steps.append({"stage": "ai_judgment", "skipped": True, "reason": "provider_not_configured"})
+        steps.append({"stage": "ai_judgment", "skipped": True, "reason": "provider_not_configured", "elapsedMs": _elapsed_ms(_t)})
 
     # 5단계 — 신뢰 폐루프 주석(순위는 안 바꿈, 참고 정보만 붙임)
+    _t = time.perf_counter()
     trusted_count = 0
     for label, cand in merged.items():
         cand["trusted"] = router_proposals.is_trusted(label)
         cand["acceptanceRate"] = router_proposals.acceptance_rate(label)
         if cand["trusted"]:
             trusted_count += 1
-    steps.append({"stage": "trust_annotation", "trustedCount": trusted_count})
+    steps.append({"stage": "trust_annotation", "trustedCount": trusted_count, "elapsedMs": _elapsed_ms(_t)})
 
     candidates = sorted(
         merged.values(), key=lambda c: (len(c["signals"]), c["score"]), reverse=True
     )
+    total_elapsed_ms = round(sum(s.get("elapsedMs", 0) for s in steps), 2)
     result = {
         "needsClarification": not candidates and router_classifier.needs_clarification(text),
         "candidates": candidates,
         "steps": steps,
+        "totalElapsedMs": total_elapsed_ms,
     }
     _log_run(text, result, log_path or ORCHESTRATION_LOG_PATH)
     return result
@@ -241,6 +257,7 @@ def _log_run(text: str, result: dict, log_path: Path) -> None:
         "ranAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "queryPreview": (text or "")[:200],
         "steps": result["steps"],
+        "totalElapsedMs": result.get("totalElapsedMs"),
         "candidateCount": len(result["candidates"]),
         "topCandidate": {"rootLabel": top["rootLabel"], "score": top["score"]} if top else None,
     })

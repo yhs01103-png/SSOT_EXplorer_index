@@ -500,6 +500,66 @@ def test_management_panel_shows_session_context_log(isolated_registry, isolated_
     assert "없음" in panel.session_context_log_view.toPlainText()
 
 
+# --------------------------------------------- D-076: 분류 파이프라인 벤치마크
+
+def test_format_orchestration_log_text_empty_and_recent_first():
+    assert "없음" in m.format_orchestration_log_text([])
+    runs = [
+        {"ranAt": "2026-08-23 10:00:00", "queryPreview": "첫번째", "totalElapsedMs": 1.0,
+         "topCandidate": {"rootLabel": "a", "score": 0.5}},
+        {"ranAt": "2026-08-23 10:05:00", "queryPreview": "두번째", "totalElapsedMs": 2.0,
+         "topCandidate": {"rootLabel": "b", "score": 0.7}},
+    ]
+    text = m.format_orchestration_log_text(runs)
+    assert text.index("두번째") < text.index("첫번째")  # 최신이 위로
+    assert "2.0ms" in text and "b(0.7)" in text
+
+
+def test_format_orchestration_log_text_handles_no_top_candidate():
+    runs = [{"ranAt": "2026-08-23 10:00:00", "queryPreview": "x", "totalElapsedMs": 0.5, "topCandidate": None}]
+    assert "후보 없음" in m.format_orchestration_log_text(runs)
+
+
+def test_management_panel_shows_empty_orchestration_log(isolated_registry, isolated_qsettings):
+    m.save_roots([{"label": "a", "path": "C:\\a"}])
+    panel = m.ManagementPanel()
+    assert "없음" in panel.orchestration_log_view.toPlainText()
+
+
+def test_run_benchmark_empty_input_shows_hint_without_starting_worker(isolated_registry, isolated_qsettings):
+    panel = m.ManagementPanel()
+    panel.bench_input.setText("   ")
+    panel.run_benchmark()
+    assert "입력" in panel.bench_result_view.toPlainText()
+    assert panel.classification_worker is None
+
+
+def test_run_benchmark_runs_real_pipeline_and_shows_timings(tmp_path, isolated_registry, isolated_qsettings):
+    """2026-08-23(D-076) — "샌드박스가 아니라 실제 등록 데이터로 실행"이
+    핵심 설계 판단이라, 이 테스트도 진짜 orchestrate()를 QThread로 돌리고
+    (SaveDocumentDialog와 동일한 wait()+processEvents() 패턴, D-051) 결과가
+    실제로 화면과 로그 뷰 둘 다에 반영되는지 확인한다."""
+    root_dir = tmp_path / "flutter_App"
+    root_dir.mkdir()
+    m.save_roots([{"label": "flutter_App", "path": str(root_dir), "scope": "플러터 앱 개발", "referenceCondition": ""}])
+
+    panel = m.ManagementPanel()
+    panel.bench_input.setText("플러터 앱 개발 관련 메모")
+    panel.run_benchmark()
+    assert panel.classification_worker is not None
+    assert not panel.bench_run_btn.isEnabled()  # 실행 중엔 버튼 비활성화
+    panel.classification_worker.wait()
+    QApplication.processEvents()
+
+    result_text = panel.bench_result_view.toPlainText()
+    assert "structured" in result_text  # 스테이지 이름
+    assert "ms" in result_text
+    assert panel.bench_run_btn.isEnabled()
+    assert panel.classification_worker is None
+    # refresh()가 오케스트레이션 로그 뷰도 같이 새로고침했는지
+    assert "없음" not in panel.orchestration_log_view.toPlainText()
+
+
 # find_index_files/pick_canonical_index_file 테스트는 router_registry.py로
 # 이관됨(D-071) — test_router_registry.py 참고.
 

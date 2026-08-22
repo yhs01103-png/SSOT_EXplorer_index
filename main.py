@@ -559,6 +559,26 @@ def format_session_context_log_text(entries: list[dict], limit: int = 20) -> str
     return "\n".join(reversed(lines))
 
 
+def format_orchestration_log_text(runs: list[dict], limit: int = 20) -> str:
+    """2026-08-23(D-076) — 개발자 탭 벤치마크 뷰용. classify_content가 실행될
+    때마다(GUI/CLI/MCP 어느 경로로 불렸든) router_orchestrator._log_run이
+    이미 쌓아둔 ssot_orchestrator_log.json을 그대로 읽어서, 각 실행의 전체
+    소요시간(totalElapsedMs)+최상위 후보를 한 줄로 보여준다. 다른 로그뷰와
+    동일 관례(최신이 위, 최근 limit개만)."""
+    if not runs:
+        return "(로그 없음 — classify를 한 번이라도 실행하면 쌓임)"
+    recent = runs[-limit:]
+    lines = []
+    for r in recent:
+        top = r.get("topCandidate")
+        top_text = f"{top['rootLabel']}({top['score']})" if top else "(후보 없음)"
+        total_ms = r.get("totalElapsedMs")
+        ms_text = f"{total_ms}ms" if total_ms is not None else "?"
+        preview = (r.get("queryPreview") or "").replace("\n", " ")[:40]
+        lines.append(f"{r['ranAt']}  {ms_text:>9}  1위:{top_text}  \"{preview}\"")
+    return "\n".join(reversed(lines))
+
+
 def get_available_drives() -> list[str]:
     """존재하는 Windows 드라이브 문자 목록(C:\\, D:\\ 등) — 외부 의존성 없이
     알파벳을 순회하며 확인한다. 2026-08-13(D-028) — "앱을 켜면 전체 탐색기가
@@ -737,6 +757,7 @@ class ManagementPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.process: QProcess | None = None
+        self.classification_worker: ClassificationWorker | None = None
 
         layout = QVBoxLayout(self)
 
@@ -774,6 +795,33 @@ class ManagementPanel(QWidget):
         self.session_context_log_view.setMaximumHeight(90)
         layout.addWidget(self.session_context_log_view)
 
+        # 2026-08-23(D-076) — 분류 파이프라인 벤치마크. 드리프트체크(아래)가
+        # 이미 "버튼 눌러서 실제 스크립트 실행+실시간 출력" 패턴을 갖고
+        # 있지만, classify_content는 무거운 서브프로세스가 아니라 순수
+        # 파이썬 함수 호출(빠름)이라 QProcess 대신 이미 있는 ClassificationWorker
+        # (D-051/H-008, SaveDocumentDialog가 쓰던 QThread 래퍼)를 그대로
+        # 재사용한다 — "샌드박스"를 따로 안 만든 이유: classify_content는
+        # 애초에 P-01(읽기전용) 설계라 실제 등록 데이터로 바로 돌려도
+        # 안전하고, 자체 로그(ssot_orchestrator_log.json)에만 기록을 남긴다.
+        layout.addWidget(QLabel("분류 파이프라인 벤치마크 (실제 코드 실행 — router_orchestrator.orchestrate())"))
+        bench_row = QHBoxLayout()
+        self.bench_input = QLineEdit()
+        self.bench_input.setPlaceholderText("분류해볼 텍스트를 입력...")
+        self.bench_run_btn = QPushButton("지금 실행")
+        self.bench_run_btn.clicked.connect(self.run_benchmark)
+        bench_row.addWidget(self.bench_input, 1)
+        bench_row.addWidget(self.bench_run_btn)
+        layout.addLayout(bench_row)
+        self.bench_result_view = QTextBrowser()
+        self.bench_result_view.setMaximumHeight(110)
+        self.bench_result_view.setPlainText("(아직 실행 안 함)")
+        layout.addWidget(self.bench_result_view)
+
+        layout.addWidget(QLabel("오케스트레이션 로그 (최근 20건 — classify가 GUI/CLI/MCP 어디서 불렸든 전부 쌓임)"))
+        self.orchestration_log_view = QTextBrowser()
+        self.orchestration_log_view.setMaximumHeight(110)
+        layout.addWidget(self.orchestration_log_view)
+
         layout.addWidget(QLabel("드리프트 진행상황(실시간) / 로그"))
         self.log_view = QTextBrowser()
         layout.addWidget(self.log_view)
@@ -805,6 +853,9 @@ class ManagementPanel(QWidget):
         )
         self.session_context_log_view.setPlainText(
             format_session_context_log_text(load_session_context_log())
+        )
+        self.orchestration_log_view.setPlainText(
+            format_orchestration_log_text(router_orchestrator.load_orchestration_log())
         )
         if DRIFT_LOG_PATH.exists():
             text = DRIFT_LOG_PATH.read_text(encoding="utf-8", errors="replace")
@@ -852,6 +903,36 @@ class ManagementPanel(QWidget):
         self.status_label.setText("❌ 실행 실패")
         self.run_btn.setEnabled(True)
         self.process = None
+
+    def run_benchmark(self):
+        """2026-08-23(D-076) — orchestrate()를 실제 등록 레지스트리로 배경
+        스레드에서 실행(ClassificationWorker, D-051/H-008 재사용). 결과가
+        오면 스테이지별 소요시간을 보여주고, 이 실행 자체가 이미
+        ssot_orchestrator_log.json에 자동으로 쌓였으니 로그 뷰도 새로고침."""
+        text = self.bench_input.text().strip()
+        if not text:
+            self.bench_result_view.setPlainText("(텍스트를 입력하세요)")
+            return
+        self.bench_run_btn.setEnabled(False)
+        self.bench_result_view.setPlainText("⏳ 실행 중...")
+        self.classification_worker = ClassificationWorker(text, load_roots())
+        self.classification_worker.result_ready.connect(self._on_benchmark_result)
+        self.classification_worker.start()
+
+    def _on_benchmark_result(self, result: dict):
+        self.bench_run_btn.setEnabled(True)
+        lines = [f"총 {result.get('totalElapsedMs', '?')}ms"]
+        for step in result["steps"]:
+            extra = " (skipped)" if step.get("skipped") else ""
+            lines.append(f"  {step['stage']:<16} {step.get('elapsedMs', '?')}ms{extra}")
+        top3 = result["candidates"][:3]
+        if top3:
+            lines.append("후보: " + ", ".join(f"{c['rootLabel']}({c['score']})" for c in top3))
+        else:
+            lines.append("후보 없음")
+        self.bench_result_view.setPlainText("\n".join(lines))
+        self.classification_worker = None
+        self.refresh()  # 오케스트레이션 로그 뷰에 이번 실행이 바로 반영되게
 
 
 # ------------------------------------------------------- AI 툴별 동기화 다이얼로그

@@ -117,6 +117,18 @@ def test_orchestrate_reports_six_steps(tmp_path):
     assert ai_step["skipped"] is True  # AI 판단 프로바이더 미연결(D-063, O-014)
 
 
+def test_orchestrate_reports_elapsed_ms_per_stage_and_total(tmp_path):
+    """2026-08-23(D-076) — 개발자 탭 벤치마크 뷰용 스테이지별 소요시간.
+    실제 값은 머신마다 다르므로 "0 이상 숫자로 존재하는지"만 검증하고,
+    totalElapsedMs가 각 스테이지 합과 일치하는지로 집계 로직을 확인한다."""
+    roots = [{"label": "x", "path": str(tmp_path), "scope": "", "referenceCondition": ""}]
+    result = ro.orchestrate("아무 내용", roots, log_path=tmp_path / "log.json")
+    for step in result["steps"]:
+        assert isinstance(step["elapsedMs"], (int, float))
+        assert step["elapsedMs"] >= 0
+    assert result["totalElapsedMs"] == round(sum(s["elapsedMs"] for s in result["steps"]), 2)
+
+
 def test_orchestrate_semantic_stage_runs_when_provider_available(tmp_path, monkeypatch):
     """D-067 — 임베딩 프로바이더가 실제로 연결돼 있으면 semantic 단계가
     skipped=False로 기록돼야 한다(결과 랭킹엔 아직 영향 없음 — 그건 별도
