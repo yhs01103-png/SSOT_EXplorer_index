@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SSOT_Explorer 읽기전용 데모</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f5; --surface: #ffffff; --border: #dde1db; --ink: #1c211f;
+    --ink-soft: #5a635b; --accent: #3f7268; --accent-soft: #d9e6e1;
+    --bad: #a84a2f; --bad-soft: #f1ddd3;
+    --warn: #c6631a; --warn-soft: #f3e2cf;
+    --mono: ui-monospace, "SF Mono", Consolas, "Liberation Mono", Menlo, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Pretendard, "Malgun Gothic", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171a; --surface: #1c211f; --border: #333a34; --ink: #e9ede8;
+      --ink-soft: #b7c0b6; --accent: #6fada0; --accent-soft: #1f322d;
+      --bad: #e08a6b; --bad-soft: #3a241c;
+      --warn: #e0954a; --warn-soft: #3a2c17;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans); line-height: 1.55; }
+  a { color: var(--accent); }
+  header {
+    padding: 16px 20px; border-bottom: 1px solid var(--border); background: var(--surface);
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 16px; margin: 0; }
+  header .meta { font-size: 12px; color: var(--ink-soft); margin-left: auto; font-family: var(--mono); }
+  header .links { font-size: 12px; font-family: var(--mono); display: flex; gap: 12px; }
+
+  .demo-banner {
+    background: var(--warn-soft); color: var(--warn); font-family: var(--mono); font-size: 12.5px;
+    padding: 8px 20px; border-bottom: 1px solid var(--border);
+  }
+
+  nav.toptabs { display: flex; gap: 6px; padding: 12px 20px; border-bottom: 1px solid var(--border); background: var(--surface); }
+  nav.toptabs button {
+    font-family: var(--sans); font-size: 13.5px; font-weight: 600; padding: 7px 16px; border-radius: 7px;
+    border: 1px solid var(--border); background: var(--surface); color: var(--ink); cursor: pointer;
+  }
+  nav.toptabs button.active { background: var(--accent); color: white; border-color: var(--accent); }
+  nav.toptabs button:hover:not(.active) { border-color: var(--accent); }
+
+  main { max-width: 1080px; margin: 0 auto; padding: 20px; }
+  .hidden { display: none !important; }
+
+  /* ---- 탐색기 뷰 ---- */
+  .explorer-layout { display: grid; grid-template-columns: 260px 1fr; gap: 16px; align-items: start; }
+  @media (max-width: 720px) { .explorer-layout { grid-template-columns: 1fr; } }
+  .tree { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px; }
+  .tree-section-label { font-family: var(--mono); font-size: 10.5px; color: var(--ink-soft); padding: 8px 8px 4px; letter-spacing: .03em; }
+  .tree-item {
+    display: flex; align-items: center; gap: 6px; padding: 7px 10px; border-radius: 6px; cursor: pointer; font-size: 13.5px;
+  }
+  .tree-item:hover { background: var(--accent-soft); }
+  .tree-item.active { background: var(--accent); color: white; }
+  .tree-item .path { font-family: var(--mono); font-size: 10.5px; color: var(--ink-soft); }
+  .tree-item.active .path { color: rgba(255,255,255,.75); }
+  .tree-item .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .dot.ok { background: var(--accent); }
+  .dot.due { background: var(--warn); }
+
+  .viewer { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px 24px; min-height: 320px; }
+  .viewer h2 { margin-top: 0; font-size: 18px; }
+  .viewer .filelabel { font-family: var(--mono); font-size: 11.5px; color: var(--ink-soft); margin-bottom: 14px; }
+  .viewer p { font-size: 14px; }
+  .viewer code { background: var(--accent-soft); padding: 1px 5px; border-radius: 4px; font-size: 12.5px; }
+  .viewer ul { font-size: 14px; padding-left: 20px; }
+  .badge-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 16px; }
+
+  /* ---- 개발자 뷰(공통) ---- */
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; margin-bottom: 14px; }
+  .card h3 { margin: 0 0 10px; font-size: 13.5px; color: var(--ink-soft); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+  .meta { font-family: var(--mono); font-size: 12px; color: var(--ink-soft); }
+  .badge {
+    display: inline-block; font-family: var(--mono); font-size: 11px; font-weight: 700;
+    padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent);
+  }
+  .badge.bad { background: var(--bad-soft); color: var(--bad); }
+  .badge.warn { background: var(--warn-soft); color: var(--warn); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--ink-soft); font-weight: 600; font-size: 12px; }
+  .mono { font-family: var(--mono); }
+  .empty { color: var(--ink-soft); padding: 24px 0; text-align: center; font-size: 13px; }
+
+  .pipeline { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+  .stage { border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; font-family: var(--mono); font-size: 11.5px; min-width: 92px; }
+  .stage.skipped { opacity: .55; border-style: dashed; }
+  .stage .name { font-weight: 700; margin-bottom: 3px; }
+  .stage .ms { color: var(--accent); }
+  .stage.skipped .ms { color: var(--ink-soft); }
+</style>
+</head>
+<body>
+<header>
+  <h1>📇 SSOT_Explorer — 읽기전용 데모</h1>
+  <span class="links">
+    <a href="https://github.com/yhs01103-png/SSOT_EXplorer_index">GitHub 레포</a>
+  </span>
+  <span class="meta">example data only</span>
+</header>
+<div class="demo-banner">
+  ⚠️ 이 페이지는 클론/설치 없이 UI를 보여주기 위한 <b>정적 데모</b>입니다 — 아래 데이터는 전부 예시(fictional)이고 실제 사용 레지스트리가 아닙니다. 실제 코드는 GitHub 레포, 설계 판단은
+  <a href="https://claude.ai/code/artifact/5735551f-d123-4276-9ab9-bac4dc393bef">해부도</a> ·
+  <a href="https://claude.ai/code/artifact/6279b656-5fe6-4475-b9d8-21b2150959e2">상용화 청사진</a> 참고.
+</div>
+
+<nav class="toptabs" id="toptabs"></nav>
+<main id="content"></main>
+
+<script>
+// ------------------------------------------------------- 예시 데이터(전부 가상)
+const EXAMPLE_ROOTS = [
+  {
+    label: "Acme_Mobile_App", scope: "workspace", owner: "demo", lastReviewed: "2026-08-10",
+    path: "~/projects/Acme_Mobile_App",
+    referenceCondition: "클라이언트(Flutter)+서버(FastAPI) 모노레포 규칙 인덱스. 설계 문서는 `docs/결정이력_TODO.md`.",
+    readme: {
+      title: "Acme_Mobile_App",
+      body: [
+        "클라이언트(Flutter)+서버(FastAPI)로 구성된 모바일 앱 모노레포 예시입니다.",
+        "- `client/` — Flutter 앱, 상태관리는 Riverpod",
+        "- `server/` — FastAPI, Railway 배포",
+        "- 커밋 전 `flutter test`+`pytest` 둘 다 통과해야 함(CI 게이트)",
+      ],
+    },
+  },
+  {
+    label: "Design_System_Kit", scope: "workspace", owner: "demo", lastReviewed: "2026-01-15",
+    path: "~/projects/Design_System_Kit",
+    referenceCondition: "여러 프로젝트가 공유하는 컴포넌트/토큰 라이브러리. 버전 올릴 때 소비 프로젝트 전체 재빌드 확인.",
+    readme: {
+      title: "Design_System_Kit",
+      body: [
+        "여러 프로젝트가 공유하는 UI 컴포넌트/디자인 토큰 라이브러리 예시입니다.",
+        "- 토큰 변경 시 `CHANGELOG.md`에 breaking 여부 명시",
+        "- 소비 프로젝트: Acme_Mobile_App, Personal_Notes_Vault",
+      ],
+    },
+  },
+  {
+    label: "Personal_Notes_Vault", scope: "personal", owner: "demo", lastReviewed: "2026-08-20",
+    path: "~/projects/Personal_Notes_Vault",
+    referenceCondition: "개인 노트/지식베이스 앱. 로컬 우선, 동기화는 선택적.",
+    readme: {
+      title: "Personal_Notes_Vault",
+      body: [
+        "개인용 노트 앱 예시 — 로컬 파일 우선, 클라우드 동기화는 optional.",
+        "- Markdown 저장, 백링크 지원",
+        "- 데이터는 항상 로컬이 SSOT, 동기화는 캐시일 뿐",
+      ],
+    },
+  },
+];
+
+// D-073 labeledFolders — lastAudited는 실제 달력 날짜, daysRemaining은
+// 방문자의 실제 브라우저 날짜 기준으로 실시간 계산(실제 앱의
+// labeled_folder_audit_status()와 동일 로직을 JS로 그대로 재현) — 그래서
+// 이 데모를 몇 달 뒤에 열면 아래 "ok" 예시도 결국 "due"로 바뀝니다(의도된
+// 동작, 데이터를 안 갱신해서 생기는 자연스러운 결과 — 실제 앱도 똑같이
+// 동작합니다).
+const AUDIT_STALE_DAYS = 30;
+const EXAMPLE_LABELED_FOLDERS = [
+  { label: "Sandbox_Learning_Log", path: "~/sandbox/Sandbox_Learning_Log", lastAudited: "2026-08-15",
+    readme: { title: "Sandbox_Learning_Log", body: [
+      "패턴 문서를 4단계로 학습하는 실습 로그 예시입니다.",
+      "- `<!-- SSOT-LABEL: Sandbox_Learning_Log -->`가 이 README 맨 위에 있어야 함",
+      "- roots[]가 아니라 labeledFolders[](경량 등록)에만 있음",
+    ] } },
+  { label: "Archived_Client_Notes", path: "~/archive/Archived_Client_Notes", lastAudited: "2026-07-01",
+    readme: { title: "Archived_Client_Notes", body: [
+      "예전 클라이언트 작업 메모 아카이브 예시입니다.",
+      "- 30일 감사 문턱값을 넘겨서 다음 세션에 감사 안내가 뜸",
+    ] } },
+];
+
+const EXAMPLE_ORCHESTRATION_LOG = [
+  { ranAt: "2026-08-23 09:12:04", queryPreview: "Flutter 상태관리 리팩터 메모", totalElapsedMs: 3.8,
+    topCandidate: { rootLabel: "Acme_Mobile_App", score: 0.62 },
+    steps: [
+      { stage: "structured", elapsedMs: 0.9 },
+      { stage: "prose_scan", elapsedMs: 1.4 },
+      { stage: "keyword_registry", elapsedMs: 0.3 },
+      { stage: "semantic", elapsedMs: 0.1, skipped: true },
+      { stage: "ai_judgment", elapsedMs: 0.1, skipped: true },
+      { stage: "trust_annotation", elapsedMs: 1.0 },
+    ] },
+  { ranAt: "2026-08-23 09:03:41", queryPreview: "디자인 토큰 버전 올리는 김에 컴포넌트도", totalElapsedMs: 4.1,
+    topCandidate: { rootLabel: "Design_System_Kit", score: 0.71 },
+    steps: [
+      { stage: "structured", elapsedMs: 1.1 },
+      { stage: "prose_scan", elapsedMs: 1.6 },
+      { stage: "keyword_registry", elapsedMs: 0.3 },
+      { stage: "semantic", elapsedMs: 0.1, skipped: true },
+      { stage: "ai_judgment", elapsedMs: 0.1, skipped: true },
+      { stage: "trust_annotation", elapsedMs: 0.9 },
+    ] },
+];
+
+// ------------------------------------------------------------- 유틸
+function el(tag, attrs, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (k === "class") node.className = v; else node.setAttribute(k, v);
+  }
+  for (const child of children) {
+    if (child == null) continue;
+    node.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  }
+  return node;
+}
+
+function reviewAgeDays(dateStr) {
+  const then = new Date(dateStr + "T00:00:00");
+  const now = new Date();
+  return Math.floor((now - then) / 86400000);
+}
+
+function auditStatus(lastAuditedStr) {
+  const age = reviewAgeDays(lastAuditedStr);
+  const daysRemaining = AUDIT_STALE_DAYS - age;
+  return { status: daysRemaining <= 0 ? "due" : "ok", daysRemaining };
+}
+
+// ------------------------------------------------------------- 상단 탭
+const TOPTABS = [
+  { id: "explorer", label: "탐색기" },
+  { id: "developer", label: "개발자" },
+];
+let currentTopTab = "explorer";
+let selectedRootLabel = EXAMPLE_ROOTS[0].label;
+
+function renderTopTabs() {
+  const nav = document.getElementById("toptabs");
+  nav.innerHTML = "";
+  for (const t of TOPTABS) {
+    const btn = el("button", { class: t.id === currentTopTab ? "active" : "" }, t.label);
+    btn.addEventListener("click", () => { currentTopTab = t.id; renderTopTabs(); renderContent(); });
+    nav.append(btn);
+  }
+}
+
+function renderContent() {
+  const main = document.getElementById("content");
+  main.innerHTML = "";
+  if (currentTopTab === "explorer") renderExplorer(main);
+  else renderDeveloper(main);
+}
+
+// ------------------------------------------------------------- 탐색기 뷰
+function renderExplorer(main) {
+  const layout = el("div", { class: "explorer-layout" });
+
+  const tree = el("div", { class: "tree" });
+  tree.append(el("div", { class: "tree-section-label" }, "등록된 루트"));
+  for (const r of EXAMPLE_ROOTS) {
+    const item = el("div", { class: "tree-item" + (r.label === selectedRootLabel && !r.isLabeledFolder ? " active" : "") },
+      r.label, el("span", { class: "path" }, "  " + r.scope));
+    item.addEventListener("click", () => { selectedRootLabel = r.label; renderContent(); });
+    tree.append(item);
+  }
+  tree.append(el("div", { class: "tree-section-label" }, "라벨 폴더 (경량 등록)"));
+  for (const f of EXAMPLE_LABELED_FOLDERS) {
+    const a = auditStatus(f.lastAudited);
+    const item = el("div", { class: "tree-item" + (f.label === selectedRootLabel ? " active" : "") },
+      el("span", { class: "dot " + a.status }), f.label);
+    item.addEventListener("click", () => { selectedRootLabel = f.label; renderContent(); });
+    tree.append(item);
+  }
+  layout.append(tree);
+
+  const all = [...EXAMPLE_ROOTS, ...EXAMPLE_LABELED_FOLDERS];
+  const selected = all.find((x) => x.label === selectedRootLabel) || all[0];
+  const viewer = el("div", { class: "viewer" });
+  const badges = el("div", { class: "badge-row" });
+  if (selected.scope) badges.append(el("span", { class: "badge" }, selected.scope));
+  if (selected.lastAudited) {
+    const a = auditStatus(selected.lastAudited);
+    badges.append(el("span", { class: "badge " + (a.status === "due" ? "warn" : "") },
+      a.status === "due" ? "⚠️ 감사 필요" : `감사까지 D-${a.daysRemaining}`));
+  }
+  if (selected.lastReviewed) badges.append(el("span", { class: "badge mono" }, "리뷰: " + selected.lastReviewed));
+
+  viewer.append(
+    el("div", { class: "filelabel" }, "📄 README.md · " + selected.path),
+    el("h2", {}, selected.readme.title),
+    badges,
+    ...selected.readme.body.map((line) =>
+      line.startsWith("- ")
+        ? el("ul", {}, el("li", {}, line.slice(2)))
+        : el("p", {}, line)
+    ),
+  );
+  layout.append(viewer);
+  main.append(layout);
+}
+
+// ------------------------------------------------------------- 개발자 뷰
+function renderDeveloper(main) {
+  // 레지스트리 요약
+  const regCard = el("div", { class: "card" }, el("h3", {}, "루트 레지스트리 요약"));
+  const regTable = el("table", {}, el("thead", {}, el("tr", {},
+    el("th", {}, "label"), el("th", {}, "scope"), el("th", {}, "owner"), el("th", {}, "lastReviewed"))));
+  const regBody = el("tbody");
+  for (const r of EXAMPLE_ROOTS) {
+    const age = reviewAgeDays(r.lastReviewed);
+    regBody.append(el("tr", {},
+      el("td", { class: "mono" }, r.label),
+      el("td", { class: "mono" }, r.scope),
+      el("td", { class: "mono" }, r.owner),
+      el("td", { class: "mono" }, r.lastReviewed + (age > 180 ? " ⚠️" : ""))));
+  }
+  regTable.append(regBody);
+  regCard.append(regTable);
+  main.append(regCard);
+
+  // 스키마 검증
+  main.append(el("div", { class: "card" },
+    el("h3", {}, "스키마 검증"),
+    el("div", {}, "✅ 통과 — 문제 없음 (예시 데이터 기준)")));
+
+  // 라벨 폴더 감사 상태
+  const auditCard = el("div", { class: "card" }, el("h3", {}, "라벨 폴더 감사 상태 (O-018(b)/D-073)"));
+  const auditTable = el("table", {}, el("thead", {}, el("tr", {},
+    el("th", {}, "label"), el("th", {}, "lastAudited"), el("th", {}, "상태"))));
+  const auditBody = el("tbody");
+  for (const f of EXAMPLE_LABELED_FOLDERS) {
+    const a = auditStatus(f.lastAudited);
+    auditBody.append(el("tr", {},
+      el("td", { class: "mono" }, f.label),
+      el("td", { class: "mono" }, f.lastAudited),
+      el("td", {}, el("span", { class: "badge " + (a.status === "due" ? "warn" : "") },
+        a.status === "due" ? "⚠️ 30일 감사 주기 도달" : `감사까지 D-${a.daysRemaining}`))));
+  }
+  auditTable.append(auditBody);
+  auditCard.append(auditTable);
+  main.append(auditCard);
+
+  // 분류 파이프라인 벤치마크(예시 실행 결과, D-076)
+  const benchCard = el("div", { class: "card" },
+    el("h3", {}, "분류 파이프라인 벤치마크 — 예시 실행 결과 (D-076)"));
+  benchCard.append(el("div", { class: "meta" }, "실제 앱에선 이 자리에서 실제 텍스트를 입력해 지금 바로 실행합니다 — 이 데모는 읽기 전용이라 과거 실행 결과를 그대로 보여줍니다."));
+  for (const run of EXAMPLE_ORCHESTRATION_LOG) {
+    const runBox = el("div", { style: "margin-top:12px;" });
+    runBox.append(el("div", { class: "meta" },
+      `${run.ranAt} · 총 ${run.totalElapsedMs}ms · 1위: ${run.topCandidate.rootLabel}(${run.topCandidate.score}) · "${run.queryPreview}"`));
+    const pipeline = el("div", { class: "pipeline" });
+    for (const s of run.steps) {
+      pipeline.append(el("div", { class: "stage" + (s.skipped ? " skipped" : "") },
+        el("div", { class: "name" }, s.stage),
+        el("div", { class: "ms" }, s.elapsedMs + "ms" + (s.skipped ? " (skip)" : ""))));
+    }
+    runBox.append(pipeline);
+    benchCard.append(runBox);
+  }
+  main.append(benchCard);
+}
+
+renderTopTabs();
+renderContent();
+</script>
+</body>
+</html>
