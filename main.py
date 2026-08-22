@@ -338,6 +338,23 @@ REGISTRY_SCHEMA = {
                 },
             },
         },
+        # 2026-08-22(D-073, O-018(b)) — roots[]와 분리한 경량 배열. referenceCondition
+        # 동기화/actions 같은 무거운 필드가 없다 — README가 있거나 필요한
+        # 하위 폴더를 최소 필드로만 추적한다.
+        "labeledFolders": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["label", "path"],
+                "additionalProperties": True,
+                "properties": {
+                    "label": {"type": "string", "minLength": 1},
+                    "path": {"type": "string", "minLength": 1},
+                    "parentLabel": {"type": ["string", "null"]},
+                    "lastAudited": {"type": "string", "pattern": r"^$|^\d{4}-\d{2}-\d{2}$"},
+                },
+            },
+        },
     },
 }
 
@@ -379,6 +396,17 @@ def validate_registry(data: dict) -> list[str]:
             errors.append(
                 f"roots: label '{label}'이(가) {count}번 중복됨 — 등록 루트의 "
                 "label은 유일해야 함(중복되면 분류 결과에서 한쪽이 사라짐)"
+            )
+    # 2026-08-22(D-073) — labeledFolders도 add_labeled_folder가 쓰기 시점엔
+    # 중복을 막지만, 수동 편집으로 우회될 수 있어 roots와 동일하게 보강.
+    labeled_folder_label_counts = Counter(
+        f.get("label") for f in data.get("labeledFolders", []) if isinstance(f, dict) and f.get("label")
+    )
+    for label, count in labeled_folder_label_counts.items():
+        if count > 1:
+            errors.append(
+                f"labeledFolders: label '{label}'이(가) {count}번 중복됨 — "
+                "라벨 폴더의 label도 유일해야 함"
             )
     return errors
 

@@ -2,7 +2,7 @@
 SSOT_Explorer — 최신 설계결정이력 + TODO
 ================================================================
 기준 버전: v1.0
-최종수정: 2026-08-21 (D-072)
+최종수정: 2026-08-22 (D-073)
 원칙: 가장 최근 라운드의 신규 결정(D-번호)과 전체 TODO(H-번호)만 담는다.
       더 오래된 결정은 레거시 파일로 이동.
 
@@ -2384,6 +2384,76 @@ D-071의 수동 venv 검증을 CI로 이관)
       (ClassificationWorker 원조), H-009(RootInitWorker 원조), D-042
       (InboxWatcherThread/router_watcher.InboxWatcher 원조).
 
+[D-073] `labeledFolders[]` 신설 + SessionStart 훅 감사 안내 — O-018(b) 해소
+결정: O-018(a)(가벼운 패치)를 건너뛰고 사용자가 그 자리에서 바로 (b)(큰
+      확장) 채택. 대화로 확정한 스키마 3가지:
+      1. **저장 위치**: `roots[]`를 확장하지 않고 새 경량 배열
+         `labeledFolders[]` 신설(router_registry.py) — `roots[]`는
+         referenceCondition 동기화(CLAUDE.md 4종)/actions/dependsOnDocs
+         같은 무거운 기계장치가 딸려 있어서, 그대로 확장하면 모든 서브
+         폴더가 그 기계장치를 다 짊어지게 됨. 필드는 `{label, path,
+         parentLabel, lastAudited}` 최소 구성.
+      2. **README 표기**: `<!-- SSOT-LABEL: 이름 -->`(README.md 맨 위,
+         첫 20줄 안) 자기선언 주석 마커 채택(vs 프론트매터) — 구조화
+         데이터(parentLabel/lastAudited)는 이미 레지스트리 JSON이 들고
+         있으므로 README 쪽엔 값 하나만 자기선언하면 충분, 렌더링 시
+         안 보이는 주석이 이 프로젝트 기존 README 스타일과도 안 어긋남.
+         폴더가 이동해도 경로 대신 이 라벨로 재탐색 가능하게 하는 앵커
+         (실제 이동추적 스캔 로직 자체는 이번 라운드 범위 밖 — 마커만
+         준비, 재탐색은 다음에 필요해지면).
+      3. **감사 트리거**: 30일 문턱값(`check_readme_freshness`의
+         `stale_days=30` 기본값 재사용, 새 숫자 발명 안 함) + cwd 매치
+         여부와 무관하게 **매 세션 전체 체크**(check_mcp_drift/
+         check_root_drift와 동일 원칙 — 매치된 루트에서만 돌면 깊이 박힌
+         라벨 폴더는 체크가 거의 안 걸림). 평소엔 "감사까지 D-N일 남음"
+         카운트다운을 항상 보여줘서 사람이 문턱값 전에 수동으로 앞당겨
+         트리거하도록 유도, 문턱값 도달 시 승인형 프롬프트("지금
+         진행할까요?")로 전환 — 승인되면 Claude Code가 그 세션 안에서
+         라벨-폴더-README 3자 일치 감사를 직접 수행(에이전틱 태스크,
+         스크립트가 자동 실행 안 함 — O-018 원문 전제 그대로).
+      구현: (1) router_registry.py — `load_labeled_folders`/
+      `save_labeled_folders`/`add_labeled_folder`/
+      `mark_labeled_folder_audited`(roots와 동일한 병합저장+원자적쓰기+
+      낙관적동시성 재사용) + `labeled_folder_audit_status`(순수 함수,
+      남은 일수 계산) + `read_ssot_label_marker`(README 앞 20줄에서 마커
+      파싱). (2) main.py — REGISTRY_SCHEMA에 `labeledFolders` 항목 추가
+      (additionalProperties:True라 없어도 검증은 안 깨졌지만 다른 배열과
+      대칭 맞춤), `validate_registry`에 label 중복 검사도 roots와 동일하게
+      보강. (3) ssot_mcp_server.py — `check_labeled_folders_audit(label?)`
+      신설(auditStatus/daysRemaining/pathExists/markerLabel/markerMatches
+      반환, 다른 tool과 동일한 개발자모드 게이팅+P-01 읽기전용). (4)
+      `~/.claude/hooks/ssot_session_context.py`(레포 밖) — `check_labeled_
+      folders_audit()` 추가, `main()`에서 check_mcp_drift/check_root_drift
+      와 나란히 cwd 무관 매 세션 호출(이 훅은 router_registry를 import 안
+      하는 기존 관례대로 최소 로직 자체 복제). (5) 첫 실사용 데이터 —
+      O-018을 처음 발견시켰던 `Sand_Box_Coding_Study`를 `labeledFolders[]`
+      에 실제로 등록(`lastAudited` 빈 값 — 다음 세션에 "감사 이력 없음"
+      승인 프롬프트가 뜰 것), 그 폴더 README.md 맨 위에 마커 추가 + "SSOT
+      레지스트리 미등록" 문구 정정, 상위 `SSOT_Coding_File\README.md`의
+      대응 문구도 동기화.
+이유: O-018(a)가 "전체 트리 스캔 없음"을 원칙으로 깔아둔 것과 달리, 사용자가
+      "수동/자동 둘 다 되는" 승인형 흐름을 원해서 (a)의 "프로즈 매칭
+      의존" 문제를 근본적으로 없애는 (b)로 바로 감. 감사 주기를 시계
+      기반(예: 3시간마다)이 아니라 날짜 문턱값으로 정한 이유는 Claude
+      Code가 세션이 열려 있을 때만 존재하기 때문 — 무인 주기 실행을
+      하려면 CronCreate로 실제 백그라운드 에이전트를 띄워야 하는데, 그건
+      "매 세션 자동 아님"(=사람이 세션 중 직접 수행)이라는 O-018 원문
+      전제 자체를 벗어나는 훨씬 큰 결정이라 이번 라운드에서 채택 안 함.
+검증: pytest 전체 323개 통과(신규 25개 — test_router_registry.py 13개,
+      test_ssot_mcp_server.py 12개). 훅 함수는 별도 테스트 파일 없이(기존
+      관례) 실제 registry dict로 수동 스모크 테스트(never_audited/ok/due
+      3가지 상태 전부 기대한 문구로 출력 확인). 레지스트리 실측 — 실제
+      `ssot-roots.json`에 `add_labeled_folder` 호출 후 roots 7개(변경
+      없음)/sharedDocs 1개/relations 4개 전부 그대로 보존되고
+      labeledFolders에 1개만 추가된 것 확인(D-020 유실 버그 재발 방지
+      원칙 그대로 지켜짐).
+관련 D-번호: D-048(check_readme_freshness의 stale_days=30 재사용 출처),
+      D-057(개발자모드 게이팅 관례), D-060(list_missing_index_folders —
+      "README 자동생성은 안 함" 원칙 동일 적용), D-069/D-071(router_
+      registry.py 병합저장+원자적쓰기 패턴 원조), D-020(병합저장 유실버그
+      재발 방지 원칙), D-031(SessionStart 훅 원조), D-045(세션 컨텍스트
+      로그 — check_* 계열 함수 관례).
+
 ================================================================
 PART 2 — TODO
 ================================================================
@@ -2712,6 +2782,44 @@ D-067에서 의도적으로 분리해둔 나머지 절반.
 관련 D-번호: D-053(classify CLI 계약 원조), D-068(sync를 GUI에서 뽑아낸
       전제조건).
 **D-069/D-070으로 3개 전부 확정됨(2026-08-21)** — 상세는 해당 D-번호 참고.
+
+[O-018] 세션이 등록 루트의 README.md를 실제로 여는지가 프로즈 매칭(AI
+판단)에 의존 — Sand_Box_Coding_File\Sand_Box_Coding_Study 실습 세션 중
+실측 발견(2026-08-21). SessionStart 훅(D-031)이 "이 루트다, 레지스트리
+직접 확인" 알림은 매번 자동으로 띄우지만, 그 다음 "루트의 README.md를
+실제로 여느냐"는 `readmeReferenceCondition` 프로즈가 지금 작업과
+관련있다고 AI가 판단해야만 일어남 — 새로 생긴 미등록 하위 폴더(README만
+있고 레지스트리엔 없는 폴더, 예: Sand_Box_Coding_Study)에서 그냥 작업을
+시작하면 그 판단이 안 걸릴 수 있음이 실제로 확인됨.
+논의된 해법 두 가지(둘 다 미착수):
+  (a) 가벼운 패치 — `ssot_session_context.py`가 매치된 루트를 찾으면
+      `readmeReferenceCondition` 프로즈 매칭 여부와 무관하게 "이 루트의
+      최상위 README.md가 있으면 무조건 먼저 열어봐라"를 훅 메시지에 항상
+      포함. 매치된 루트 1개만 건드리고 그 밑은 기존 README 체인이 계속
+      안내 — 전체 트리 스캔 없음, 비용 거의 0.
+  (b) 큰 확장 — 레지스트리 라벨을 "README가 있거나 필요한 모든 하위
+      폴더"까지 확장(파일 단위는 제외, 인덱싱 필요 레벨까지만). 라벨-
+      폴더-README 3자 일치를 Claude Code가 감사(폴더에 라벨 있는데
+      README 없으면 생성, 라벨 불일치면 README 내용을 폴더 실제 상태와
+      대조해서 재발급), 라벨 붙은 폴더가 이동/삭제되면 새 위치 추적 또는
+      삭제 확인 후 상위 README 갱신. 스크립트가 아니라 Claude Code가
+      직접 수행(에이전틱 감사 태스크), 매 세션 자동 아님 — 트리거 주기는
+      미정. README 안 상호참조도 경로 대신 라벨로 표기하는 것까지 포함.
+임시결정: 둘 다 미착수 — 오늘은 `Sand_Box_Coding_File\Sand_Box_Coding_
+Study\README.md`와 상위 `SSOT_Coding_File\README.md`에 수동으로 항목만
+추가해 임시 해결(레지스트리 등록은 안 함, 사용자가 명시적으로 원치 않음).
+재논의 조건: 다음 세션에서 이 O-018을 다시 열어 (a)부터 넣을지, 바로
+(b)까지 갈지 결정 — (b)는 스키마 신규 설계(라벨 저장 위치, README 안
+라벨 표기 포맷, 이동추적 매칭 로직) 자체가 별도 라운드 분량이라 (a)를
+먼저 넣고 실사용 데이터 쌓은 뒤 (b) 필요성을 재평가하는 쪽을 권장.
+관련 D-번호: D-031(SessionStart 훅 원조), D-052(경로 삭제/이동 감지
+원조 — (b)의 이동추적 아이디어와 유사한 문제의식), D-010/D-012(CLAUDE.md
+=init 산출물, 레지스트리가 실제 SSOT라는 현재 아키텍처 전제).
+**D-073으로 (b) 채택·구현 완료(2026-08-22)** — (a)를 먼저 넣자는 권장과
+달리 사용자가 그 자리에서 바로 (b)로 확정. 이동추적 매칭 로직(README
+마커로 새 경로 재탐색하는 실제 스캔) 자체는 이번에도 범위 밖 — 마커
+표기 규약과 `pathExists` 신호까지만 준비됐고, 실제 재탐색 알고리즘은
+필요해지면 별도 라운드. 상세는 D-073 참고.
 
 ================================================================
 변경이력

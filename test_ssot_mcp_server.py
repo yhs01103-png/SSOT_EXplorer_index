@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import time
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ import router_embeddings as re_
 import router_keyword_registry as kr
 import router_orchestrator as ro
 import router_proposals as rp
+import router_registry as rr
 import ssot_mcp_server as mcp_srv
 
 
@@ -506,6 +508,115 @@ def test_list_missing_index_folders_result_is_json_serializable(tmp_path):
     json.dumps(result)
 
 
+# --------------------------------------------------- check_labeled_folders_audit
+
+def _register_labeled_folder(label: str, path: Path, last_audited: str = ""):
+    rr.add_labeled_folder(
+        {"label": label, "path": str(path), "lastAudited": last_audited},
+        mcp_srv.REGISTRY_PATH,
+    )
+
+
+def test_labeled_folders_audit_never_audited_when_no_last_audited(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    _register_labeled_folder("a", root)
+    result = mcp_srv.check_labeled_folders_audit()
+    assert result[0]["auditStatus"] == "never_audited"
+    assert result[0]["daysRemaining"] is None
+
+
+def test_labeled_folders_audit_ok_within_threshold(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    recent = (date.today() - timedelta(days=5)).strftime("%Y-%m-%d")
+    _register_labeled_folder("a", root, recent)
+    result = mcp_srv.check_labeled_folders_audit()
+    assert result[0]["auditStatus"] == "ok"
+    assert result[0]["daysRemaining"] == 25
+
+
+def test_labeled_folders_audit_due_past_threshold(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    old = (date.today() - timedelta(days=40)).strftime("%Y-%m-%d")
+    _register_labeled_folder("a", root, old)
+    result = mcp_srv.check_labeled_folders_audit()
+    assert result[0]["auditStatus"] == "due"
+    assert result[0]["daysRemaining"] <= 0
+
+
+def test_labeled_folders_audit_reports_path_missing(tmp_path):
+    missing = tmp_path / "does-not-exist"
+    _register_labeled_folder("gone", missing)
+    result = mcp_srv.check_labeled_folders_audit()
+    assert result[0]["pathExists"] is False
+    assert result[0]["markerLabel"] is None
+    assert result[0]["markerMatches"] is None
+
+
+def test_labeled_folders_audit_marker_matches(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "README.md").write_text(
+        "<!-- SSOT-LABEL: a -->\n\n# a\n", encoding="utf-8"
+    )
+    _register_labeled_folder("a", root)
+    result = mcp_srv.check_labeled_folders_audit()
+    assert result[0]["markerLabel"] == "a"
+    assert result[0]["markerMatches"] is True
+
+
+def test_labeled_folders_audit_marker_mismatch(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "README.md").write_text(
+        "<!-- SSOT-LABEL: wrong-name -->\n\n# a\n", encoding="utf-8"
+    )
+    _register_labeled_folder("a", root)
+    result = mcp_srv.check_labeled_folders_audit()
+    assert result[0]["markerLabel"] == "wrong-name"
+    assert result[0]["markerMatches"] is False
+
+
+def test_labeled_folders_audit_missing_readme_marker_is_none(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "README.md").write_text("# a\n", encoding="utf-8")
+    _register_labeled_folder("a", root)
+    result = mcp_srv.check_labeled_folders_audit()
+    assert result[0]["markerLabel"] is None
+    assert result[0]["markerMatches"] is False
+
+
+def test_labeled_folders_audit_filters_by_label(tmp_path):
+    root_a, root_b = tmp_path / "a", tmp_path / "b"
+    root_a.mkdir()
+    root_b.mkdir()
+    _register_labeled_folder("a", root_a)
+    _register_labeled_folder("b", root_b)
+    result = mcp_srv.check_labeled_folders_audit(label="b")
+    assert [r["label"] for r in result] == ["b"]
+
+
+def test_labeled_folders_audit_unknown_label():
+    result = mcp_srv.check_labeled_folders_audit(label="no-such-label")
+    assert result == [{"status": "label_not_found", "label": "no-such-label"}]
+
+
+def test_labeled_folders_audit_empty_registry_returns_empty_list():
+    assert mcp_srv.check_labeled_folders_audit() == []
+
+
+def test_labeled_folders_audit_result_is_json_serializable(tmp_path):
+    import json
+
+    root = tmp_path / "root"
+    root.mkdir()
+    _register_labeled_folder("a", root)
+    json.dumps(mcp_srv.check_labeled_folders_audit())
+
+
 # --------------------------------------------------------- D-057: 개발자 모드 게이팅
 
 def test_list_ssot_roots_gated_when_developer_mode_off(tmp_path):
@@ -543,6 +654,13 @@ def test_list_missing_index_folders_gated_when_developer_mode_off(tmp_path):
     assert result == [mcp_srv._DEV_MODE_OFF]
 
 
+def test_labeled_folders_audit_gated_when_developer_mode_off(tmp_path):
+    _register_labeled_folder("a", tmp_path)
+    rp.set_developer_mode(False, m.REGISTRY_PATH)
+    result = mcp_srv.check_labeled_folders_audit()
+    assert result == [mcp_srv._DEV_MODE_OFF]
+
+
 def test_tools_work_normally_when_developer_mode_explicitly_true(tmp_path):
     """기본값(필드 없음)뿐 아니라 명시적 True에서도 정상 동작하는지 —
     False만 잠그고 True는 그냥 통과시키는지 확인."""
@@ -568,3 +686,4 @@ def test_tools_are_registered_on_server():
     assert "list_triggered_actions" in names
     assert "list_registered_actions" in names
     assert "list_missing_index_folders" in names
+    assert "check_labeled_folders_audit" in names

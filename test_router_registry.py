@@ -6,6 +6,7 @@
 등록이 실제로 되는지만 추가로 검증한다."""
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 
 import router_registry as rr
@@ -117,3 +118,103 @@ def test_find_index_files_deterministic_on_case_duplicate(tmp_path, monkeypatch)
 
 def test_find_index_files_missing_folder_returns_empty(tmp_path):
     assert rr.find_index_files(tmp_path / "no-such-folder") == {}
+
+
+# ------------------------------------------------------- 라벨 폴더(O-018/D-073)
+
+def test_add_labeled_folder_appends_and_persists(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    rr.add_labeled_folder({"label": "a", "path": "C:\\a"}, registry_path)
+    folders = rr.load_labeled_folders(registry_path)
+    assert [f["label"] for f in folders] == ["a"]
+    assert folders[0]["parentLabel"] is None  # setdefault로 채워짐
+    assert folders[0]["lastAudited"] == ""
+
+
+def test_add_labeled_folder_rejects_duplicate_label(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    rr.add_labeled_folder({"label": "a", "path": "C:\\a"}, registry_path)
+    try:
+        rr.add_labeled_folder({"label": "a", "path": "C:\\b"}, registry_path)
+        assert False, "should have raised"
+    except ValueError as e:
+        assert "a" in str(e)
+    assert len(rr.load_labeled_folders(registry_path)) == 1
+
+
+def test_save_labeled_folders_preserves_roots_and_other_keys(tmp_path):
+    """D-020 유실 버그 재발 방지 — labeledFolders만 갱신해도 roots/
+    sharedDocs/relations는 그대로 남아야 한다(save_roots가 반대 방향으로
+    labeledFolders를 보존하는 것과 대칭)."""
+    registry_path = tmp_path / "ssot-roots.json"
+    rr.save_roots([{"label": "root-a", "path": "C:\\root-a"}], registry_path)
+    rr.add_labeled_folder({"label": "folder-a", "path": "C:\\folder-a"}, registry_path)
+    assert [r["label"] for r in rr.load_roots(registry_path)] == ["root-a"]
+    assert [f["label"] for f in rr.load_labeled_folders(registry_path)] == ["folder-a"]
+
+
+def test_save_roots_preserves_labeled_folders(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    rr.add_labeled_folder({"label": "folder-a", "path": "C:\\folder-a"}, registry_path)
+    rr.save_roots([{"label": "root-a", "path": "C:\\root-a"}], registry_path)
+    assert [f["label"] for f in rr.load_labeled_folders(registry_path)] == ["folder-a"]
+
+
+def test_mark_labeled_folder_audited_updates_date(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    rr.add_labeled_folder({"label": "a", "path": "C:\\a"}, registry_path)
+    rr.mark_labeled_folder_audited("a", registry_path, "2026-08-22")
+    folders = rr.load_labeled_folders(registry_path)
+    assert folders[0]["lastAudited"] == "2026-08-22"
+
+
+def test_mark_labeled_folder_audited_unknown_label_raises(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    try:
+        rr.mark_labeled_folder_audited("no-such-label", registry_path, "2026-08-22")
+        assert False, "should have raised"
+    except ValueError as e:
+        assert "no-such-label" in str(e)
+
+
+def test_labeled_folder_audit_status_never_audited():
+    result = rr.labeled_folder_audit_status({"label": "a", "lastAudited": ""}, date(2026, 8, 22))
+    assert result == {"label": "a", "status": "never_audited", "daysRemaining": None}
+
+
+def test_labeled_folder_audit_status_ok_shows_days_remaining():
+    entry = {"label": "a", "lastAudited": "2026-08-10"}
+    result = rr.labeled_folder_audit_status(entry, date(2026, 8, 15))  # 5일 경과
+    assert result == {"label": "a", "status": "ok", "daysRemaining": 25}
+
+
+def test_labeled_folder_audit_status_due_when_threshold_exceeded():
+    entry = {"label": "a", "lastAudited": "2026-07-01"}
+    result = rr.labeled_folder_audit_status(entry, date(2026, 8, 22))  # 52일 경과
+    assert result["status"] == "due"
+    assert result["daysRemaining"] <= 0
+
+
+def test_labeled_folder_audit_status_invalid_date_format():
+    entry = {"label": "a", "lastAudited": "not-a-date"}
+    result = rr.labeled_folder_audit_status(entry, date(2026, 8, 22))
+    assert result == {"label": "a", "status": "invalid_last_audited", "daysRemaining": None}
+
+
+def test_read_ssot_label_marker_finds_marker_near_top(tmp_path):
+    readme = tmp_path / "README.md"
+    readme.write_text(
+        "<!-- SSOT-LABEL: Sand_Box_Coding_Study -->\n\n# Sand_Box_Coding_Study\n",
+        encoding="utf-8",
+    )
+    assert rr.read_ssot_label_marker(readme) == "Sand_Box_Coding_Study"
+
+
+def test_read_ssot_label_marker_missing_returns_none(tmp_path):
+    readme = tmp_path / "README.md"
+    readme.write_text("# 그냥 README\n", encoding="utf-8")
+    assert rr.read_ssot_label_marker(readme) is None
+
+
+def test_read_ssot_label_marker_missing_file_returns_none(tmp_path):
+    assert rr.read_ssot_label_marker(tmp_path / "no-such-file.md") is None

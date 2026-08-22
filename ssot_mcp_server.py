@@ -45,6 +45,13 @@ AI 코딩 툴이 공통으로 지원하는 사실상 유일한 프로토콜이�
   venv 등)는 애초에 후보에서 제외. 그 폴더가 정말 "자기만의 규칙이 필요한
   단위"인지, 그렇다면 실제로 뭘 써야 할지는 여전히 호출한 에이전트가
   판단·작성(P-01, README 자동생성은 이 프로젝트가 계속 피해온 영역).
+- `check_labeled_folders_audit` — 라벨 폴더(`labeledFolders[]`, O-018(b)/
+  D-073) 감사 상태 조회. 각 항목의 30일 감사 문턱값(`lastAudited` 기준
+  남은 일수) + README.md의 `<!-- SSOT-LABEL: 이름 -->` 자기선언 마커가
+  레지스트리 label과 실제로 일치하는지까지 신호로 반환. 라벨-폴더-README
+  3자 일치 감사 자체(README 생성/재발급, 이동추적)는 이 tool이 하지 않고
+  신호만 준다 — 실제 감사는 Claude Code가 이 신호를 보고 세션 안에서
+  직접 수행(P-01, 다른 tool과 동일 원칙).
 
 **읽기 전용(P-01) 그대로 유지 — 단, 프로젝트 파일에 한정**: 이 서버는
 README.md/CLAUDE.md 같은 **프로젝트 파일은 절대 안 쓴다.** 결과를 받은
@@ -69,6 +76,7 @@ from __future__ import annotations
 
 import fnmatch
 import os
+from datetime import date
 from pathlib import Path
 
 from mcp.server import MCPServer
@@ -380,6 +388,61 @@ def list_missing_index_folders(root_label: str) -> list[dict]:
             {"path": str(entry), "hasClaudeMd": has_claude, "hasReadmeMd": has_readme}
         )
     return candidates
+
+
+@server.tool()
+def check_labeled_folders_audit(label: str | None = None) -> list[dict]:
+    """등록된 라벨 폴더(들)의 감사 상태를 확인한다(O-018(b)/D-073). label을
+    주면 그 하나만, 안 주면 등록된 전체를 확인한다. 각 항목에:
+    - `auditStatus`/`daysRemaining` — `lastAudited` 대비 30일 문턱값
+      (`router_registry.labeled_folder_audit_status`). "never_audited"는
+      한 번도 감사 안 된 상태로 즉시 `due`와 동일하게 취급해야 함.
+    - `pathExists` — 폴더가 실제로 있는지(D-052와 동일 원칙, 없어졌으면
+      이동/삭제 가능성 — 이 tool이 자동으로 재탐색하지 않는다).
+    - `markerLabel` — README.md 맨 위 `<!-- SSOT-LABEL: 이름 -->` 자기선언
+      값(없으면 None).
+    - `markerMatches` — markerLabel이 레지스트리 label과 실제로 같은지.
+      `pathExists`가 False거나 README가 없으면 None(비교 불가).
+    파일을 절대 안 고친다 — 3자 불일치가 보이면 실제로 README를 만들거나
+    고칠지는 호출한 에이전트(Claude Code)가 판단한다. 개발자 모드가
+    꺼져 있으면 다른 tool과 동일하게 에러 dict 하나만 반환(D-057)."""
+    if not is_developer_mode(REGISTRY_PATH):
+        return [_DEV_MODE_OFF]
+
+    folders = router_registry.load_labeled_folders(REGISTRY_PATH)
+    if label is not None:
+        folders = [f for f in folders if f.get("label") == label]
+        if not folders:
+            return [{"status": "label_not_found", "label": label}]
+
+    today = date.today()
+    results: list[dict] = []
+    for entry in folders:
+        audit = router_registry.labeled_folder_audit_status(entry, today)
+        folder_path = Path(entry.get("path", ""))
+        path_exists = folder_path.is_dir()
+
+        marker_label: str | None = None
+        marker_matches: bool | None = None
+        if path_exists:
+            readme_path = folder_path / "README.md"
+            if readme_path.is_file():
+                marker_label = router_registry.read_ssot_label_marker(readme_path)
+                marker_matches = marker_label == entry.get("label")
+
+        results.append(
+            {
+                "label": entry.get("label", ""),
+                "path": entry.get("path", ""),
+                "parentLabel": entry.get("parentLabel"),
+                "auditStatus": audit["status"],
+                "daysRemaining": audit["daysRemaining"],
+                "pathExists": path_exists,
+                "markerLabel": marker_label,
+                "markerMatches": marker_matches,
+            }
+        )
+    return results
 
 
 def main() -> None:
