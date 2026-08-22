@@ -3,11 +3,73 @@
 [![tests](https://github.com/yhs01103-png/SSOT_EXplorer_index/actions/workflows/tests.yml/badge.svg)](https://github.com/yhs01103-png/SSOT_EXplorer_index/actions/workflows/tests.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-SSOT 인덱싱 트리 전용 탐색기 대체 뷰어 + 다중 AI 툴 규칙 동기화 도구. Windows
-탐색기 대신, 각 폴더의 CLAUDE.md/README.md 내용을 트리 옆에서 바로 볼 수 있고,
-등록된 루트의 규칙을 CLAUDE.md/AGENTS.md/Cursor(`.cursor/rules/`)/
-Windsurf(`.windsurf/rules/`)로 동시에 맞출 수 있다(레거시 `.cursorrules`/
-`.windsurfrules`는 이미 있을 때만 동기화, D-036).
+여러 프로젝트, 여러 AI 코딩 툴(Claude Code/Cursor/Windsurf/Copilot)을 같이
+쓰다 보면 규칙 파일이 툴마다 따로 놀고 조용히 낡는다 — 한쪽만 고치고
+나머지는 잊어버리는 식으로. SSOT_Explorer는 이 문제를 "레지스트리 JSON
+하나만 진짜 소스로 두고, CLAUDE.md/AGENTS.md/Cursor/Windsurf 규칙파일
+4종은 전부 거기서 찍어내는 산출물로 격하"시켜서 없앤다. 여기에 Claude
+Code 세션이 열릴 때마다 레지스트리를 직접 재확인해 컨텍스트를 주입하는
+훅, 그리고 어떤 MCP 지원 IDE에서든 같은 신호를 받을 수 있는 MCP 서버가
+얹혀 있다.
+
+GUI는 Windows 탐색기 대체 겸용 — 각 폴더의 CLAUDE.md/README.md 내용을
+트리 옆에서 바로 볼 수 있고, `.cursor/rules/`·`.windsurf/rules/`(레거시
+`.cursorrules`/`.windsurfrules`는 이미 있을 때만, D-036)까지 4종 동시
+동기화도 여기서 바로 실행한다.
+
+## 아키텍처 한눈에
+
+```mermaid
+flowchart TD
+    REG[("SSOT 레지스트리<br/>ssot-roots.json")]
+    SYNC["동기화 엔진<br/>router_sync.py"]
+    EXP["신호 노출 계층<br/>GUI · CLI · MCP · 훅"]
+    HUMAN["사람 · AI 에이전트<br/>판단"]
+    FILES["실제 프로젝트 파일<br/>README · 코드 · 설정"]
+
+    REG -->|"씀 (SYNC_MARKER 있는 파일만)"| SYNC
+    SYNC --> CLAUDE[CLAUDE.md]
+    SYNC --> AGENTS[AGENTS.md]
+    SYNC --> CURSOR[.cursorrules]
+    SYNC --> WINDSURF[.windsurfrules]
+
+    REG -.->|"읽기 전용 신호(P-01)"| EXP
+    EXP -.-> HUMAN
+    HUMAN -.->|"판단 후에만 변경"| FILES
+```
+
+레지스트리가 직접 쓰는 건 위쪽 4개 규칙파일뿐(계약이 있을 때만) — 나머지는
+전부 신호만 내보내고, 실제 프로젝트 파일이 바뀌는 건 항상 그 신호를 받은
+사람/에이전트가 따로 판단한 뒤다. 전체 흐름과 상용 제품(Backstage/Cortex/
+Cursor 계열) 대비 정밀 비교는 아래 두 문서에 더 깊게 있다.
+
+## 설계 하이라이트
+
+- **원자적 쓰기 + 낙관적 동시성 제어**(D-021) — 레지스트리가 OneDrive로
+  여러 기기에 동기화되는 평범한 JSON 파일이라, `temp 파일 쓰기 → os.replace()`
+  로 원자성을 보장하고 저장 직전 디스크 해시를 재확인해 "다른 기기가 먼저
+  저장했으면 조용히 덮어쓰지 않고 멈춘다"(`RegistryConflictError`).
+- **추측 대신 실측으로 반복한 분류 로직**(D-030→D-033) — 실제 질의로
+  테스트해보니 정답 후보가 5순위로 밀리는 걸 발견(`floor` 방식 병합의
+  결함), 원인을 IDF 공유+additive 병합으로 고친 뒤 같은 질의로 재검증해서
+  개선을 수치로 확인 — "그럴듯해 보이는" 설계가 아니라 실행 결과로 다음
+  결정을 내리는 방식을 스스로 계속 적용.
+- **신호와 실행의 엄격한 분리(P-01)** — MCP 서버의 tool 7개는 전부 읽기
+  전용이다(개발자모드 게이팅까지 포함, D-057). "이 폴더가 낡았다"는 신호는
+  주지만 README를 대신 고쳐 쓰지 않는다 — 자동화를 넓히는 대신 어디까지가
+  안전한 자동화인지 경계를 계속 명시적으로 지켰다.
+
+## 아키텍처 분석 & 로드맵
+
+코드만 보면 안 드러나는 "왜 이렇게 설계했는지"를 정리한 두 문서:
+
+- **[SSOT_Explorer 해부도](https://claude.ai/code/artifact/5735551f-d123-4276-9ab9-bac4dc393bef)** —
+  레지스트리→동기화/분류/노출/피드백 전체 데이터 흐름 + Backstage·Cortex·
+  Cursor 계열 상용 제품과의 정밀 비교분석(강점/약점 둘 다 포함).
+- **[상용화 청사진](https://claude.ai/code/artifact/6279b656-5fe6-4475-b9d8-21b2150959e2)** —
+  개인 로컬 도구를 실제 제품으로 전환한다면 거쳐야 할 7단계 아키텍처
+  로드맵(데이터 계층→인증/RBAC→실시간 동기화→...) + Phase 2(인증/RBAC)
+  상세 스키마·권한 모델 설계.
 
 ## 설치 — CLI(전역, GUI 없이)
 

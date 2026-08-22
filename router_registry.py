@@ -287,7 +287,7 @@ def find_index_files(folder: Path) -> dict:
     """folder 바로 밑, 그리고 folder\\.claude 밑 양쪽에서 CLAUDE.md/README.md를
     찾는다 — 플랫 컨벤션과 `.claude` 하위 컨벤션 둘 다 지원. 바로 밑 파일이
     있으면 그쪽을 우선한다."""
-    found = {}
+    found: dict[str, Path] = {}
     if not folder.is_dir():
         return found
     candidates = [folder]

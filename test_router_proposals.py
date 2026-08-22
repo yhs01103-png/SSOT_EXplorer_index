@@ -116,7 +116,6 @@ def test_trust_resets_and_demotes_on_single_cancellation():
 
 def test_trust_is_tracked_independently_per_root_label():
     cand_a = {"rootLabel": "a", "rootPath": "C:\\a", "score": 0.5, "reason": "테스트"}
-    cand_b = {"rootLabel": "b", "rootPath": "C:\\b", "score": 0.5, "reason": "테스트"}
     for _ in range(rp.TRUST_PROMOTION_STREAK):
         rp.record_decision(cand_a, "x", "approved")
     assert rp.is_trusted("a") is True

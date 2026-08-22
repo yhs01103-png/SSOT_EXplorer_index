@@ -4,7 +4,6 @@
 받아 전면 교체한 결과."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest

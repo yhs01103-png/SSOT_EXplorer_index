@@ -46,7 +46,10 @@ def server_url():
 
 
 def _get(url: str):
-    with urllib.request.urlopen(url, timeout=5) as resp:
+    # url은 항상 이 파일의 server_url 픽스처(127.0.0.1 + OS가 배정한 테스트
+    # 전용 포트)에서만 만들어짐 — 외부 입력이 절대 아니라 스킴 인젝션 대상
+    # 없음.
+    with urllib.request.urlopen(url, timeout=5) as resp:  # nosec B310
         return resp.status, resp.read().decode("utf-8")
 
 

@@ -24,7 +24,7 @@ def test_add_root_rejects_duplicate_label(tmp_path):
     rr.add_root({"label": "a", "path": "C:\\a"}, registry_path)
     try:
         rr.add_root({"label": "a", "path": "C:\\b"}, registry_path)
-        assert False, "should have raised"
+        raise AssertionError("should have raised")
     except ValueError as e:
         assert "a" in str(e)
     # 실패한 시도가 파일을 더럽히지 않았는지
@@ -136,7 +136,7 @@ def test_add_labeled_folder_rejects_duplicate_label(tmp_path):
     rr.add_labeled_folder({"label": "a", "path": "C:\\a"}, registry_path)
     try:
         rr.add_labeled_folder({"label": "a", "path": "C:\\b"}, registry_path)
-        assert False, "should have raised"
+        raise AssertionError("should have raised")
     except ValueError as e:
         assert "a" in str(e)
     assert len(rr.load_labeled_folders(registry_path)) == 1
@@ -172,7 +172,7 @@ def test_mark_labeled_folder_audited_unknown_label_raises(tmp_path):
     registry_path = tmp_path / "ssot-roots.json"
     try:
         rr.mark_labeled_folder_audited("no-such-label", registry_path, "2026-08-22")
-        assert False, "should have raised"
+        raise AssertionError("should have raised")
     except ValueError as e:
         assert "no-such-label" in str(e)
 

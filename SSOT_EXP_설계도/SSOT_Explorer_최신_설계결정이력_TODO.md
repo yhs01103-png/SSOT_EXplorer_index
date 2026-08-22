@@ -2,7 +2,7 @@
 SSOT_Explorer — 최신 설계결정이력 + TODO
 ================================================================
 기준 버전: v1.0
-최종수정: 2026-08-22 (D-073)
+최종수정: 2026-08-23 (D-075)
 원칙: 가장 최근 라운드의 신규 결정(D-번호)과 전체 TODO(H-번호)만 담는다.
       더 오래된 결정은 레거시 파일로 이동.
 
@@ -2453,6 +2453,93 @@ D-071의 수동 venv 검증을 CI로 이관)
       registry.py 병합저장+원자적쓰기 패턴 원조), D-020(병합저장 유실버그
       재발 방지 원칙), D-031(SessionStart 훅 원조), D-045(세션 컨텍스트
       로그 — check_* 계열 함수 관례).
+
+[D-074] GUI 트리에 labeledFolders[] 노출 — D-073 이후 CLI/MCP/훅만 알던
+격차 해소(유기적 확장, 실제 구현)
+결정: `main.py`에 `load_labeled_folders()`(router_registry.load_labeled_
+      folders 얇은 래퍼, load_roots와 동일 패턴) 추가, `__init__`/
+      `refresh_tree`에서 `self.labeled_folders`로 로드. 새 메서드
+      `populate_labeled_folders()`가 `populate_roots()` 끝에서 호출돼
+      roots 밑·"전체 드라이브" 구분선 위에 라벨 폴더 전용 섹션을 추가한다
+      — 배열이 비어있으면 구분선조차 안 만듦(불필요한 빈 섹션 노출 방지).
+      각 항목은 (1) 기존 `style_item`으로 인덱스파일 존재시 볼드+툴팁(로직
+      재사용, 신규 스타일링 없음), (2) `router_registry.labeled_folder_
+      audit_status()`로 계산한 감사 상태를 툴팁에 추가(평소엔 "감사까지
+      N일 남음", `due`/`never_audited`면 항목 텍스트를 경고색(#C6631A)으로
+      칠하고 툴팁도 "⚠️ ..."로 교체 — 트리를 훑는 것만으로 감사가 밀린
+      폴더가 눈에 띄어야 한다는 대시보드 원칙), (3) 경로가 실제로 없으면
+      (이동/삭제) 툴팁에 그것도 별도로 덧붙임(D-052 pathExists 신호와 동일
+      원칙). `on_selection_changed`의 "인덱스 파일 없음" 안내 분기도
+      is_root/is_labeled_folder 둘을 구분해서 라벨 폴더 전용 안내(README
+      맨 위 SSOT-LABEL 마커 언급)를 추가.
+      **의도적으로 안 한 것**: 라벨 폴더용 추가/삭제 다이얼로그, 동기화
+      다이얼로그 연결 — roots[]와 같은 무게로 만들지 않는다는 D-073의
+      설계 의도를 그대로 유지(경량 배열은 계속 CLI(`router_registry.add_
+      labeled_folder` 등)/MCP/Claude Code의 직접 편집이 주 경로, GUI는
+      "보인다 + 감사 상태를 안다"까지만).
+이유: 사용자가 "유기적 확장하고(이건 실제 구현)"으로 요청 — 지난 라운드
+      말미에 정리한 3개 후보(O-018(b) 이동추적/O-014·O-016 시맨틱·AI판단
+      연결/GUI labeledFolders 노출) 중, 앞의 둘은 "실사용 데이터가 먼저
+      쌓여야" 원칙에 걸려 지금 착수하면 이 프로젝트가 계속 지켜온 "추측
+      대신 실측" 원칙과 충돌한다. GUI 격차만 데이터 없이도 바로 착수
+      가능한 순수 기능격차라서 이걸 골라 실제 구현까지 진행.
+검증: pytest 전체 327개 통과(신규 4개 — 빈 배열이면 구분선 없음/항목 실제
+      노출/경로 소실 툴팁/`due` 상태 경고색 표시, 전부 `@_WINDOWS_ONLY`
+      + `isolated_registry`/`isolated_qsettings` 기존 관례 그대로).
+관련 D-번호: D-073(labeledFolders 원조, 이 라운드에서 메운 격차), D-052
+      (pathExists 신호 원칙), D-048(감사 문턱값 재사용 관례).
+
+[D-075] CI에 코드품질 게이트 신설 — ruff/mypy(lint-and-typecheck) + bandit
+(security-scan) 2개 잡, 포트폴리오 공개 준비
+결정: `.github/workflows/tests.yml`에 두 잡 추가.
+      **lint-and-typecheck**: ruff는 select=[E4,E7,E9,F,I,UP,B](DTZ/S/SIM/
+      FURB 등 더 의견 강한 룰은 노이즈 대비 실익 낮아 제외, `[tool.ruff.
+      lint]`) — 전체 코드베이스(main.py/test_*.py 포함) 대상. mypy는
+      `[tool.mypy].files`로 헤드리스 코어 11개 모듈(router_*.py 8개+cli.py+
+      ssot_mcp_server.py)만 스코프 — main.py는 제외(PySide6 스텁이 Qt.
+      UserRole/QMessageBox.Yes 같은 런타임 존재 속성을 못 따라가서 실제
+      버그 아닌 거짓양성 11건이 나옴, 스텁 한계일 뿐).
+      **security-scan**: bandit `--severity-level medium --confidence-level
+      medium`(Low 584건은 대부분 subprocess 모듈 사용 자체를 정보성으로
+      플래그하는 것이라 이 개인 로컬 도구 규모에서 게이트 가치 낮음).
+      로컬에서 먼저 실측(`CI_보안게이트_레거시코드베이스_도입_패턴.md`의
+      "단계적으로 켜라" 원칙을 자기 프로젝트에 적용) → 발견된 실제 이슈
+      16(ruff)+2(bandit)건을 전부 검토 후 처리, 게이트 자체는 처음부터
+      100% 통과 상태로 킴(레거시 부채를 남겨둔 채 게이트만 먼저 켜지
+      않음 — 이 코드베이스 규모(작음)에선 그럴 이유가 없었음).
+      **실제 수정 내역**: import 정렬/미사용 import 5건·zip() strict=True
+      명시(router_embeddings.py, 길이 사전검증 있어 안전)·assert False→
+      raise AssertionError 3건(테스트)·미사용 변수 1건(테스트)·router_
+      registry.py find_index_files()의 dict 타입힌트 누락 1건은 그대로
+      고침. **판단해서 보존한 것 2건**: (1) main.py의 `import router_sync`
+      E402(파일 중간에 의도적으로 배치, 재노출 섹션 바로 옆 — noqa로
+      억제), `resolve_format_target` 재수출 import는 이 파일 안에서 직접
+      안 불려도(`router_sync.resolve_format_target`로만 호출) test_main.py
+      가 `m.resolve_format_target`로 재노출 여부 자체를 검증하는 공개
+      계약이라 F401 억제 후 유지 — ruff의 "파일 안에서 안 쓰임" 판단이
+      "공개 재노출 표면"이라는 맥락을 못 보는 경우의 실례. (2) bandit이
+      잡은 main.py의 `subprocess.Popen(["code", folder], shell=True)`도
+      제거 대신 `# nosec` — Windows에서 `code`가 .cmd 셔임이라 shell 없이
+      CreateProcess로 직접 실행하면 PATHEXT 해석이 안 돼 실제로 깨진다
+      (검증 없이 "보안 스캐너가 지적했으니 삭제"하지 않고 이유를 먼저
+      확인한 뒤 근거를 주석으로 남긴 채 억제). 테스트 파일의 urlopen
+      B310 1건도 동일 원칙(url이 127.0.0.1+OS배정포트뿐임을 확인 후 nosec).
+이유: 사용자가 GitHub 공개 포트폴리오 방향을 확정하며 "코드/인프라 쪽도"
+      개선하고 싶다고 요청 — 방금 발행한 두 아티팩트(해부도/청사진)가
+      설계 판단력을 보여준다면, 이 게이트는 코드 품질 실천을 실제로
+      증명하는 축. 마침 이 프로젝트 자신의 범용규칙 문서(`CI_보안게이트_
+      레거시코드베이스_도입_패턴.md`)가 정확히 이 상황(기존 코드베이스에
+      게이트 처음 도입)을 다루고 있어 그 원칙을 그대로 자기 프로젝트에
+      적용 — "패턴 문서만 쓰고 정작 자기 CI엔 안 붙임"이라는 어긋남을
+      해소.
+검증: 로컬에서 ruff(16→0)/mypy(1→0, 헤드리스 스코프)/bandit(2→0, medium+)
+      전부 클린 확인 후 CI에 반영. pytest 전체 327개 그대로 통과(수정이
+      런타임 동작을 바꾸지 않았는지 회귀 확인 — 특히 `resolve_format_
+      target` re-export를 처음에 실수로 지웠다가 test_main.py 1건이 바로
+      깨지는 걸로 잡아냄, 고쳐서 재통과).
+관련 D-번호: D-072(이 CI 파일의 packaging-boundary 잡 원조, 같은 "단계적
+      게이트" 철학), D-068(router_sync 분리 — resolve_format_target 재노출
+      맥락의 배경).
 
 ================================================================
 PART 2 — TODO

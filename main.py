@@ -15,29 +15,47 @@
 가장 자주 여는 루트라 세션 열 때 바로 보이는 게 편해서) — 예전엔 ~/.claude/ 밑
 전역 위치였음.
 """
-import sys
-import os
-import shutil
-import webbrowser
 import json
 import logging
+import os
+import shutil
 import subprocess
+import sys
 import traceback
+import webbrowser
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
+from PySide6.QtCore import QProcess, QSettings, Qt, QThread, Signal
+from PySide6.QtGui import QAction, QColor, QKeySequence
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QTreeWidget, QTreeWidgetItem, QSplitter,
-    QTextBrowser, QTextEdit, QToolBar, QLineEdit, QInputDialog, QFileDialog,
-    QMessageBox, QMenu, QListWidget, QListWidgetItem, QDialog, QVBoxLayout,
-    QDialogButtonBox, QWidget, QPushButton, QLabel, QHBoxLayout, QStyle,
+    QApplication,
+    QDialog,
+    QDialogButtonBox,
+    QFileDialog,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QMenu,
+    QMessageBox,
+    QPushButton,
+    QSplitter,
+    QStyle,
     QTabWidget,
+    QTextBrowser,
+    QTextEdit,
+    QToolBar,
+    QTreeWidget,
+    QTreeWidgetItem,
+    QVBoxLayout,
+    QWidget,
 )
-from PySide6.QtCore import Qt, QProcess, QThread, Signal, QSettings
-from PySide6.QtGui import QAction, QFont, QKeySequence
 
-import router_classifier
 import router_keyword_registry
 import router_orchestrator
 import router_proposals
@@ -164,6 +182,10 @@ RegistryConflictError = router_registry.RegistryConflictError
 
 def load_roots() -> list[dict]:
     return router_registry.load_roots(REGISTRY_PATH)
+
+
+def load_labeled_folders() -> list[dict]:
+    return router_registry.load_labeled_folders(REGISTRY_PATH)
 
 
 def load_shared_docs() -> list[dict]:
@@ -429,12 +451,13 @@ def save_roots(roots: list[dict]) -> None:
 # 적용). 이 파일에서 GUI가 필요로 하는 이름들은 아래에서 재노출만 한다
 # (호출부를 전부 안 고치기 위한 얇은 별칭 — 새 코드는 router_sync를 직접
 # 쓸 것).
-import router_sync
-from router_sync import (
+import router_sync  # noqa: E402 — 관련 재노출 코드 바로 옆에 의도적으로 배치(위 주석 참고)
+from router_sync import (  # noqa: E402
     FORMAT_TARGETS,
     SYNC_MARKER,
     resolve_claude_md_target,
-    resolve_format_target,
+    resolve_format_target,  # noqa: F401 — 이 파일 안에서 직접은 안 불림(router_sync.resolve_format_target로만
+    # 씀), 하지만 test_main.py가 m.resolve_format_target로 재노출 여부 자체를 검증하는 공개 별칭이라 유지.
 )
 
 
@@ -1197,6 +1220,7 @@ class SSOTExplorer(QMainWindow):
         self.resize(1200, 750)
 
         self.roots = load_roots()
+        self.labeled_folders = load_labeled_folders()
         # 2026-08-17(D-057) — 개발자 모드: 레지스트리 최상위 developerMode
         # 필드(기본 True, "이 앱을 쓴다는 건 이미 개발자"). 꺼지면 개발자
         # 탭이 숨겨지고 MCP 서버(ssot_mcp_server.py)의 3개 tool도 전부
@@ -1506,6 +1530,7 @@ class SSOTExplorer(QMainWindow):
         """레지스트리+파일시스템을 다시 읽어 트리를 재구성한다(F5). 예전엔
         외부에서(탐색기 등) 폴더/파일이 바뀌어도 앱을 재시작해야 보였음."""
         self.roots = load_roots()
+        self.labeled_folders = load_labeled_folders()
         self.tree.clear()
         self.populate_roots()
         self.statusBar().showMessage("🔄 새로고침 완료", 3000)
@@ -1742,6 +1767,8 @@ class SSOTExplorer(QMainWindow):
             self.tree.addTopLevelItem(item)
             self.add_children_placeholder(item, root_path)
 
+        self.populate_labeled_folders()
+
         # 2026-08-13(D-028) — 등록된 루트 밑에 전체 드라이브도 추가로 노출.
         # "앱을 켜면 어느 드라이브든 탐색기 전체가 들어온다" 요구 — 내용을
         # 미리 스캔하지 않고(느림+대부분 무관) 기존 지연로딩(on_item_expanded)
@@ -1760,6 +1787,41 @@ class SSOTExplorer(QMainWindow):
             item.setData(0, Qt.UserRole, str(drive_path))
             self.tree.addTopLevelItem(item)
             self.add_children_placeholder(item, drive_path)
+
+    def populate_labeled_folders(self):
+        """2026-08-22(D-073 후속, 유기적 확장) — labeledFolders[]는 지금까지
+        CLI/MCP/훅만 알고 GUI 트리엔 안 보였다(별도 top-level 순회가 없었기
+        때문). roots[]와 똑같은 무게로 취급하지 않는다 — 동기화/삭제 다이얼로그
+        는 여전히 roots 전용, 여기선 "보인다 + 감사 상태를 한눈에 안다"만
+        채운다(경량 배열이라는 설계 의도 그대로 유지)."""
+        if not self.labeled_folders:
+            return
+        separator = QTreeWidgetItem(["── 라벨 폴더 (경량 등록, O-018(b)) ──"])
+        separator.setFlags(Qt.NoItemFlags)
+        sep_font = separator.font(0)
+        sep_font.setItalic(True)
+        separator.setFont(0, sep_font)
+        self.tree.addTopLevelItem(separator)
+
+        today = datetime.now().date()
+        for f in self.labeled_folders:
+            folder_path = Path(f["path"])
+            audit = router_registry.labeled_folder_audit_status(f, today)
+            item = QTreeWidgetItem([f["label"]])
+            item.setData(0, Qt.UserRole, str(folder_path))
+            if folder_path.is_dir():
+                self.style_item(item, folder_path)
+                self.add_children_placeholder(item, folder_path)
+            if audit["status"] in ("never_audited", "due"):
+                item.setForeground(0, QColor("#C6631A"))
+                tip = "⚠️ 감사 이력 없음" if audit["status"] == "never_audited" else "⚠️ 30일 감사 주기 도달"
+            else:
+                tip = f"감사까지 {audit['daysRemaining']}일 남음"
+            if not folder_path.is_dir():
+                tip += " / ⚠️ 경로가 존재하지 않음(이동·삭제됐을 수 있음)"
+            existing_tip = item.toolTip(0)
+            item.setToolTip(0, f"{existing_tip}\n{tip}" if existing_tip else tip)
+            self.tree.addTopLevelItem(item)
 
     def style_item(self, item: QTreeWidgetItem, folder: Path):
         idx = find_index_files(folder)
@@ -1838,13 +1900,23 @@ class SSOTExplorer(QMainWindow):
         idx = find_index_files(target)
         if not idx:
             is_root = any(Path(r["path"]) == target for r in self.roots)
-            hint = (
-                "이 폴더는 등록된 루트입니다 — 툴바의 \"선택 루트 CLAUDE.md 동기화\"로 "
-                "레지스트리 참조조건 기반 init 파일을 만들 수 있습니다."
-                if is_root else
-                "일괄/자동 생성은 등록된 루트에만 적용됩니다. 이 폴더 자체에 만들려면 "
-                "직접 작성하거나 Claude Code에게 요청하세요."
-            )
+            is_labeled_folder = any(Path(f["path"]) == target for f in self.labeled_folders)
+            if is_root:
+                hint = (
+                    "이 폴더는 등록된 루트입니다 — 툴바의 \"선택 루트 CLAUDE.md 동기화\"로 "
+                    "레지스트리 참조조건 기반 init 파일을 만들 수 있습니다."
+                )
+            elif is_labeled_folder:
+                hint = (
+                    "이 폴더는 라벨 폴더로 등록돼 있습니다(labeledFolders[], 경량 등록) — "
+                    "README.md가 아직 없다면 직접 작성하고 맨 위에 "
+                    "<!-- SSOT-LABEL: 라벨명 --> 마커를 추가하세요(동기화 대상 아님)."
+                )
+            else:
+                hint = (
+                    "일괄/자동 생성은 등록된 루트에만 적용됩니다. 이 폴더 자체에 만들려면 "
+                    "직접 작성하거나 Claude Code에게 요청하세요."
+                )
             self.viewer.setPlainText(f"[{target}]\n\n이 폴더엔 CLAUDE.md/README.md가 없습니다.\n\n{hint}")
             return
         parts = []
@@ -1896,7 +1968,12 @@ class SSOTExplorer(QMainWindow):
         if chosen == act_explorer:
             os.startfile(folder)
         elif chosen == act_vscode:
-            subprocess.Popen(["code", folder], shell=True)
+            # shell=True는 의도적 — Windows에서 `code`는 실제 .exe가 아니라
+            # .cmd 셔임이라, shell 없이 CreateProcess로 직접 실행하면
+            # PATHEXT 해석이 안 돼 FileNotFoundError가 난다. folder는
+            # 외부 입력이 아니라 이 앱이 이미 탐색한 로컬 파일시스템 경로뿐
+            # (사용자가 트리에서 고른 폴더) — 인젝션 대상이 아님.
+            subprocess.Popen(["code", folder], shell=True)  # nosec B602
         elif chosen == act_terminal:
             subprocess.Popen(["cmd.exe", "/K", f"cd /d {folder}"])
         elif chosen == act_claude:

@@ -40,7 +40,40 @@ mcp = ["mcp"]
 all = ["ssot-explorer[gui,semantic,mcp]"]
 
 [dependency-groups]
-dev = ["pytest"]
+dev = ["pytest", "ruff", "mypy", "bandit"]
+
+# 2026-08-23 — 포트폴리오 공개 준비로 첫 코드품질 게이트 도입(CI_보안게이트_
+# 레거시코드베이스_도입_패턴.md의 "단계적으로 켜라" 원칙 그대로 자기 프로젝트에
+# 적용). select는 ruff 기본(E4/E7/E9/F) + import정렬(I) + 모더나이즈(UP) +
+# 흔한 버그패턴(B) — DTZ(naive datetime)/S(bandit 중복, bandit 별도 잡이 이미
+# 담당)/SIM/FURB 등 더 의견 강한 룰은 노이즈 대비 실익이 낮아 첫 게이트에서
+# 제외(필요해지면 나중에 추가).
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
+
+# main.py(PySide6)는 스코프 밖 — Qt.UserRole/QMessageBox.Yes 같은 런타임
+# 존재 속성을 PySide6 스텁이 못 따라가서(실제 버그 아님, 스텁 한계) 여기
+# 게이트에 넣으면 첫날부터 거짓양성 11건으로 시작하게 된다. test_*.py도
+# 스코프 밖(신뢰 경계 안 — 배포되지 않는 코드). 헤드리스 코어 모듈만 지금
+# 당장 100% 클린이라 여기부터 게이트, 나머지는 실사용 후 판단.
+[tool.mypy]
+ignore_missing_imports = true
+files = [
+    "cli.py",
+    "router_ai_judgment.py",
+    "router_classifier.py",
+    "router_embeddings.py",
+    "router_keyword_registry.py",
+    "router_orchestrator.py",
+    "router_proposals.py",
+    "router_registry.py",
+    "router_sync.py",
+    "router_watcher.py",
+    "ssot_mcp_server.py",
+]
 
 [project.scripts]
 # The CLI (cli.py) — works with only the `core` deps above, no extras

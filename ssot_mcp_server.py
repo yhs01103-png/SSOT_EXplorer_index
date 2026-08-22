@@ -83,7 +83,10 @@ from mcp.server import MCPServer
 
 import router_orchestrator  # Qt 미의존 순수 모듈 — main.py와 달리 순환참조 없이 top-level import 가능
 import router_registry  # Qt 미의존(D-069/D-071) — load_roots/find_index_files
-from router_proposals import is_developer_mode, resolve_registry_path  # Qt 미의존, 안전하게 top-level import
+from router_proposals import (  # Qt 미의존, 안전하게 top-level import
+    is_developer_mode,
+    resolve_registry_path,
+)
 
 # 2026-08-21(D-071) — main.py의 REGISTRY_PATH와 같은 로직(router_proposals.
 # resolve_registry_path())을 이 모듈도 top-level에서 직접 계산한다 — 이제

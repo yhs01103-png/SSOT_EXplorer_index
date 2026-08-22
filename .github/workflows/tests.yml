@@ -7,6 +7,39 @@ on:
     branches: [master]
 
 jobs:
+  # 2026-08-23 — 코드품질 게이트 신설(포트폴리오 공개 준비). ruff는 전체
+  # 코드베이스(main.py/test_*.py 포함) 대상, mypy는 pyproject.toml
+  # [tool.mypy].files로 스코프를 헤드리스 코어 모듈만으로 한정(PySide6 스텁
+  # 거짓양성 회피 — 위 pyproject.toml 주석 참고). 둘 다 GUI/무거운 extras
+  # 설치가 필요 없어 pytest 잡보다 훨씬 가볍고 빠르다.
+  lint-and-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e . -r requirements-dev.txt
+      - run: ruff check .
+      - run: mypy
+
+  # bandit(SAST) — CI_보안게이트_레거시코드베이스_도입_패턴.md의 "실패 시
+  # 닫힘" 원칙 그대로: 이 잡이 실패하면(medium 이상 심각도 신규 발견) 머지를
+  # 막는다. Low severity(584건, 대부분 subprocess 모듈 사용 자체를 정보성으로
+  # 플래그하는 것)는 이 개인 로컬 도구 규모에서 실익이 낮아 제외 — medium+
+  # 만 게이트, 실제 발견된 2건(main.py `code` 런처 shell=True, 테스트의
+  # 127.0.0.1 전용 urlopen)은 둘 다 검토 후 `# nosec` 주석으로 근거 남기고
+  # 억제(자동 무시가 아니라 각 건 판단 후 처리).
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - run: bandit -r . -x "./build,./dist,./__pycache__,./.pytest_cache" --severity-level medium --confidence-level medium
+
   pytest:
     runs-on: ubuntu-latest
     env:

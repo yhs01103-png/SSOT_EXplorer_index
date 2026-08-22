@@ -17,13 +17,12 @@ import sys
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import Qt, QSettings
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import QApplication, QMessageBox, QStyle
 
 import main as m
 import router_proposals
-
 
 # ------------------------------------------------------------------ fixtures
 
@@ -811,6 +810,75 @@ def test_populate_roots_adds_drive_section_without_crashing_reveal(isolated_regi
         assert win.tree.topLevelItemCount() >= 2
         # 존재하지 않는 경로라 실제로 못 찾지만, 예외 없이 조용히 리턴돼야 함
         win.reveal_path("C:\\definitely-does-not-exist-xyz")
+    finally:
+        win.close()
+
+
+@_WINDOWS_ONLY
+def test_populate_labeled_folders_adds_separator_and_items(isolated_registry, isolated_qsettings, tmp_path):
+    """D-073 후속(유기적 확장) — labeledFolders[]가 트리에 실제로 보이는지.
+    빈 경우엔 구분선조차 없어야 한다(불필요한 빈 섹션 노출 방지)."""
+    folder = tmp_path / "labeled-a"
+    folder.mkdir()
+    import router_registry as rr
+    rr.add_labeled_folder({"label": "labeled-a", "path": str(folder)}, m.REGISTRY_PATH)
+
+    win = m.SSOTExplorer()
+    try:
+        labels = [win.tree.topLevelItem(i).text(0) for i in range(win.tree.topLevelItemCount())]
+        assert any("라벨 폴더" in label for label in labels)
+        assert "labeled-a" in labels
+    finally:
+        win.close()
+
+
+@_WINDOWS_ONLY
+def test_populate_labeled_folders_skipped_when_empty(isolated_registry, isolated_qsettings):
+    win = m.SSOTExplorer()
+    try:
+        labels = [win.tree.topLevelItem(i).text(0) for i in range(win.tree.topLevelItemCount())]
+        assert not any("라벨 폴더" in label for label in labels)
+    finally:
+        win.close()
+
+
+@_WINDOWS_ONLY
+def test_labeled_folder_item_flags_due_audit_with_warning_color(isolated_registry, isolated_qsettings, tmp_path):
+    from datetime import date, timedelta
+
+    from PySide6.QtGui import QColor
+
+    folder = tmp_path / "labeled-b"
+    folder.mkdir()
+    import router_registry as rr
+    old = (date.today() - timedelta(days=40)).strftime("%Y-%m-%d")
+    rr.add_labeled_folder({"label": "labeled-b", "path": str(folder), "lastAudited": old}, m.REGISTRY_PATH)
+
+    win = m.SSOTExplorer()
+    try:
+        item = next(
+            win.tree.topLevelItem(i) for i in range(win.tree.topLevelItemCount())
+            if win.tree.topLevelItem(i).text(0) == "labeled-b"
+        )
+        assert item.foreground(0).color() == QColor("#C6631A")
+        assert "감사" in item.toolTip(0)
+    finally:
+        win.close()
+
+
+@_WINDOWS_ONLY
+def test_labeled_folder_item_reports_missing_path(isolated_registry, isolated_qsettings, tmp_path):
+    missing = tmp_path / "does-not-exist"
+    import router_registry as rr
+    rr.add_labeled_folder({"label": "gone", "path": str(missing)}, m.REGISTRY_PATH)
+
+    win = m.SSOTExplorer()
+    try:
+        item = next(
+            win.tree.topLevelItem(i) for i in range(win.tree.topLevelItemCount())
+            if win.tree.topLevelItem(i).text(0) == "gone"
+        )
+        assert "경로가 존재하지 않음" in item.toolTip(0)
     finally:
         win.close()
 
