@@ -2891,6 +2891,49 @@ D-048 결정문의 대조표 그대로 유효.
 싶어질 때(그때 등록 절차 + 위 항목들 우선순위를 같이 정함).
 관련 D-번호: D-020, D-045, D-048, O-009.
 
+**D-081로 재논의 착수(2026-08-24)** — "범용 IDE 플러그인" 포지셔닝을
+실제로 뒷받침하려면 Claude Code 하나만 검증된 상태로는 부족하다고 판단,
+Cursor/Windsurf도 실제로 등록·검증 시작.
+- **Cursor**: 설치 확인됨(`Cursor.exe`). `~/.cursor/mcp.json`에
+  `{"mcpServers": {"ssot-explorer": {"command": "python", "args":
+  ["<ssot_mcp_server.py 절대경로>"]}}}` 수동 생성 후, Cursor UI("Configure
+  ssot-explorer" 다이얼로그, Scope=User `~/.cursor/mcp.json`)에서 **실측
+  확인 완료 — Environment: Local, Connected**. tools 목록·개별 토글까지
+  스크린샷으로 확인(2026-08-24) — 스크롤 위치상 4개(`list_ssot_roots`/
+  `check_readme_freshness`/`classify_content`/`list_triggered_actions`)만
+  찍혔지만, 서버가 실제로 노출하는 건 `ssot_mcp_server.py`의
+  `@server.tool()` 총 7개(위 4개 + `list_registered_actions`/
+  `list_missing_index_folders`/`check_labeled_folders_audit`) — 스크롤
+  아래 3개는 화면 밖이라 안 찍힌 것뿐 누락 아님.
+  Cursor는 MCP 설정이 General Settings 검색으로는 안 뜨고(검색 결과는
+  `Agents > Allowlist options`/`Agents > Run Mode`뿐), Agent 패널 안
+  별도 MCP 관리 화면에 있다는 것도 실측으로 확인 — 향후 비슷한 안내할 때
+  참고.
+- **Windsurf**: 이 PC에 **설치 자체가 안 돼 있었음**(`.codeium` 폴더/설치
+  경로 둘 다 없음, 2026-08-24 확인) — `winget install --id Codeium.
+  Windsurf`로 설치(v2.3.15). `~/.codeium/windsurf/mcp_config.json`을
+  Cursor와 같은 형식으로 생성 → **실측 확인 완료**. 단, 과정에서 실측
+  발견 하나: 로그인 도중 자동 업데이트가 걸려 실행파일 자체가
+  `Windsurf.exe` → `Devin.exe`로 교체됨(`CompanyName: Codeium
+  (Exafunction, Inc.)` — 같은 배포사의 리브랜딩, Cognition의 Windsurf
+  인수 이후 진행 중인 것으로 추정). 그 타이밍에 로그인 리다이렉트가
+  "Error: No token"으로 끊기고 방화벽/프록시 문구가 떴으나, 실측으로
+  `codeium.com`/`windsurf.com` 443 포트 연결 자체는 정상이고 시스템
+  프록시도 없음 확인 — 리브랜딩 전환 타이밍 문제였지 네트워크 문제
+  아니었음. **로그인 없이 "skip authentication and enter editor"로
+  진입해도 MCP는 그대로 동작** — Cascade MCP 화면("MCP: ssot-explorer"
+  탭)에서 "ssot-explorer MCP — Connected"(초록색), tool 7개
+  (`list_ssot_roots`/`check_readme_freshness`/`classify_content`/
+  `list_triggered_actions`/`list_registered_actions`/
+  `list_missing_index_folders`/`check_labeled_folders_audit`) 전부
+  체크된 상태로 스크린샷 확인(2026-08-24). Devin(리브랜딩 후)에서도
+  `~/.codeium/windsurf/mcp_config.json` 경로가 그대로 유효함이 실측
+  확인됨.
+**결론(D-081 종결)**: Claude Code/Cursor/Windsurf(Devin) 3개 MCP 지원
+IDE 전부 실측 연결 확인 완료 — "범용 IDE 플러그인" 포지셔닝이 이제
+문서 주장이 아니라 실측 근거를 갖춤.
+관련 D-번호(추가): D-081 자체.
+
 [O-013] 임의 스크립트를 트리거 조건 + 자동/승인 정책과 함께 등록하는 일반
 메커니즘("액션 레지스트리"). 2026-08-17, Lazzy_App_OS_Monorepo 세션에서
 productized/check_drift.py(포팅한 소스가 원본 대비 드리프트났는지 검사하는
