@@ -48,6 +48,25 @@ dev = ["pytest", "ruff", "mypy", "bandit"]
 # 흔한 버그패턴(B) — DTZ(naive datetime)/S(bandit 중복, bandit 별도 잡이 이미
 # 담당)/SIM/FURB 등 더 의견 강한 룰은 노이즈 대비 실익이 낮아 첫 게이트에서
 # 제외(필요해지면 나중에 추가).
+# 2026-08-24 — 커버리지 측정(포트폴리오 정량 신호). source는 배포되는
+# 모듈 전체(main.py 포함 — test_main.py가 실제로 GUI 경로까지 QT
+# offscreen으로 실행하므로 측정 대상에서 뺄 이유가 없음, ruff/mypy가
+# main.py를 스코프 밖으로 둔 것과는 다른 이유: 그쪽은 "린트 스텁 오탐"
+# 문제라 커버리지엔 해당 없음). 테스트 파일 자체/빌드산출물은 제외.
+[tool.coverage.run]
+source = ["."]
+# shibokensupport/*, signature_bootstrap.py — PySide6/shiboken이 import 시점에
+# CWD에 잠깐 풀어놨다 지우는 런타임 부트스트랩 파일(실측 확인, 2026-08-24:
+# 실행 후엔 디스크에 없음) — 프로젝트 코드 아님, coverage의 "no source"
+# 경고 노이즈만 만들어서 명시적으로 제외.
+omit = [
+    "build/*", "dist/*", "*/__pycache__/*", "test_*.py", "setup.py",
+    "shibokensupport/*", "signature_bootstrap.py",
+]
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "if __name__ == .__main__.:"]
+
 [tool.ruff]
 target-version = "py310"
 

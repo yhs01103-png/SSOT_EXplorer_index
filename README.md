@@ -1,6 +1,7 @@
 # SSOT Explorer
 
 [![tests](https://github.com/yhs01103-png/SSOT_EXplorer_index/actions/workflows/tests.yml/badge.svg)](https://github.com/yhs01103-png/SSOT_EXplorer_index/actions/workflows/tests.yml)
+[![coverage](https://img.shields.io/badge/coverage-80%25-brightgreen.svg)](.github/workflows/tests.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 여러 프로젝트, 여러 AI 코딩 툴(Claude Code/Cursor/Windsurf/Copilot)을 같이

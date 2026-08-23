@@ -8,6 +8,10 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
+# 2026-08-24 — pytest-cov 실행 산출물(로컬/CI 매 실행마다 재생성)
+.coverage
+htmlcov/
+
 # D-070 — pyproject.toml 패키징 산출물(pip install -e .가 소스트리 안에 생성)
 *.egg-info/
 

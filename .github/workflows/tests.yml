@@ -62,7 +62,10 @@ jobs:
       # 이러면 이 잡 자체가 pyproject.toml이 실제로 맞는지도 매번 검증해준다.
       # pytest 버전은 requirements-dev.txt 핀 그대로 유지.
       - run: pip install -e ".[all]" -r requirements-dev.txt
-      - run: pytest -q
+      # 2026-08-24 — 커버리지 게이트. fail-under=75는 실측값(80%, 로컬
+      # 333 tests)에서 5%p 버퍼 — MIN_SIMILARITY 재보정과 같은 "안전선"
+      # 원칙(여유 두고 시작, 실사용/변경 누적되면 재조정).
+      - run: pytest -q --cov --cov-report=term-missing --cov-fail-under=75
 
   # D-072 — "core만 설치해도 PySide6/fastembed/mcp 없이 동작한다"는 주장을
   # 사람이 손으로 새 venv를 만들어 확인하던 것(D-070/D-071, 매번 수동)을
