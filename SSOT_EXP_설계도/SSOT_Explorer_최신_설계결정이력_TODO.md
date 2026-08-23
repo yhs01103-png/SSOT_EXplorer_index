@@ -3041,6 +3041,30 @@ _find_readme와 동일하게 플랫 루트/`.claude` 하위 두 위치만, 대�
 관련 D-번호: D-011(flutter_App README 없음 원 확인), D-073((b), 인접
 트랙).
 
+[O-019] PyPI 배포 — 포트폴리오 접근성 개선(2026-08-24, 방문자가 클론 대신
+`pip install ssot-explorer` 한 줄로 설치 가능하게).
+확인된 사실(2026-08-24): (1) `python -m build`로 로컬 빌드(sdist+wheel)
+성공, `twine check` 둘 다 PASSED — `pyproject.toml` 메타데이터(name/
+version/license/entry_points) 자체엔 결함 없음. (2) PyPI JSON API
+(`pypi.org/pypi/ssot-explorer/json`) 404 확인 — `ssot-explorer` 이름
+아직 비어있음, 지금 등록 가능.
+임시결정: 방향은 정함 — GitHub Actions + **PyPI Trusted Publishing**
+(OIDC, API 토큰을 Secrets에 저장할 필요 없이 PyPI 쪽에서 "이 repo+workflow
+파일만 신뢰"로 등록해두면 릴리즈 태그 시 자동 인증). 실행은 보류 —
+(a) PyPI 쪽 "pending publisher" 등록은 사용자 로그인이 필요해 Claude Code가
+대신 못 함 (b) 실제 첫 배포 트리거(GitHub 릴리즈 태그 생성)는 PyPI 특성상
+같은 버전 재업로드/삭제가 안 되는 되돌리기 어려운 행동이라 사용자 승인
+없이 실행 안 함(P-01과 같은 원칙).
+남은 절차(문서만, 미실행): 1) `.github/workflows/publish.yml` 작성(release
+태그 트리거, trusted publishing) 2) 사용자가 pypi.org에서 프로젝트
+`ssot-explorer`에 대해 pending publisher 등록(repo=
+`yhs01103-png/SSOT_EXplorer_index`, workflow 파일명 지정) 3) 사용자가
+GitHub 릴리즈 태그 생성 → 실제 첫 배포.
+재논의 조건: 사용자가 2)를 완료(PyPI 계정 준비+trusted publisher 등록)하면
+즉시 1) 워크플로 작성 착수.
+관련 D-번호: 없음(신규 항목, 아직 D로 승격 안 됨 — 실행 전까지 O-번호로만
+추적).
+
 ================================================================
 변경이력
 ================================================================
