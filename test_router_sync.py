@@ -13,6 +13,19 @@ import router_sync as rs
 _REGISTRY_PATH = Path("C:\\fake-registry\\ssot-roots.json")  # 이 파일들은 경로를 문자열로만 박아넣지 실제로 안 읽음
 
 
+# --------------------------------------------------- resolve_claude_md_target
+
+def test_resolve_claude_md_target_flat_when_no_nested_claude_folder(tmp_path):
+    assert rs.resolve_claude_md_target(tmp_path) == tmp_path / "CLAUDE.md"
+
+
+def test_resolve_claude_md_target_prefers_nested_when_it_exists(tmp_path):
+    nested_dir = tmp_path / ".claude"
+    nested_dir.mkdir()
+    (nested_dir / "CLAUDE.md").write_text("x", encoding="utf-8")
+    assert rs.resolve_claude_md_target(tmp_path) == nested_dir / "CLAUDE.md"
+
+
 # --------------------------------------------------- generate_init_pointer
 
 def test_init_pointer_marks_web_as_sole_source():
@@ -35,6 +48,11 @@ def test_init_pointer_includes_registry_path():
     assert str(_REGISTRY_PATH) in text
 
 
+def test_init_claude_md_is_wrapper_for_pointer():
+    entry = {"label": "a"}
+    assert rs.generate_init_claude_md(entry, _REGISTRY_PATH) == rs.generate_init_pointer(entry, "CLAUDE.md", _REGISTRY_PATH)
+
+
 # --------------------------------------------- generate_full_export_pointer
 
 def test_full_export_pointer_warns_when_web_primary():
@@ -44,6 +62,43 @@ def test_full_export_pointer_warns_when_web_primary():
     }
     text = rs.generate_full_export_pointer(entry, "CLAUDE.md")
     assert text.split("## 참조 조건")[0].count("⚠️") >= 1
+
+
+def test_full_export_pointer_marks_web_as_reference_only_when_not_primary():
+    entry = {
+        "label": "a", "webArtifactUrl": "https://example.com",
+        "primarySource": "local", "referenceCondition": "x",
+    }
+    text = rs.generate_full_export_pointer(entry, "CLAUDE.md")
+    assert "참고(정본 아님)" in text
+    assert "⚠️" not in text
+
+
+def test_full_export_claude_md_is_wrapper_for_pointer():
+    entry = {"label": "a", "referenceCondition": "x"}
+    assert rs.generate_full_export_claude_md(entry) == rs.generate_full_export_pointer(entry, "CLAUDE.md")
+
+
+# ------------------------------------------------------------ README 포인터
+
+def test_init_readme_md_includes_registry_path_and_label():
+    entry = {"label": "a"}
+    text = rs.generate_init_readme_md(entry, _REGISTRY_PATH)
+    assert str(_REGISTRY_PATH) in text
+    assert 'label == "a"' in text
+    assert rs.SYNC_MARKER in text
+
+
+def test_full_export_readme_md_includes_condition_verbatim():
+    entry = {"label": "a", "readmeReferenceCondition": "이 README는 이럴 때 연다"}
+    text = rs.generate_full_export_readme_md(entry)
+    assert "이 README는 이럴 때 연다" in text
+
+
+def test_full_export_readme_md_defaults_when_condition_empty():
+    entry = {"label": "a"}
+    text = rs.generate_full_export_readme_md(entry)
+    assert "(비어있음)" in text
 
 
 # ------------------------------------------------------------ FORMAT_TARGETS
@@ -122,6 +177,15 @@ def test_write_one_format_overwrites_hand_edited_file_with_force(tmp_path):
     result = rs.write_one_format(tmp_path, entry, "CLAUDE.md", _REGISTRY_PATH, force=True)
     assert result == "ok"
     assert rs.SYNC_MARKER in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+
+
+def test_write_one_format_returns_fail_on_oserror(tmp_path):
+    """target 자리에 같은 이름의 디렉토리를 만들어 write_text가 실제
+    OSError(IsADirectoryError)를 던지게 함 — mock 없이 실제 조건으로 재현."""
+    entry = {"label": "a", "path": str(tmp_path)}
+    (tmp_path / "CLAUDE.md").mkdir()
+    result = rs.write_one_format(tmp_path, entry, "CLAUDE.md", _REGISTRY_PATH, force=True)
+    assert result == "fail"
 
 
 # -------------------------------------------------------------- needs_confirmation
