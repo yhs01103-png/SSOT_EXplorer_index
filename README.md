@@ -4,19 +4,59 @@
 [![coverage](https://img.shields.io/badge/coverage-80%25-brightgreen.svg)](.github/workflows/tests.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-여러 프로젝트, 여러 AI 코딩 툴(Claude Code/Cursor/Windsurf/Copilot)을 같이
-쓰다 보면 규칙 파일이 툴마다 따로 놀고 조용히 낡는다 — 한쪽만 고치고
-나머지는 잊어버리는 식으로. SSOT_Explorer는 이 문제를 "레지스트리 JSON
-하나만 진짜 소스로 두고, CLAUDE.md/AGENTS.md/Cursor/Windsurf 규칙파일
-4종은 전부 거기서 찍어내는 산출물로 격하"시켜서 없앤다. 여기에 Claude
-Code 세션이 열릴 때마다 레지스트리를 직접 재확인해 컨텍스트를 주입하는
-훅, 그리고 어떤 MCP 지원 IDE에서든 같은 신호를 받을 수 있는 MCP 서버가
-얹혀 있다.
+**MCP 서버 하나로 Claude Code/Cursor/Windsurf 등 MCP를 지원하는 어떤
+IDE·에이전트에도 붙는, 읽기 전용 프로젝트 인덱스 신호 제공자다.** 여러
+프로젝트, 여러 AI 코딩 툴을 같이 쓰다 보면 규칙 파일(CLAUDE.md/AGENTS.md/
+Cursor/Windsurf 규칙)이 툴마다 따로 놀고 조용히 낡는다 — 한쪽만 고치고
+나머지는 잊어버리는 식으로. SSOT_Explorer는 "레지스트리 JSON 하나만 진짜
+소스로 두고, 저 4종 규칙파일은 전부 거기서 찍어내는 산출물로 격하"시켜서
+이 문제를 없앤다. 서버 자신은 파일을 절대 안 쓴다(P-01) — "이 폴더가
+낡았다/어디 소속이다" 같은 신호만 주고, 실제 조치는 그 신호를 받은
+IDE·에이전트가 판단해서 한다.
 
-GUI는 Windows 탐색기 대체 겸용 — 각 폴더의 CLAUDE.md/README.md 내용을
-트리 옆에서 바로 볼 수 있고, `.cursor/rules/`·`.windsurf/rules/`(레거시
-`.cursorrules`/`.windsurfrules`는 이미 있을 때만, D-036)까지 4종 동시
-동기화도 여기서 바로 실행한다.
+## IDE에 연결하기
+
+아직 PyPI에 배포 전이라(O-019, 진행 중) 지금은 이 저장소를 클론한 뒤
+로컬 설치한다 — 클론 경로 안에서:
+
+```bash
+pip install ".[mcp]"   # 또는 pipx install ".[mcp]"
+```
+
+**Claude Code** — 저장소 루트에 이미 있는 `.mcp.json`이 프로젝트 스코프로
+자동 인식되거나, 전역으로 붙이려면:
+```bash
+claude mcp add ssot-explorer --scope user -- python /path/to/ssot_mcp_server.py
+```
+
+**Cursor** — `~/.cursor/mcp.json`:
+```json
+{
+  "mcpServers": {
+    "ssot-explorer": {
+      "command": "python",
+      "args": ["/path/to/ssot_mcp_server.py"]
+    }
+  }
+}
+```
+
+**Windsurf** — `~/.codeium/windsurf/mcp_config.json`(같은 포맷):
+```json
+{
+  "mcpServers": {
+    "ssot-explorer": {
+      "command": "python",
+      "args": ["/path/to/ssot_mcp_server.py"]
+    }
+  }
+}
+```
+
+세 곳 모두 실제로 붙여서 "Connected" 상태와 tool 7개 노출까지 직접
+확인했다(D-081, 2026-08-24) — 문서상 주장이 아니라 실측이다. 등록 후
+`ssot register <path> --label <name>`으로 프로젝트를 몇 개든 추가하면
+그 순간부터 모든 연결된 IDE가 같은 인덱스를 본다.
 
 ## 아키텍처 한눈에
 
@@ -78,10 +118,12 @@ Cursor 계열) 대비 정밀 비교는 아래 두 문서에 더 깊게 있다.
   로드맵(데이터 계층→인증/RBAC→실시간 동기화→...) + Phase 2(인증/RBAC)
   상세 스키마·권한 모델 설계.
 
-## 설치 — CLI(전역, GUI 없이)
+## 설치 — CLI(IDE 없이 터미널에서 직접, GUI도 없이)
 
-`ssot` 커맨드는 GUI(PySide6) 없이 동작한다(D-068~D-070) — `pipx`로 설치하면
-다른 파이썬 프로젝트와 의존성이 안 섞인 채로 전역에서 바로 쓸 수 있다:
+위 "IDE에 연결하기"는 MCP 경로다 — IDE를 거치지 않고 터미널에서 바로
+분류/동기화하고 싶을 때는 `ssot` 커맨드를 쓴다. GUI(PySide6) 없이
+동작한다(D-068~D-070) — `pipx`로 설치하면 다른 파이썬 프로젝트와
+의존성이 안 섞인 채로 전역에서 바로 쓸 수 있다:
 
 ```bash
 pipx install .          # 이 폴더에서, 또는 git+https://... 로 원격 설치
@@ -127,6 +169,10 @@ pip install ".[all]"        # 전부
   스크래치 테스트를 새로 써서 지우는 대신 여기 추가해서 계속 쌓아간다.
 
 ## 기능
+
+핵심(MCP 서버·훅)은 위에서 이미 다뤘다 — 아래는 그걸 만들고 검증하는 데
+쓴 **선택 사항인 로컬 GUI 뷰어**(Windows 전용, `pip install
+"ssot-explorer[gui]"`)와 CLI/Inbox 감시 등 나머지 기능 전체다.
 
 - 좌측: 트리(지연 로딩, 폴더+파일 전부 표시, `.claude` 폴더도 노출) —
   CLAUDE.md/README.md 있는 폴더는 굵게. 등록된 루트 밑에 **전체 드라이브**
@@ -205,8 +251,8 @@ pip install ".[all]"        # 전부
   데이터로 검증되기 전까진 자동 파이프라인을 안 잇는다는 원칙 유지, O-006
   본 비전은 계속 보류). 새 의존성 없이 폴링(`router_watcher.py`)만으로
   구현, 관리자 패널에서 최근 로그 확인 가능.
-- **CLI 진입점**: `python router_orchestrator.py --text "..."`(3단계 전부
-  거친 최종 결과, D-032 권장) 또는 `router_classifier.py --text "..."`
+- **CLI 진입점**: `python router_orchestrator.py --text "..."`(6단계 전부
+  거친 최종 결과, D-032/D-063 권장) 또는 `router_classifier.py --text "..."`
   (구조화 신호만, 더 빠름, D-030) — GUI 없이 아무 Claude Code 세션에서나
   직접 호출 가능, `--registry` 생략 시 기본 레지스트리 위치. "대화 내용을
   규칙으로 정리해줘" 같은 요청을 받았을 때 이걸로 목적지 후보를 먼저
@@ -229,17 +275,18 @@ pip install ".[all]"        # 전부
   과 같은 발상이지만 서버 배포가 없는 로컬 데스크톱 앱이라 새 의존성 없이
   stdlib `http.server`만 사용, 인증 없음(기본 `127.0.0.1` 전용). **아직
   main.py UI에 시작 버튼은 없음**(O-010 — 코드는 동작하지만 통합은 보류).
-- **MCP 서버**(D-048, "범용 IDE 플러그인" 방향): `python ssot_mcp_server.py`
-  로 stdio transport 실행(공식 `mcp` SDK). 파일 조작은 절대 안 함 — Claude
-  Code/Cursor/Windsurf 등 MCP를 지원하는 IDE/에이전트가 이 서버의 tool을
-  불러서 "신호"만 받고, 실제 조치는 그쪽이 한다는 게 핵심(P-01 그대로
-  유지). 지금은 tool 6개: `list_ssot_roots()`(등록 루트 목록 — 각 항목에
+- **MCP 서버**(D-048, "범용 IDE 플러그인" 방향, 연결 방법은 위 "IDE에
+  연결하기" 참고): `python ssot_mcp_server.py`로 stdio transport 실행
+  (공식 `mcp` SDK). 파일 조작은 절대 안 함 — Claude Code/Cursor/Windsurf
+  등 MCP를 지원하는 IDE/에이전트가 이 서버의 tool을 불러서 "신호"만 받고,
+  실제 조치는 그쪽이 한다는 게 핵심(P-01 그대로 유지). tool 7개:
+  `list_ssot_roots()`(등록 루트 목록 — 각 항목에
   `pathExists`도 포함, D-052 — 폴더가 삭제/이동됐으면 false, 자동 등록해제는
   안 함),
   `check_readme_freshness(root_label?, stale_days=30)`(README.md가 폴더 안
   다른 파일들의 최신 수정시각 대비 며칠 뒤처졌는지 — git 없는 루트라 커밋
   이력 대신 mtime 기반), `classify_content(text)`(D-050 — "맥락형 인덱싱"을
-  MCP로 노출, 기존 `router_orchestrator.orchestrate()` 5단계 파이프라인을
+  MCP로 노출, 기존 `router_orchestrator.orchestrate()` 6단계 파이프라인을
   그대로 재사용해 텍스트가 어느 등록 루트에 속할지 순위 매김),
   `list_triggered_actions(root_label, changed_paths)`(D-058, O-013, D-061 —
   "액션 레지스트리". 루트가 `actions: [{trigger, policy, scriptPath?,
@@ -251,17 +298,16 @@ pip install ".[all]"        # 전부
   `list_missing_index_folders(root_label)`(D-060 — 등록 루트 바로 밑(depth=1)
   에서 CLAUDE.md/README.md가 없는 하위 폴더를 후보로 반환. dot-폴더/흔한
   의존성 디렉토리는 제외, 실제로 그 폴더가 자기만의 규칙이 필요한지·뭘 써야
-  하는지는 호출한 에이전트 판단 — README 자동생성은 여전히 안 함). **Claude
-  Code에 프로젝트 스코프로 등록·연결 확인 완료**(D-049, 저장소 루트
-  `.mcp.json` — `${CLAUDE_PROJECT_DIR:-.}` 사용, 개인 절대경로 없음 — `/mcp`로
-  3개 tool 전부 연결 확인, 2026-08-17). **2026-08-17(D-062) — 추가로 사용자
-  스코프(`claude mcp add -s user`)로도 등록** — 이제 어느 프로젝트에서
-  Claude Code 세션을 열든(다음 새 세션부터, 이미 떠 있던 세션은 반영 안 됨)
-  자동으로 연결된다(`claude mcp get ssot-explorer`로 `Scope: User config
-  (available in all your projects)` 확인). 다른 MCP 지원 IDE(Cursor/Windsurf
-  등)에는 아직 안 붙임(O-011, 필요성 미확인). MCP 경유 호출의 승인/거부
-  신호를 어떻게 모을지는 아직 미정(O-012) — `list_triggered_actions`의
-  `policy` 힌트는 이것과 별개(O-013 참고, 호출자가 스스로 판단하는 용도).
+  하는지는 호출한 에이전트 판단 — README 자동생성은 여전히 안 함),
+  `check_labeled_folders_audit(label?)`(D-073 — `labeledFolders[]` 30일
+  감사 문턱값 + README 자기선언 마커(`<!-- SSOT-LABEL: 이름 -->`)가
+  레지스트리 label과 실제로 일치하는지 신호). **Claude Code/Cursor/
+  Windsurf 3개 IDE 전부에 실제로 등록해서 "Connected" 상태와 tool 7개
+  노출까지 확인 완료**(D-049/D-062/D-081 — Claude Code는 프로젝트+사용자
+  스코프 둘 다, Cursor/Windsurf는 2026-08-24 실측). MCP 경유 호출의
+  승인/거부 신호를 어떻게 모을지는 아직 미정(O-012) —
+  `list_triggered_actions`의 `policy` 힌트는 이것과 별개(O-013 참고,
+  호출자가 스스로 판단하는 용도).
 
 ## 이 앱이 안 하는 것
 
