@@ -406,6 +406,13 @@ def check_labeled_folders_audit(label: str | None = None) -> list[dict]:
       값(없으면 None).
     - `markerMatches` — markerLabel이 레지스트리 label과 실제로 같은지.
       `pathExists`가 False거나 README가 없으면 None(비교 불가).
+    - `previousLabels`/`staleRegistryReferences` — D-086, O-020 4번째 체크.
+      이 폴더가 실제로 리네임된 적 있어(`previousLabels`에 옛 이름이
+      기록돼 있어) 등록 루트들의 referenceCondition 프로즈 안에 그 옛
+      이름이 아직 하드코딩돼 남아있으면 여기 뜬다(레지스트리 텍스트만
+      대조 — 상위 README 인덱스 표/자기참조까지는 Claude Code가 직접
+      grep으로 확인해야 함, `router_registry.find_stale_registry_
+      references` 참고).
     파일을 절대 안 고친다 — 3자 불일치가 보이면 실제로 README를 만들거나
     고칠지는 호출한 에이전트(Claude Code)가 판단한다. 개발자 모드가
     꺼져 있으면 다른 tool과 동일하게 에러 dict 하나만 반환(D-057)."""
@@ -418,6 +425,7 @@ def check_labeled_folders_audit(label: str | None = None) -> list[dict]:
         if not folders:
             return [{"status": "label_not_found", "label": label}]
 
+    roots = router_registry.load_roots(REGISTRY_PATH)
     today = date.today()
     results: list[dict] = []
     for entry in folders:
@@ -443,6 +451,8 @@ def check_labeled_folders_audit(label: str | None = None) -> list[dict]:
                 "pathExists": path_exists,
                 "markerLabel": marker_label,
                 "markerMatches": marker_matches,
+                "previousLabels": entry.get("previousLabels", []),
+                "staleRegistryReferences": router_registry.find_stale_registry_references(entry, roots),
             }
         )
     return results

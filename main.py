@@ -374,6 +374,13 @@ REGISTRY_SCHEMA = {
                     "path": {"type": "string", "minLength": 1},
                     "parentLabel": {"type": ["string", "null"]},
                     "lastAudited": {"type": "string", "pattern": r"^$|^\d{4}-\d{2}-\d{2}$"},
+                    # 2026-08-28(D-086, O-020) — 이 폴더가 실제로 리네임된 적
+                    # 있으면 옛 label(들)을 여기 쌓아둔다. 3자 일치 감사(라벨↔
+                    # 폴더↔자기 README)는 폴더가 "자기 자신과 일치하는가"만
+                    # 보고, "다른 문서가 이 폴더를 옛 이름으로 부르고 있진
+                    # 않은가"는 못 본다 — 이 필드가 그 검색의 출발점(무엇을
+                    # 찾아야 하는지)이 된다.
+                    "previousLabels": {"type": "array", "items": {"type": "string", "minLength": 1}},
                 },
             },
         },

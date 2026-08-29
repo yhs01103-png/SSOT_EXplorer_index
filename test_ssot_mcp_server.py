@@ -617,6 +617,33 @@ def test_labeled_folders_audit_result_is_json_serializable(tmp_path):
     json.dumps(mcp_srv.check_labeled_folders_audit())
 
 
+def test_labeled_folders_audit_no_previous_labels_means_no_stale_refs(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    _register_labeled_folder("a", root)
+    result = mcp_srv.check_labeled_folders_audit()
+    assert result[0]["previousLabels"] == []
+    assert result[0]["staleRegistryReferences"] == []
+
+
+def test_labeled_folders_audit_detects_stale_reference_in_root(tmp_path):
+    """D-086, O-020 — 폴더가 리네임돼 previousLabels에 옛 이름이 남아있고,
+    다른 등록 루트의 referenceCondition이 그 옛 이름을 여전히 하드코딩하고
+    있으면 staleRegistryReferences에 잡혀야 한다."""
+    root = tmp_path / "root"
+    root.mkdir()
+    _register_labeled_folder("New_Name", root)
+    rr.record_label_rename("New_Name", "Old_Name", mcp_srv.REGISTRY_PATH)
+    m.save_roots(
+        [{"label": "other_root", "path": str(tmp_path / "other"), "referenceCondition": "Old_Name 폴더 참고"}]
+    )
+    result = mcp_srv.check_labeled_folders_audit(label="New_Name")
+    assert result[0]["previousLabels"] == ["Old_Name"]
+    assert result[0]["staleRegistryReferences"] == [
+        {"rootLabel": "other_root", "oldLabel": "Old_Name", "field": "referenceCondition"}
+    ]
+
+
 # --------------------------------------------------------- D-057: 개발자 모드 게이팅
 
 def test_list_ssot_roots_gated_when_developer_mode_off(tmp_path):

@@ -129,6 +129,7 @@ def test_add_labeled_folder_appends_and_persists(tmp_path):
     assert [f["label"] for f in folders] == ["a"]
     assert folders[0]["parentLabel"] is None  # setdefault로 채워짐
     assert folders[0]["lastAudited"] == ""
+    assert folders[0]["previousLabels"] == []  # setdefault로 채워짐(D-086)
 
 
 def test_add_labeled_folder_rejects_duplicate_label(tmp_path):
@@ -199,6 +200,53 @@ def test_labeled_folder_audit_status_invalid_date_format():
     entry = {"label": "a", "lastAudited": "not-a-date"}
     result = rr.labeled_folder_audit_status(entry, date(2026, 8, 22))
     assert result == {"label": "a", "status": "invalid_last_audited", "daysRemaining": None}
+
+
+# --------------------------------------------- 리네임 드리프트(D-086, O-020)
+
+def test_record_label_rename_appends_previous_label(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    rr.add_labeled_folder({"label": "New_Name", "path": "C:\\New_Name"}, registry_path)
+    rr.record_label_rename("New_Name", "Old_Name", registry_path)
+    folders = rr.load_labeled_folders(registry_path)
+    assert folders[0]["previousLabels"] == ["Old_Name"]
+
+
+def test_record_label_rename_does_not_duplicate(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    rr.add_labeled_folder({"label": "New_Name", "path": "C:\\New_Name"}, registry_path)
+    rr.record_label_rename("New_Name", "Old_Name", registry_path)
+    rr.record_label_rename("New_Name", "Old_Name", registry_path)
+    folders = rr.load_labeled_folders(registry_path)
+    assert folders[0]["previousLabels"] == ["Old_Name"]
+
+
+def test_record_label_rename_unknown_label_raises(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    try:
+        rr.record_label_rename("no-such-label", "Old_Name", registry_path)
+        raise AssertionError("should have raised")
+    except ValueError as e:
+        assert "no-such-label" in str(e)
+
+
+def test_find_stale_registry_references_detects_old_label_in_reference_condition():
+    entry = {"label": "New_Name", "previousLabels": ["Old_Name"]}
+    roots = [{"label": "flutter_App", "referenceCondition": "...Old_Name 폴더 참고...", "readmeReferenceCondition": ""}]
+    hits = rr.find_stale_registry_references(entry, roots)
+    assert hits == [{"rootLabel": "flutter_App", "oldLabel": "Old_Name", "field": "referenceCondition"}]
+
+
+def test_find_stale_registry_references_no_previous_labels_returns_empty():
+    entry = {"label": "New_Name", "previousLabels": []}
+    roots = [{"label": "flutter_App", "referenceCondition": "Old_Name", "readmeReferenceCondition": ""}]
+    assert rr.find_stale_registry_references(entry, roots) == []
+
+
+def test_find_stale_registry_references_no_match_returns_empty():
+    entry = {"label": "New_Name", "previousLabels": ["Old_Name"]}
+    roots = [{"label": "flutter_App", "referenceCondition": "아무 관계 없음", "readmeReferenceCondition": ""}]
+    assert rr.find_stale_registry_references(entry, roots) == []
 
 
 def test_read_ssot_label_marker_finds_marker_near_top(tmp_path):

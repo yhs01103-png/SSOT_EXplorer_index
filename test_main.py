@@ -445,6 +445,25 @@ def test_validate_registry_flags_duplicate_labels():
     assert not any("unique" in e for e in errors)
 
 
+def test_validate_registry_accepts_labeled_folder_previous_labels():
+    """D-086(O-020) — previousLabels가 문자열 배열이면 통과."""
+    errors = m.validate_registry({
+        "labeledFolders": [
+            {"label": "New_Name", "path": "C:\\a", "previousLabels": ["Old_Name"]},
+        ],
+    })
+    assert errors == []
+
+
+def test_validate_registry_flags_labeled_folder_previous_labels_wrong_type():
+    errors = m.validate_registry({
+        "labeledFolders": [
+            {"label": "New_Name", "path": "C:\\a", "previousLabels": "Old_Name"},
+        ],
+    })
+    assert errors
+
+
 def test_format_schema_validation_text_ok_and_errors():
     assert "통과" in m.format_schema_validation_text([])
     text = m.format_schema_validation_text(["roots/0: 'path' is a required property"])

@@ -173,6 +173,7 @@ def load_labeled_folders(registry_path: Path) -> list[dict]:
     for f in folders:
         f.setdefault("parentLabel", None)
         f.setdefault("lastAudited", "")
+        f.setdefault("previousLabels", [])
     return folders
 
 
@@ -225,6 +226,47 @@ def mark_labeled_folder_audited(label: str, registry_path: Path, audited_on: str
         raise ValueError(f"label '{label}'을(를) 찾을 수 없습니다.")
     target["lastAudited"] = audited_on
     save_labeled_folders(folders, registry_path)
+
+
+def record_label_rename(label: str, old_label: str, registry_path: Path) -> None:
+    """폴더가 실제로 리네임된 걸 발견해서 label/path를 갱신할 때, 옛 이름을
+    `previousLabels`에 같이 남긴다(D-086, O-020) — 이 값이 나중에
+    `find_stale_registry_references`가 "어디서 옛 이름을 찾아야 하는지"의
+    출발점이 된다. 이미 기록된 옛 이름이면 중복 추가하지 않는다."""
+    folders = load_labeled_folders(registry_path)
+    target = next((f for f in folders if f["label"] == label), None)
+    if target is None:
+        raise ValueError(f"label '{label}'을(를) 찾을 수 없습니다.")
+    if old_label not in target["previousLabels"]:
+        target["previousLabels"].append(old_label)
+    save_labeled_folders(folders, registry_path)
+
+
+def find_stale_registry_references(entry: dict, roots: list[dict]) -> list[dict]:
+    """entry(labeledFolders 항목)의 `previousLabels`에 담긴 옛 이름이
+    `roots[]`의 referenceCondition/readmeReferenceCondition 프로즈 안에
+    여전히 하드코딩돼 있는지 확인한다(D-086, O-020 4번째 체크 중
+    "레지스트리 referenceCondition 미러링" 부분 — 이미 메모리에 있는
+    레지스트리 텍스트만 대조하므로 파일시스템 grep 없이 즉시 계산된다).
+    상위 README 인덱스 표/그 폴더 자기 자신의 문서 안 자기참조까지 찾는
+    건 이 함수의 범위 밖 — 그건 여전히 Claude Code가 Grep 도구로 직접
+    수행하는 에이전틱 단계로 남는다(O-018(b)/D-073가 3자 일치 감사 자체를
+    "스크립트가 자동 실행 안 함"으로 설계한 것과 같은 이유).
+    반환: [{"rootLabel": ..., "oldLabel": ..., "field": "referenceCondition"|
+    "readmeReferenceCondition"}, ...] — 없으면 빈 리스트."""
+    previous = entry.get("previousLabels") or []
+    if not previous:
+        return []
+    hits: list[dict] = []
+    for root in roots:
+        for field in ("referenceCondition", "readmeReferenceCondition"):
+            text = root.get(field) or ""
+            for old_label in previous:
+                if old_label and old_label in text:
+                    hits.append(
+                        {"rootLabel": root.get("label", ""), "oldLabel": old_label, "field": field}
+                    )
+    return hits
 
 
 def labeled_folder_audit_status(entry: dict, today: date) -> dict:
