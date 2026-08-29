@@ -75,7 +75,6 @@ IDE 쪽 mcp 설정(예: Claude Code `.mcp.json`)에 이 파일을 커맨드로 �
 from __future__ import annotations
 
 import fnmatch
-import os
 from datetime import date
 from pathlib import Path
 
@@ -117,58 +116,6 @@ server = MCPServer(
         "조치는 호출한 에이전트가 한다."
     ),
 )
-
-
-def _max_other_mtime(root_path: Path, exclude: Path) -> float | None:
-    """root_path 밑(dot-폴더 제외, 기존 SearchWorker(D-013)와 같은 관례)
-    exclude를 뺀 모든 파일 중 가장 최근 수정 시각. 파일이 하나도 없거나
-    전부 stat 실패면 None."""
-    latest: float | None = None
-    for dirpath, dirnames, filenames in os.walk(root_path):
-        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
-        for name in filenames:
-            p = Path(dirpath) / name
-            if p == exclude:
-                continue
-            try:
-                mtime = p.stat().st_mtime
-            except OSError:
-                continue
-            if latest is None or mtime > latest:
-                latest = mtime
-    return latest
-
-
-def _check_one_root(entry: dict, stale_days: int) -> dict:
-    label = entry.get("label", "")
-    path_str = entry.get("path", "")
-    root_path = Path(path_str)
-    if not root_path.is_dir():
-        return {"label": label, "path": path_str, "status": "root_missing"}
-
-    index = router_registry.find_index_files(root_path)
-    readme_path = index.get("readme.md")
-    if readme_path is None:
-        return {"label": label, "path": path_str, "status": "no_readme"}
-
-    try:
-        readme_mtime = readme_path.stat().st_mtime
-    except OSError:
-        return {"label": label, "path": path_str, "status": "readme_unreadable"}
-
-    latest_other = _max_other_mtime(root_path, readme_path)
-    if latest_other is None or latest_other <= readme_mtime:
-        return {
-            "label": label, "path": path_str, "status": "fresh",
-            "readmePath": str(readme_path),
-        }
-
-    gap_days = round((latest_other - readme_mtime) / 86400, 1)
-    status = "stale" if gap_days > stale_days else "fresh"
-    return {
-        "label": label, "path": path_str, "status": status,
-        "readmePath": str(readme_path), "gapDays": gap_days,
-    }
 
 
 _DEV_MODE_OFF = {
@@ -222,7 +169,7 @@ def check_readme_freshness(
         roots = [r for r in roots if r.get("label") == root_label]
         if not roots:
             return [{"status": "label_not_found", "label": root_label}]
-    return [_check_one_root(r, stale_days) for r in roots]
+    return [router_registry.check_root_readme_freshness(r, stale_days) for r in roots]
 
 
 @server.tool()

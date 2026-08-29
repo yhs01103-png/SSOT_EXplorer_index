@@ -32,6 +32,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import uuid
 from datetime import date, datetime
 from pathlib import Path
@@ -483,3 +484,62 @@ def find_index_files(folder: Path) -> dict:
                 f"'{chosen.name}' 사용, 무시됨: {others}"
             )
     return found
+
+
+# --------------------------------------------------- README 신선도(D-048/087)
+# ssot_mcp_server.py의 check_readme_freshness가 쓰던 _max_other_mtime/
+# _check_one_root(private)를 여기로 옮겼다(D-087) — ssot_background_
+# watchdog.py(GUI/MCP 둘 다 아닌 세 번째 소비자)도 같은 로직이 필요해져서,
+# router_sync/router_registry가 이미 여러 번 겪은 "GUI 전용 모듈에 갇힌
+# 순수 로직을 뽑아낸다"(D-068/069/071) 패턴을 한 번 더 적용.
+
+def max_other_mtime(root_path: Path, exclude: Path) -> float | None:
+    """root_path 밑(dot-폴더 제외, SearchWorker(D-013)와 같은 관례) exclude를
+    뺀 모든 파일 중 가장 최근 수정 시각. 파일이 하나도 없거나 전부 stat
+    실패면 None."""
+    latest: float | None = None
+    for dirpath, dirnames, filenames in os.walk(root_path):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        for name in filenames:
+            p = Path(dirpath) / name
+            if p == exclude:
+                continue
+            try:
+                mtime = p.stat().st_mtime
+            except OSError:
+                continue
+            if latest is None or mtime > latest:
+                latest = mtime
+    return latest
+
+
+def check_root_readme_freshness(entry: dict, stale_days: int) -> dict:
+    """entry(roots[] 항목)의 README.md가 그 폴더 안 다른 파일들의 최신
+    mtime 대비 며칠 뒤처졌는지(D-048). git 커밋 이력이 아니라 mtime
+    기반인 이유는 ssot_mcp_server.check_readme_freshness 독스트링 참고."""
+    label = entry.get("label", "")
+    path_str = entry.get("path", "")
+    root_path = Path(path_str)
+    if not root_path.is_dir():
+        return {"label": label, "path": path_str, "status": "root_missing"}
+
+    index = find_index_files(root_path)
+    readme_path = index.get("readme.md")
+    if readme_path is None:
+        return {"label": label, "path": path_str, "status": "no_readme"}
+
+    try:
+        readme_mtime = readme_path.stat().st_mtime
+    except OSError:
+        return {"label": label, "path": path_str, "status": "readme_unreadable"}
+
+    latest_other = max_other_mtime(root_path, readme_path)
+    if latest_other is None or latest_other <= readme_mtime:
+        return {"label": label, "path": path_str, "status": "fresh", "readmePath": str(readme_path)}
+
+    gap_days = round((latest_other - readme_mtime) / 86400, 1)
+    status = "stale" if gap_days > stale_days else "fresh"
+    return {
+        "label": label, "path": path_str, "status": status,
+        "readmePath": str(readme_path), "gapDays": gap_days,
+    }

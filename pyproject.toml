@@ -34,10 +34,20 @@ semantic = ["fastembed==0.8.0"]
 # server headlessly.
 mcp = ["mcp"]
 
-# Everything — the GUI app, the CLI, the MCP server, and real semantic
-# matching. `pip install ssot-explorer[all]` (or pipx) is the "just give me
-# every feature globally" install.
-all = ["ssot-explorer[gui,semantic,mcp]"]
+# Windows toast notifications for ssot_background_watchdog.py (D-088) — the
+# watchdog scans and queues pendingActions[] fine without this (core only),
+# it just skips the toast step (ToastProviderNotConfigured, logged not
+# raised to the caller of main()). win11toast pulls in winrt-Windows.* wheels
+# that don't exist for Linux/Mac, so this is marked win32-only — on any other
+# platform `pip install ".[notify]"`/`".[all]"` silently installs nothing for
+# this extra instead of failing (matters for the Linux CI runner's `all` leg,
+# D-072).
+notify = ["win11toast; sys_platform == 'win32'"]
+
+# Everything — the GUI app, the CLI, the MCP server, real semantic matching,
+# and watchdog toast notifications. `pip install ssot-explorer[all]` (or
+# pipx) is the "just give me every feature globally" install.
+all = ["ssot-explorer[gui,semantic,mcp,notify]"]
 
 [dependency-groups]
 dev = ["pytest", "ruff", "mypy", "bandit"]
@@ -91,6 +101,7 @@ files = [
     "router_registry.py",
     "router_sync.py",
     "router_watcher.py",
+    "ssot_background_watchdog.py",
     "ssot_mcp_server.py",
 ]
 
@@ -106,6 +117,11 @@ ssot-gui = "main:main"
 # The MCP server (ssot_mcp_server.py) — only works if installed with the
 # `mcp` extra. Standalone as of D-071 — does not need `gui`.
 ssot-mcp = "ssot_mcp_server:main"
+# The background watchdog (ssot_background_watchdog.py, D-088) — meant to be
+# registered as a periodic Windows Task Scheduler entry, independent of the
+# GUI app and any Claude Code session. Works with only `core` deps; the
+# `notify` extra adds the toast notification (optional, degrades quietly).
+ssot-watchdog = "ssot_background_watchdog:main"
 
 [tool.setuptools]
 # Flat modules, not a src/ssot_explorer/ package — main.py/router_*.py/
