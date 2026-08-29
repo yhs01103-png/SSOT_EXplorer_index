@@ -14,6 +14,18 @@ Cursor/Windsurf 규칙)이 툴마다 따로 놀고 조용히 낡는다 — 한�
 낡았다/어디 소속이다" 같은 신호만 주고, 실제 조치는 그 신호를 받은
 IDE·에이전트가 판단해서 한다.
 
+## `kits/` — 무료 공개 포트폴리오 킷 (2026-08-28)
+
+이 앱 자체 외에, 원래 상용 판매용으로 검토됐다가 `tenacity`/`pluggy`/
+git·rsync 같은 무료 대안이 이미 더 강해서 유료 상품성이 없다고 판단된
+작은 유틸리티 4개를 여기 `kits/` 밑에 무료(MIT)로 공개한다:
+`plugin_registry_kit`(자기등록 플러그인 레지스트리), `snapshot_diff_kit`
+(버전 스냅샷+diff), `retry_policy_kit`(지수백오프 재시도), `behavior_pattern_kit`
+(Dart, 페어와이즈 행동 메트릭 저장소). 각자 자기 `README.md`/`pyproject.toml`
+또는 `pubspec.yaml`/`tests`를 그대로 갖춘 독립 패키지 — 이 저장소의 본체
+(SSOT Explorer)와는 기능적으로 무관, 같이 두는 이유는 순전히 "무료 공개
+포트폴리오"라는 배포 성격이 같아서다.
+
 ## IDE에 연결하기
 
 아직 PyPI에 배포 전이라(O-019, 진행 중) 지금은 이 저장소를 클론한 뒤

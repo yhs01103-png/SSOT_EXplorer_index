@@ -1,0 +1,16 @@
+name: behavior_pattern_kit
+description: >-
+  A pairwise behavior-profile store -- "what has actor A observed about
+  actor B" -- for game AI, negotiation bots, or any simulation where an
+  agent should remember and adapt to patterns in another actor's
+  behavior. Caller-defined metrics; this only holds and (de)serializes
+  them.
+version: 0.1.0
+publish_to: 'none'
+
+environment:
+  sdk: ^3.11.5
+
+dev_dependencies:
+  test: ^1.25.0
+  lints: ^5.0.0

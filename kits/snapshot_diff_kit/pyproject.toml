@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "snapshot-diff-kit"
+version = "0.1.0"
+description = "Versioned directory snapshots with a diff engine that distinguishes physical deletion from content modification."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[tool.setuptools.packages.find]
+include = ["snapshot_diff_kit*"]
