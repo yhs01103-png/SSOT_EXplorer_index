@@ -96,6 +96,10 @@ def isolated_orchestrator_state(tmp_path, monkeypatch):
     # 테스트가 실제 사용자 로그 내용에 따라 결과가 갈리는 비결정적
     # 테스트가 된다).
     monkeypatch.setattr(m, "SESSION_CONTEXT_LOG_PATH", tmp_path / "session-context-log.json")
+    # D-088 후속 — ManagementPanel이 이제 워치독 로그도 읽는다. 같은 이유로
+    # 격리(실제 사용자 로그 내용에 따라 결과가 갈리는 비결정적 테스트 방지).
+    import ssot_background_watchdog
+    monkeypatch.setattr(ssot_background_watchdog, "WATCHDOG_LOG_PATH", tmp_path / "watchdog-log.json")
     yield
 
 
@@ -592,6 +596,69 @@ def test_management_panel_shows_empty_orchestration_log(isolated_registry, isola
     m.save_roots([{"label": "a", "path": "C:\\a"}])
     panel = m.ManagementPanel()
     assert "없음" in panel.orchestration_log_view.toPlainText()
+
+
+def test_format_watchdog_log_text_empty():
+    assert "없음" in m.format_watchdog_log_text([])
+
+
+def test_format_watchdog_log_text_shows_findings_with_evidence():
+    runs = [{
+        "ranAt": "2026-08-28 09:00:00",
+        "checkedRoots": 7,
+        "checkedLabeledFolders": 2,
+        "newFindingsCount": 1,
+        "toastFired": True,
+        "findings": [{
+            "targetType": "root",
+            "targetLabel": "flutter_App",
+            "actionType": "create_readme",
+            "note": "README.md 없음",
+            "evidence": {"searchedPaths": ["a", "b"]},
+        }],
+    }]
+    text = m.format_watchdog_log_text(runs)
+    assert "flutter_App" in text
+    assert "README.md 없음" in text
+    assert "searchedPaths" in text  # 근거가 그대로 노출됨
+    assert "🔔" in text  # 토스트 발생 표시
+
+
+def test_format_watchdog_log_text_recent_first():
+    runs = [
+        {"ranAt": "2026-08-28 09:00:00", "checkedRoots": 1, "checkedLabeledFolders": 0,
+         "newFindingsCount": 0, "toastFired": False, "findings": []},
+        {"ranAt": "2026-08-28 10:00:00", "checkedRoots": 1, "checkedLabeledFolders": 0,
+         "newFindingsCount": 0, "toastFired": False, "findings": []},
+    ]
+    text = m.format_watchdog_log_text(runs)
+    assert text.index("10:00:00") < text.index("09:00:00")  # 최신이 위로
+
+
+def test_management_panel_shows_empty_watchdog_log(isolated_registry, isolated_qsettings):
+    m.save_roots([{"label": "a", "path": "C:\\a"}])
+    panel = m.ManagementPanel()
+    assert "없음" in panel.watchdog_log_view.toPlainText()
+
+
+def test_management_panel_shows_watchdog_log_after_run(isolated_registry, isolated_qsettings, tmp_path, monkeypatch):
+    """실제로 ssot_background_watchdog.main()을 한 번 돌리고, refresh()가
+    그 결과를 워치독 로그 뷰에 반영하는지 확인 — 다른 로그뷰들과 동일한
+    "실제 코드 실행 후 화면 반영" 검증 기준(D-076). send_toast는 몽키패치
+    (실제 OS 토스트가 테스트 중 뜨는 걸 방지)."""
+    import ssot_background_watchdog as watchdog
+
+    missing_root = tmp_path / "gone"
+    m.save_roots([{"label": "a", "path": str(missing_root)}])
+    monkeypatch.setenv("SSOT_REGISTRY_PATH", str(isolated_registry))
+    monkeypatch.setattr(watchdog, "send_toast", lambda title, body: None)
+
+    watchdog.main()
+
+    panel = m.ManagementPanel()
+    text = panel.watchdog_log_view.toPlainText()
+    assert "없음" not in text
+    assert "a" in text
 
 
 def test_run_benchmark_empty_input_shows_hint_without_starting_worker(isolated_registry, isolated_qsettings):

@@ -61,6 +61,7 @@ import router_orchestrator
 import router_proposals
 import router_registry
 import router_watcher
+import ssot_background_watchdog
 
 # 2026-08-14(D-038, H-005 다음 항목) — 레지스트리 스키마 검증. jsonschema는
 # 진단용 부가기능이라 kiwipiepy(D-034)와 같은 선택적 의존성 원칙 — 미설치
@@ -619,6 +620,28 @@ def format_orchestration_log_text(runs: list[dict], limit: int = 20) -> str:
     return "\n".join(reversed(lines))
 
 
+def format_watchdog_log_text(runs: list[dict], limit: int = 20) -> str:
+    """2026-08-28 — 개발자 탭 워치독 로그 뷰용. ssot_background_watchdog.
+    main()이 실행될 때마다(작업 스케줄러 경유든 수동 실행이든) 쌓아둔
+    ssot_watchdog_log.json을 그대로 읽어서, 각 실행이 뭘 검사했고 뭘
+    찾았으며(근거 포함) 토스트를 실제로 띄웠는지 보여준다 — "무슨 파일을
+    무슨 근거로 판단했는지"가 알림 요약이 아니라 여기 그대로 남는다."""
+    if not runs:
+        return "(로그 없음 — 워치독이 아직 한 번도 안 돌았음)"
+    recent = runs[-limit:]
+    lines = []
+    for r in reversed(recent):
+        toast_text = "🔔" if r.get("toastFired") else "-"
+        lines.append(
+            f"{r['ranAt']}  검사 루트{r.get('checkedRoots', 0)}+라벨폴더{r.get('checkedLabeledFolders', 0)}"
+            f"  발견 {r.get('newFindingsCount', 0)}건  토스트{toast_text}"
+        )
+        for f in r.get("findings", []):
+            evidence = ", ".join(f"{k}={v}" for k, v in (f.get("evidence") or {}).items())
+            lines.append(f"    [{f['targetType']}/{f['targetLabel']}] {f['actionType']}: {f['note']} ({evidence})")
+    return "\n".join(lines)
+
+
 def get_available_drives() -> list[str]:
     """존재하는 Windows 드라이브 문자 목록(C:\\, D:\\ 등) — 외부 의존성 없이
     알파벳을 순회하며 확인한다. 2026-08-13(D-028) — "앱을 켜면 전체 탐색기가
@@ -862,6 +885,14 @@ class ManagementPanel(QWidget):
         self.orchestration_log_view.setMaximumHeight(110)
         layout.addWidget(self.orchestration_log_view)
 
+        # 2026-08-28(D-088 후속) — 워치독은 GUI 프로세스 밖(작업 스케줄러)
+        # 에서 도니까, 이 앱이 그 실행 이력을 사후에 읽어서 보여주는 것뿐
+        # (다른 로그뷰와 동일 원칙 — 이 앱은 워치독을 실행하지 않는다).
+        layout.addWidget(QLabel("워치독 로그 (최근 20건 — 세션 없이 도는 백그라운드 감지, 근거 포함)"))
+        self.watchdog_log_view = QTextBrowser()
+        self.watchdog_log_view.setMaximumHeight(130)
+        layout.addWidget(self.watchdog_log_view)
+
         layout.addWidget(QLabel("드리프트 진행상황(실시간) / 로그"))
         self.log_view = QTextBrowser()
         layout.addWidget(self.log_view)
@@ -896,6 +927,9 @@ class ManagementPanel(QWidget):
         )
         self.orchestration_log_view.setPlainText(
             format_orchestration_log_text(router_orchestrator.load_orchestration_log())
+        )
+        self.watchdog_log_view.setPlainText(
+            format_watchdog_log_text(ssot_background_watchdog.load_watchdog_log())
         )
         if DRIFT_LOG_PATH.exists():
             text = DRIFT_LOG_PATH.read_text(encoding="utf-8", errors="replace")
