@@ -303,6 +303,13 @@ REGISTRY_SCHEMA = {
                     "owner": {"type": "string"},
                     "scope": {"type": "string"},
                     "lastReviewed": {"type": "string", "pattern": r"^$|^\d{4}-\d{2}-\d{2}$"},
+                    # 2026-08-28(D-087, O-020 확장) — labeledFolders의 3자
+                    # 일치 감사(D-073)를 roots[]에도 적용하기 위한 짝 필드.
+                    # lastReviewed(180일, "내용을 사람이 검토했나")와는 별개
+                    # 신호 — "라벨↔폴더↔README 마커가 구조적으로 일치하나"를
+                    # 본다(30일 문턱값 재사용).
+                    "lastAudited": {"type": "string", "pattern": r"^$|^\d{4}-\d{2}-\d{2}$"},
+                    "previousLabels": {"type": "array", "items": {"type": "string", "minLength": 1}},
                     "dependsOnDocs": {"type": "array", "items": {"type": "string"}},
                     # 2026-08-17(D-058, O-013) — 액션 레지스트리. trigger는
                     # fnmatch 글롭(예: "*/productized/*"), policy는 호출한
@@ -381,6 +388,32 @@ REGISTRY_SCHEMA = {
                     # 않은가"는 못 본다 — 이 필드가 그 검색의 출발점(무엇을
                     # 찾아야 하는지)이 된다.
                     "previousLabels": {"type": "array", "items": {"type": "string", "minLength": 1}},
+                },
+            },
+        },
+        # 2026-08-28(D-087) — GUI(main.py)와 Claude Code 세션 사이의 유일한
+        # 접점인 이 레지스트리 파일에, GUI가 "README 등록/경로 수정/은퇴"
+        # 버튼으로 남기는 구조화된 요청 큐. GUI는 이 배열에 항목만 추가하고
+        # (P-01, "GUI는 신호만"), 실제 파일 작업은 다음 Claude Code 세션이
+        # 이 큐를 보고 사용자 승인을 받은 뒤 수행 — 처리 완료되면 그 항목을
+        # 큐에서 지운다(이력 남기지 않음, router_registry.resolve_pending_
+        # action 참고).
+        "pendingActions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["requestId", "targetType", "targetLabel", "actionType", "requestedAt"],
+                "additionalProperties": True,
+                "properties": {
+                    "requestId": {"type": "string", "minLength": 1},
+                    "targetType": {"type": "string", "enum": ["root", "labeledFolder"]},
+                    "targetLabel": {"type": "string", "minLength": 1},
+                    "actionType": {
+                        "type": "string",
+                        "enum": ["create_readme", "modify_readme", "fix_path", "retire"],
+                    },
+                    "requestedAt": {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}$"},
+                    "note": {"type": "string"},
                 },
             },
         },

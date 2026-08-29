@@ -249,6 +249,126 @@ def test_find_stale_registry_references_no_match_returns_empty():
     assert rr.find_stale_registry_references(entry, roots) == []
 
 
+# --------------------------------- roots[]도 3자 일치 감사 대상(D-087, O-020)
+
+def test_load_roots_sets_default_audited_and_previous_labels(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    rr.add_root({"label": "a", "path": "C:\\a"}, registry_path)
+    roots = rr.load_roots(registry_path)
+    assert roots[0]["lastAudited"] == ""
+    assert roots[0]["previousLabels"] == []
+
+
+def test_mark_root_audited_updates_date(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    rr.add_root({"label": "a", "path": "C:\\a"}, registry_path)
+    rr.mark_root_audited("a", registry_path, "2026-08-28")
+    roots = rr.load_roots(registry_path)
+    assert roots[0]["lastAudited"] == "2026-08-28"
+
+
+def test_mark_root_audited_unknown_label_raises(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    try:
+        rr.mark_root_audited("no-such-label", registry_path, "2026-08-28")
+        raise AssertionError("should have raised")
+    except ValueError as e:
+        assert "no-such-label" in str(e)
+
+
+def test_record_root_rename_appends_and_dedupes(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    rr.add_root({"label": "New_Name", "path": "C:\\New_Name"}, registry_path)
+    rr.record_root_rename("New_Name", "Old_Name", registry_path)
+    rr.record_root_rename("New_Name", "Old_Name", registry_path)
+    roots = rr.load_roots(registry_path)
+    assert roots[0]["previousLabels"] == ["Old_Name"]
+
+
+def test_labeled_folder_audit_status_reused_for_roots(tmp_path):
+    """labeled_folder_audit_status는 label/lastAudited만 있는 dict라면
+    roots[] 항목에도 그대로 재사용 가능해야 한다(D-087 — 새 함수 없이
+    기존 순수 함수 재사용)."""
+    result = rr.labeled_folder_audit_status({"label": "a", "lastAudited": ""}, date(2026, 8, 28))
+    assert result == {"label": "a", "status": "never_audited", "daysRemaining": None}
+
+
+# --------------------------------------------- 대기 큐 pendingActions(D-087)
+
+def test_add_pending_action_generates_request_id_and_persists(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    request_id = rr.add_pending_action(
+        {"targetType": "root", "targetLabel": "a", "actionType": "create_readme"},
+        registry_path,
+    )
+    actions = rr.load_pending_actions(registry_path)
+    assert len(actions) == 1
+    assert actions[0]["requestId"] == request_id
+    assert actions[0]["note"] == ""
+    assert actions[0]["requestedAt"]  # 오늘 날짜로 자동 채워짐
+
+
+def test_add_pending_action_rejects_bad_target_type(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    try:
+        rr.add_pending_action(
+            {"targetType": "not-a-type", "targetLabel": "a", "actionType": "create_readme"},
+            registry_path,
+        )
+        raise AssertionError("should have raised")
+    except ValueError:
+        pass
+    assert rr.load_pending_actions(registry_path) == []
+
+
+def test_add_pending_action_rejects_bad_action_type(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    try:
+        rr.add_pending_action(
+            {"targetType": "root", "targetLabel": "a", "actionType": "not-a-type"},
+            registry_path,
+        )
+        raise AssertionError("should have raised")
+    except ValueError:
+        pass
+
+
+def test_resolve_pending_action_removes_only_matching_request(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    id1 = rr.add_pending_action(
+        {"targetType": "root", "targetLabel": "a", "actionType": "create_readme"}, registry_path
+    )
+    id2 = rr.add_pending_action(
+        {"targetType": "root", "targetLabel": "b", "actionType": "fix_path"}, registry_path
+    )
+    rr.resolve_pending_action(id1, registry_path)
+    actions = rr.load_pending_actions(registry_path)
+    assert [a["requestId"] for a in actions] == [id2]
+
+
+def test_resolve_pending_action_unknown_id_raises(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    try:
+        rr.resolve_pending_action("no-such-id", registry_path)
+        raise AssertionError("should have raised")
+    except ValueError as e:
+        assert "no-such-id" in str(e)
+
+
+def test_save_pending_actions_preserves_other_keys(tmp_path):
+    """D-020 유실 버그 재발 방지 — pendingActions만 갱신해도 roots/
+    labeledFolders는 그대로 남아야 한다."""
+    registry_path = tmp_path / "ssot-roots.json"
+    rr.save_roots([{"label": "root-a", "path": "C:\\root-a"}], registry_path)
+    rr.add_labeled_folder({"label": "folder-a", "path": "C:\\folder-a"}, registry_path)
+    rr.add_pending_action(
+        {"targetType": "root", "targetLabel": "root-a", "actionType": "create_readme"}, registry_path
+    )
+    assert [r["label"] for r in rr.load_roots(registry_path)] == ["root-a"]
+    assert [f["label"] for f in rr.load_labeled_folders(registry_path)] == ["folder-a"]
+    assert len(rr.load_pending_actions(registry_path)) == 1
+
+
 def test_read_ssot_label_marker_finds_marker_near_top(tmp_path):
     readme = tmp_path / "README.md"
     readme.write_text(

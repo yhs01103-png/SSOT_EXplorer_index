@@ -32,6 +32,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import uuid
 from datetime import date, datetime
 from pathlib import Path
 
@@ -88,6 +89,13 @@ def load_roots(registry_path: Path) -> list[dict]:
         r.setdefault("dependsOnDocs", [])
         r.setdefault("primarySource", "local")
         r.setdefault("actions", [])
+        # 2026-08-28(D-087) — labeledFolders의 3자 일치 감사(D-073)를 roots[]
+        # 에도 확장하기 위한 짝 필드. lastReviewed(D-018, 180일, "사람이
+        # 내용을 검토했나")와는 다른 신호 — 이건 "라벨↔폴더↔README 마커가
+        # 구조적으로 아직 일치하나"를 본다(30일, labeled_folder_audit_status
+        # 재사용).
+        r.setdefault("lastAudited", "")
+        r.setdefault("previousLabels", [])
     return roots
 
 
@@ -136,6 +144,28 @@ def add_root(entry: dict, registry_path: Path) -> None:
     if any(r["label"] == entry["label"] for r in roots):
         raise ValueError(f"label '{entry['label']}'은(는) 이미 등록돼 있습니다.")
     roots.append(entry)
+    save_roots(roots, registry_path)
+
+
+def mark_root_audited(label: str, registry_path: Path, audited_on: str) -> None:
+    """mark_labeled_folder_audited와 동일한 계약, 대상만 roots[](D-087,
+    O-020 확장 — 3자 일치 감사를 최상위 루트에도 적용)."""
+    roots = load_roots(registry_path)
+    target = next((r for r in roots if r["label"] == label), None)
+    if target is None:
+        raise ValueError(f"label '{label}'을(를) 찾을 수 없습니다.")
+    target["lastAudited"] = audited_on
+    save_roots(roots, registry_path)
+
+
+def record_root_rename(label: str, old_label: str, registry_path: Path) -> None:
+    """record_label_rename과 동일한 계약, 대상만 roots[](D-087)."""
+    roots = load_roots(registry_path)
+    target = next((r for r in roots if r["label"] == label), None)
+    if target is None:
+        raise ValueError(f"label '{label}'을(를) 찾을 수 없습니다.")
+    if old_label not in target["previousLabels"]:
+        target["previousLabels"].append(old_label)
     save_roots(roots, registry_path)
 
 
@@ -308,6 +338,101 @@ def read_ssot_label_marker(readme_path: Path) -> str | None:
     except OSError:
         return None
     return None
+
+
+# ------------------------------------------------------------- 대기 큐(D-087)
+# GUI(main.py)와 Claude Code 세션은 서로 직접 통신하는 채널이 없다 — 유일한
+# 접점은 이 레지스트리 파일. GUI의 "README 등록/경로 수정/은퇴" 버튼은
+# 파일을 직접 안 건드리고(P-01, "GUI는 신호만") 여기 요청만 구조화해서
+# 남긴다. 다음 Claude Code 세션이 열릴 때(SessionStart 훅) 또는 세션 중
+# 능동 조회 시 이 큐를 보고, 실제 승인 대화+파일 작업은 Claude Code가
+# 수행한 뒤 resolve_pending_action으로 그 항목을 지운다 — 처리 이력을
+# 여기 남기지 않는다(labeledFolders/roots가 lastAudited를 이력 없이
+# 덮어쓰는 것과 같은 원칙, 이력이 필요하면 설계 결정이력 md에 남긴다).
+
+PENDING_ACTION_TYPES = {"create_readme", "modify_readme", "fix_path", "retire"}
+PENDING_TARGET_TYPES = {"root", "labeledFolder"}
+
+
+def load_pending_actions(registry_path: Path) -> list[dict]:
+    key = str(registry_path)
+    if not registry_path.exists():
+        _last_known_hash[key] = ""
+        return []
+    try:
+        raw = registry_path.read_bytes()
+    except OSError:
+        return []
+    _last_known_hash[key] = _hash_bytes(raw)
+    try:
+        data = json.loads(raw.decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return []
+    actions = data.get("pendingActions", [])
+    for a in actions:
+        a.setdefault("note", "")
+    return actions
+
+
+def save_pending_actions(actions: list[dict], registry_path: Path) -> None:
+    """pendingActions만 갱신 — 다른 최상위 키는 병합 저장으로 보존(save_
+    labeled_folders와 동일 원칙, D-020 유실 버그 재발 방지)."""
+    key = str(registry_path)
+    current = _current_hash(registry_path)
+    last = _last_known_hash.get(key, "")
+    if last and current != last:
+        raise RegistryConflictError(
+            "레지스트리가 마지막으로 읽은 이후 다른 곳에서 바뀌었습니다. "
+            "덮어쓰지 않고 중단합니다 — 새로고침 후 다시 시도하세요."
+        )
+
+    payload: dict = {}
+    if registry_path.exists():
+        try:
+            payload = json.loads(registry_path.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError):
+            payload = {}
+    payload.setdefault("roots", [])
+    payload.setdefault("sharedDocs", [])
+    payload.setdefault("relations", [])
+    payload.setdefault("labeledFolders", [])
+    payload["pendingActions"] = actions
+
+    raw = router_proposals.atomic_write_json(registry_path, payload)
+    _last_known_hash[key] = _hash_bytes(raw)
+
+
+def add_pending_action(entry: dict, registry_path: Path) -> str:
+    """GUI 버튼(또는 백그라운드 감지 스크립트)이 부르는 진입점 — targetType/
+    targetLabel/actionType/requestedAt은 호출자가 채워도 되고, requestedAt을
+    안 주면 오늘 날짜로 채운다. requestId(uuid4 hex)를 새로 발급해 반환한다
+    — 나중에 resolve_pending_action이 정확히 이 항목만 지우기 위한 키(같은
+    targetLabel에 같은 actionType이 시차를 두고 두 번 큐잉될 수도 있어서,
+    targetLabel+actionType 조합만으론 유일성이 보장 안 됨)."""
+    if entry.get("targetType") not in PENDING_TARGET_TYPES:
+        raise ValueError(f"targetType은 {sorted(PENDING_TARGET_TYPES)} 중 하나여야 합니다.")
+    if entry.get("actionType") not in PENDING_ACTION_TYPES:
+        raise ValueError(f"actionType은 {sorted(PENDING_ACTION_TYPES)} 중 하나여야 합니다.")
+    actions = load_pending_actions(registry_path)
+    request_id = uuid.uuid4().hex
+    new_entry = dict(entry)
+    new_entry["requestId"] = request_id
+    new_entry.setdefault("requestedAt", date.today().strftime("%Y-%m-%d"))
+    new_entry.setdefault("note", "")
+    actions.append(new_entry)
+    save_pending_actions(actions, registry_path)
+    return request_id
+
+
+def resolve_pending_action(request_id: str, registry_path: Path) -> None:
+    """Claude Code가 사용자 승인을 받아 실제로 처리(README 생성/경로 수정/
+    은퇴 등)를 마친 뒤 호출 — 그 요청을 큐에서 제거한다(완료 이력은 안
+    남김, 위 섹션 설명 참고)."""
+    actions = load_pending_actions(registry_path)
+    remaining = [a for a in actions if a.get("requestId") != request_id]
+    if len(remaining) == len(actions):
+        raise ValueError(f"requestId '{request_id}'를 찾을 수 없습니다.")
+    save_pending_actions(remaining, registry_path)
 
 
 # ------------------------------------------------------------- 인덱스 파일 탐색

@@ -464,6 +464,55 @@ def test_validate_registry_flags_labeled_folder_previous_labels_wrong_type():
     assert errors
 
 
+def test_validate_registry_accepts_root_audit_fields():
+    """D-087, O-020 확장 — roots[]에도 lastAudited/previousLabels 허용."""
+    errors = m.validate_registry({
+        "roots": [
+            {"label": "a", "path": "C:\\a", "lastAudited": "2026-08-28", "previousLabels": ["Old"]},
+        ],
+    })
+    assert errors == []
+
+
+def test_validate_registry_accepts_well_formed_pending_action():
+    errors = m.validate_registry({
+        "pendingActions": [
+            {
+                "requestId": "abc123",
+                "targetType": "root",
+                "targetLabel": "a",
+                "actionType": "create_readme",
+                "requestedAt": "2026-08-28",
+            },
+        ],
+    })
+    assert errors == []
+
+
+def test_validate_registry_flags_pending_action_bad_target_type_enum():
+    errors = m.validate_registry({
+        "pendingActions": [
+            {
+                "requestId": "abc123",
+                "targetType": "not-a-type",
+                "targetLabel": "a",
+                "actionType": "create_readme",
+                "requestedAt": "2026-08-28",
+            },
+        ],
+    })
+    assert errors
+
+
+def test_validate_registry_flags_pending_action_missing_required_field():
+    errors = m.validate_registry({
+        "pendingActions": [
+            {"targetType": "root", "targetLabel": "a", "actionType": "create_readme"},
+        ],
+    })
+    assert errors
+
+
 def test_format_schema_validation_text_ok_and_errors():
     assert "통과" in m.format_schema_validation_text([])
     text = m.format_schema_validation_text(["roots/0: 'path' is a required property"])
