@@ -407,11 +407,11 @@ REGISTRY_SCHEMA = {
                 "additionalProperties": True,
                 "properties": {
                     "requestId": {"type": "string", "minLength": 1},
-                    "targetType": {"type": "string", "enum": ["root", "labeledFolder"]},
+                    "targetType": {"type": "string", "enum": ["root", "labeledFolder", "subfolder"]},
                     "targetLabel": {"type": "string", "minLength": 1},
                     "actionType": {
                         "type": "string",
-                        "enum": ["create_readme", "modify_readme", "fix_path", "retire"],
+                        "enum": ["create_readme", "modify_readme", "fix_path", "retire", "readme_deleted"],
                     },
                     "requestedAt": {"type": "string", "pattern": r"^\d{4}-\d{2}-\d{2}$"},
                     "note": {"type": "string"},
@@ -1719,6 +1719,45 @@ class SSOTExplorer(QMainWindow):
         folder = QFileDialog.getExistingDirectory(self, "SSOT 루트로 등록할 폴더 선택")
         if not folder:
             return
+
+        # 2026-09-03 — 이 폴더를 등록하면 그 밑에 이미 등록된 하위 루트를
+        # "삼키는" 셈이 된다(SSOT_Coding_File이 flutter_App/Local_APP보다
+        # 배열에서 앞에 있으면 하위 세션들이 전부 더 넓은 이 루트로
+        # 잘못 매치되던 실제 사고, SSOT_Coding_File/README.md "레지스트리
+        # 배열 순서" 절 참고) — 지금까진 이걸 사람이 등록 시점에 알아챌
+        # 방법이 전혀 없었다. 등록 전에 미리 보여주고 확인받는다.
+        new_root = Path(folder).resolve()
+        covered = []
+        for r in self.roots:
+            try:
+                existing_path = Path(r["path"]).resolve()
+            except (OSError, ValueError):
+                continue
+            if existing_path == new_root:
+                continue
+            try:
+                existing_path.relative_to(new_root)
+            except ValueError:
+                continue
+            covered.append(r)
+        if covered:
+            preview = "\n".join(f"  · {r['label']} ({r['path']})" for r in covered[:20])
+            if len(covered) > 20:
+                preview += f"\n  ...외 {len(covered) - 20}개"
+            resp = QMessageBox.question(
+                self,
+                "하위 루트 발견",
+                f"이 폴더 밑에 이미 등록된 루트가 {len(covered)}개 있습니다:\n\n{preview}\n\n"
+                "이 폴더를 새 루트로 등록하면, 등록 순서에 따라 저 하위 루트들의 "
+                "세션이 이 더 넓은 루트로 잘못 매치될 수 있습니다(먼저 매치되는 "
+                "항목 하나만 적용됨). 그래도 등록할까요?\n"
+                "(등록 후 ssot-roots.json에서 이 항목이 하위 루트들보다 "
+                "뒤에 오는지 반드시 확인하세요.)",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if resp != QMessageBox.Yes:
+                return
+
         label, ok = QInputDialog.getText(self, "루트 이름", "표시할 이름:", text=Path(folder).name)
         if not ok or not label.strip():
             return
@@ -1733,6 +1772,17 @@ class SSOTExplorer(QMainWindow):
             self.tree.clear()
             self.populate_roots()
             return
+
+        # 2026-09-04 — 하위 폴더 README 추적(D-0XX)의 기준점. 등록 시점의
+        # "누가 README를 갖고 있었는지" 스냅샷이 없으면 워치독이 나중에
+        # "사라졌다"를 판단할 기준이 없다 — 실패해도 등록 자체는 이미
+        # 끝났으니 조용히 넘어간다(다음 워치독 스캔이 빈 스냅샷 기준으로
+        # 다시 시작할 뿐, 등록을 막을 이유는 아님).
+        try:
+            snapshot = router_registry.scan_subfolder_readmes(Path(folder))
+            router_registry.save_folder_snapshot(entry["label"], snapshot)
+        except OSError:
+            pass
 
         # 새 루트는 기존 내용이 없으니 안전하게 init CLAUDE.md를 바로 생성
         claude_path = resolve_claude_md_target(Path(folder))

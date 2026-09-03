@@ -60,6 +60,17 @@ def isolated_router_proposals(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def isolated_folder_snapshot(tmp_path, monkeypatch):
+    """2026-09-04 — add_root()가 이제 router_registry.save_folder_snapshot()도
+    호출한다(하위 폴더 README 추적 기준점, D-0XX). 실제 사용자 파일
+    (~/.claude/scripts/ssot_folder_snapshots.json)을 절대 안 건드리게 격리
+    — 다른 isolated_* 픽스처와 동일 원칙."""
+    import router_registry
+    monkeypatch.setattr(router_registry, "FOLDER_SNAPSHOT_PATH", tmp_path / "folder-snapshots.json")
+    yield
+
+
+@pytest.fixture(autouse=True)
 def isolated_watcher_log(tmp_path, monkeypatch):
     """D-042 — InboxWatcherThread가 새 파일을 감지하면 router_watcher.
     record_new_file_event()를 호출해 실제 사용자 로그(~/.claude/scripts/
@@ -1515,5 +1526,70 @@ def test_ensure_all_roots_initialized_does_not_block_ui_thread(tmp_path, isolate
         assert isinstance(win.root_init_worker, m.RootInitWorker)
         _wait_for_root_init(win)
         assert (root_dir / "CLAUDE.md").exists()
+    finally:
+        win.close()
+
+
+# ---------------------------------------------------- add_root 중첩루트 경고 (2026-09-03)
+
+def test_add_root_warns_when_covering_existing_subroot_and_cancel_skips(tmp_path, monkeypatch):
+    """SSOT_Coding_File을 flutter_App/Local_APP보다 먼저 등록해서 하위
+    세션이 잘못 매치됐던 실제 사고(레지스트리 배열 순서 함정)의 재발
+    방지 — 등록하려는 폴더 밑에 이미 등록된 루트가 있으면 경고하고,
+    취소하면 아무 것도 등록 안 된다."""
+    parent = tmp_path / "workspace"
+    child = parent / "sub_project"
+    child.mkdir(parents=True)
+    m.save_roots([{"label": "sub_project", "path": str(child), "referenceCondition": ""}])
+
+    win = m.SSOTExplorer()
+    try:
+        monkeypatch.setattr(m.QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(parent)))
+        monkeypatch.setattr(m.QMessageBox, "question", staticmethod(lambda *a, **k: m.QMessageBox.No))
+        win.add_root()
+
+        assert [r["label"] for r in m.load_roots()] == ["sub_project"]
+    finally:
+        win.close()
+
+
+def test_add_root_proceeds_when_user_confirms_despite_subroot_overlap(tmp_path, monkeypatch):
+    parent = tmp_path / "workspace"
+    child = parent / "sub_project"
+    child.mkdir(parents=True)
+    m.save_roots([{"label": "sub_project", "path": str(child), "referenceCondition": ""}])
+
+    win = m.SSOTExplorer()
+    try:
+        monkeypatch.setattr(m.QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(parent)))
+        monkeypatch.setattr(m.QMessageBox, "question", staticmethod(lambda *a, **k: m.QMessageBox.Yes))
+        monkeypatch.setattr(m.QInputDialog, "getText", staticmethod(lambda *a, **k: ("workspace", True)))
+        win.add_root()
+
+        labels = {r["label"] for r in m.load_roots()}
+        assert labels == {"sub_project", "workspace"}
+    finally:
+        win.close()
+
+
+def test_add_root_no_dialog_when_no_existing_subroot(tmp_path, monkeypatch):
+    """겹치는 하위 루트가 없으면 경고 없이 기존과 동일하게 바로 진행돼야
+    한다 — QMessageBox.question이 아예 호출되지 않는 것으로 확인."""
+    folder = tmp_path / "solo_project"
+    folder.mkdir()
+
+    win = m.SSOTExplorer()
+    try:
+        monkeypatch.setattr(m.QFileDialog, "getExistingDirectory", staticmethod(lambda *a, **k: str(folder)))
+        called = []
+        monkeypatch.setattr(
+            m.QMessageBox, "question",
+            staticmethod(lambda *a, **k: called.append(1) or m.QMessageBox.No),
+        )
+        monkeypatch.setattr(m.QInputDialog, "getText", staticmethod(lambda *a, **k: ("solo_project", True)))
+        win.add_root()
+
+        assert called == []
+        assert [r["label"] for r in m.load_roots()] == ["solo_project"]
     finally:
         win.close()

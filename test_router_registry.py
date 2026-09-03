@@ -386,3 +386,66 @@ def test_read_ssot_label_marker_missing_returns_none(tmp_path):
 
 def test_read_ssot_label_marker_missing_file_returns_none(tmp_path):
     assert rr.read_ssot_label_marker(tmp_path / "no-such-file.md") is None
+
+
+# ------------------------------------------- 하위 폴더 README 스냅샷(2026-09-04)
+
+def test_scan_subfolder_readmes_finds_nested_folders_with_and_without_readme(tmp_path):
+    root = tmp_path / "root"
+    (root / "with-readme").mkdir(parents=True)
+    (root / "with-readme" / "README.md").write_text("x", encoding="utf-8")
+    (root / "without-readme").mkdir()
+    result = rr.scan_subfolder_readmes(root)
+    assert result == {"with-readme": True, "without-readme": False}
+
+
+def test_scan_subfolder_readmes_excludes_root_itself(tmp_path):
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "README.md").write_text("x", encoding="utf-8")
+    assert rr.scan_subfolder_readmes(root) == {}
+
+
+def test_scan_subfolder_readmes_skips_noise_and_dot_dirs(tmp_path):
+    root = tmp_path / "root"
+    (root / "node_modules" / "pkg").mkdir(parents=True)
+    (root / ".git" / "objects").mkdir(parents=True)
+    (root / "real").mkdir()
+    result = rr.scan_subfolder_readmes(root)
+    assert result == {"real": False}
+
+
+def test_scan_subfolder_readmes_recurses_into_nested_children(tmp_path):
+    root = tmp_path / "root"
+    (root / "a" / "b").mkdir(parents=True)
+    (root / "a" / "b" / "README.md").write_text("x", encoding="utf-8")
+    result = rr.scan_subfolder_readmes(root)
+    assert result == {"a": False, str(Path("a") / "b"): True}
+
+
+def test_scan_subfolder_readmes_missing_root_returns_empty(tmp_path):
+    assert rr.scan_subfolder_readmes(tmp_path / "no-such-root") == {}
+
+
+def test_folder_snapshot_round_trip(tmp_path):
+    snapshot_path = tmp_path / "snapshots.json"
+    rr.save_folder_snapshot("a", {"sub": True}, snapshot_path)
+    assert rr.load_folder_snapshot("a", snapshot_path) == {"sub": True}
+
+
+def test_folder_snapshot_preserves_other_labels(tmp_path):
+    snapshot_path = tmp_path / "snapshots.json"
+    rr.save_folder_snapshot("a", {"sub": True}, snapshot_path)
+    rr.save_folder_snapshot("b", {"other": False}, snapshot_path)
+    assert rr.load_folder_snapshot("a", snapshot_path) == {"sub": True}
+    assert rr.load_folder_snapshot("b", snapshot_path) == {"other": False}
+
+
+def test_load_folder_snapshot_missing_file_returns_empty(tmp_path):
+    assert rr.load_folder_snapshot("a", tmp_path / "no-such-file.json") == {}
+
+
+def test_load_folder_snapshot_unknown_label_returns_empty(tmp_path):
+    snapshot_path = tmp_path / "snapshots.json"
+    rr.save_folder_snapshot("a", {"sub": True}, snapshot_path)
+    assert rr.load_folder_snapshot("no-such-label", snapshot_path) == {}

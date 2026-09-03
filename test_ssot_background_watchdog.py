@@ -9,6 +9,16 @@ import router_registry as rr
 import ssot_background_watchdog as watchdog
 
 
+@pytest.fixture(autouse=True)
+def isolated_folder_snapshot(tmp_path, monkeypatch):
+    """2026-09-04 — `_scan()`이 루트마다 매번 router_registry.
+    save_folder_snapshot()을 호출한다(D-0XX, 하위 폴더 README 추적).
+    실제 사용자 파일(~/.claude/scripts/ssot_folder_snapshots.json)을 절대
+    안 건드리게 이 파일의 모든 테스트에 기본 격리 — 개별 테스트가 다시
+    patch해도 같은 tmp_path 기반이라 무해하다."""
+    monkeypatch.setattr(rr, "FOLDER_SNAPSHOT_PATH", tmp_path / "folder-snapshots.json")
+
+
 def test_scan_and_queue_flags_missing_root_path(tmp_path):
     registry_path = tmp_path / "ssot-roots.json"
     rr.add_root({"label": "a", "path": str(tmp_path / "does-not-exist")}, registry_path)
@@ -59,7 +69,10 @@ def test_scan_and_queue_flags_stale_root_readme(tmp_path):
 def test_scan_and_queue_fresh_root_queues_nothing(tmp_path):
     root = tmp_path / "root"
     root.mkdir()
-    (root / "README.md").write_text("fresh", encoding="utf-8")
+    # 2026-09-03 — roots[]도 SSOT-LABEL 마커까지 검사하도록 확장됐으므로
+    # (labeledFolders[]와 동일 검사), "아무 문제도 없는" fixture는 마커도
+    # 라벨과 일치해야 한다.
+    (root / "README.md").write_text("<!-- SSOT-LABEL: a -->\n\nfresh", encoding="utf-8")
     registry_path = tmp_path / "ssot-roots.json"
     rr.add_root({"label": "a", "path": str(root)}, registry_path)
 
@@ -67,6 +80,26 @@ def test_scan_and_queue_fresh_root_queues_nothing(tmp_path):
 
     assert notices == []
     assert rr.load_pending_actions(registry_path) == []
+
+
+def test_scan_and_queue_root_label_marker_mismatch_queues_modify_readme(tmp_path):
+    """roots[]도 labeledFolders[]와 동일하게 SSOT-LABEL 마커 불일치를
+    잡아야 한다(2026-09-03 확장) — README가 "수정"돼 다른 라벨을 자기선언
+    하게 된 경우의 재현."""
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "README.md").write_text("<!-- SSOT-LABEL: wrong-label -->\n\nbody", encoding="utf-8")
+    registry_path = tmp_path / "ssot-roots.json"
+    rr.add_root({"label": "a", "path": str(root)}, registry_path)
+
+    notices = watchdog.scan_and_queue(registry_path)
+
+    assert len(notices) == 1
+    assert "SSOT-LABEL" in notices[0]
+    pending = rr.load_pending_actions(registry_path)
+    assert len(pending) == 1
+    assert pending[0]["targetType"] == "root"
+    assert pending[0]["actionType"] == "modify_readme"
 
 
 def test_scan_and_queue_flags_labeled_folder_missing_path(tmp_path):
@@ -296,3 +329,78 @@ def test_main_logs_run_even_when_nothing_found(tmp_path, monkeypatch):
 
 def test_load_watchdog_log_empty_when_missing_file(tmp_path):
     assert watchdog.load_watchdog_log(tmp_path / "no-such-file.json") == []
+
+
+# ------------------------------------- 하위 폴더 README 추적(2026-09-04, D-0XX)
+
+def test_scan_and_queue_flags_subfolder_missing_readme(tmp_path, monkeypatch):
+    snapshot_path = tmp_path / "snapshots.json"
+    monkeypatch.setattr(rr, "FOLDER_SNAPSHOT_PATH", snapshot_path)
+    root = tmp_path / "root"
+    (root / "sub").mkdir(parents=True)
+    (root / "README.md").write_text("<!-- SSOT-LABEL: a -->\n", encoding="utf-8")
+    registry_path = tmp_path / "ssot-roots.json"
+    rr.add_root({"label": "a", "path": str(root)}, registry_path)
+
+    notices = watchdog.scan_and_queue(registry_path)
+
+    pending = rr.load_pending_actions(registry_path)
+    subfolder_actions = [p for p in pending if p["targetType"] == "subfolder"]
+    assert len(subfolder_actions) == 1
+    assert subfolder_actions[0]["targetLabel"] == "a:sub"
+    assert subfolder_actions[0]["actionType"] == "create_readme"
+    assert any("sub" in n for n in notices)
+
+
+def test_scan_and_queue_flags_subfolder_readme_deleted(tmp_path, monkeypatch):
+    snapshot_path = tmp_path / "snapshots.json"
+    monkeypatch.setattr(rr, "FOLDER_SNAPSHOT_PATH", snapshot_path)
+    root = tmp_path / "root"
+    (root / "sub").mkdir(parents=True)
+    (root / "sub" / "README.md").write_text("x", encoding="utf-8")
+    (root / "README.md").write_text("<!-- SSOT-LABEL: a -->\n", encoding="utf-8")
+    registry_path = tmp_path / "ssot-roots.json"
+    rr.add_root({"label": "a", "path": str(root)}, registry_path)
+
+    # 첫 스캔 — 정상, 스냅샷에 sub=True로 기록됨
+    first = watchdog.scan_and_queue(registry_path)
+    assert first == []
+
+    # sub의 README가 사라짐
+    (root / "sub" / "README.md").unlink()
+    second = watchdog.scan_and_queue(registry_path)
+
+    pending = rr.load_pending_actions(registry_path)
+    subfolder_actions = [p for p in pending if p["targetType"] == "subfolder"]
+    assert len(subfolder_actions) == 1
+    assert subfolder_actions[0]["actionType"] == "readme_deleted"
+    assert any("사라짐" in n for n in second)
+
+
+def test_scan_and_queue_subfolder_with_readme_queues_nothing(tmp_path, monkeypatch):
+    snapshot_path = tmp_path / "snapshots.json"
+    monkeypatch.setattr(rr, "FOLDER_SNAPSHOT_PATH", snapshot_path)
+    root = tmp_path / "root"
+    (root / "sub").mkdir(parents=True)
+    (root / "sub" / "README.md").write_text("x", encoding="utf-8")
+    (root / "README.md").write_text("<!-- SSOT-LABEL: a -->\n", encoding="utf-8")
+    registry_path = tmp_path / "ssot-roots.json"
+    rr.add_root({"label": "a", "path": str(root)}, registry_path)
+
+    notices = watchdog.scan_and_queue(registry_path)
+
+    assert notices == []
+
+
+def test_scan_and_queue_updates_snapshot_after_scan(tmp_path, monkeypatch):
+    snapshot_path = tmp_path / "snapshots.json"
+    monkeypatch.setattr(rr, "FOLDER_SNAPSHOT_PATH", snapshot_path)
+    root = tmp_path / "root"
+    (root / "sub").mkdir(parents=True)
+    (root / "README.md").write_text("<!-- SSOT-LABEL: a -->\n", encoding="utf-8")
+    registry_path = tmp_path / "ssot-roots.json"
+    rr.add_root({"label": "a", "path": str(root)}, registry_path)
+
+    watchdog.scan_and_queue(registry_path)
+
+    assert rr.load_folder_snapshot("a", snapshot_path) == {"sub": False}

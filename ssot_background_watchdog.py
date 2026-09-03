@@ -24,12 +24,20 @@ D-087의 대기 큐에 구조화된 요청을 남김(이미 같은 target+action
 extra)는 선택적 — 없으면 큐잉까지만 하고 토스트는 조용히 생략(로그만
 남김), 스캔/큐잉 자체가 실패하는 일은 없다.
 
-**의도적으로 이번 라운드에 안 한 것**: roots[]의 README에 아직 아무도
-SSOT-LABEL 마커를 안 붙였으므로(D-087은 스키마만 확장, 실제 마커 retrofit은
-후속 과제) roots[]는 마커 검사 없이 경로존재/README신선도만 본다 —
-labeledFolders[]만 마커까지 검사. 작업 스케줄러 등록 자체(schtasks 명령
-실행)도 시스템 설정 변경이라 이 스크립트를 실행 파일로 준비하는 것과
-별개로, 사용자 승인 후 별도로 진행한다.
+**2026-09-03(D-0XX) 갱신**: roots[] 6개 전부에 SSOT-LABEL 마커를 소급
+삽입 완료 — 이제 roots[]도 labeledFolders[]와 동일하게 경로존재/README
+신선도**+ 마커 일치**까지 검사한다(마커 불일치도 `modify_readme`로
+큐잉). 작업 스케줄러 등록 자체(schtasks 명령 실행)는 시스템 설정
+변경이라 이 스크립트를 실행 파일로 준비하는 것과 별개로 사용자 승인
+후 진행한다.
+
+**2026-09-04(D-0XX) 갱신**: 루트 자신의 README뿐 아니라 그 밑 전체
+하위 폴더(재귀)까지 추적 범위를 넓혔다 — `router_registry.
+scan_subfolder_readmes()`로 매 스캔마다 "README 없는 폴더"/"등록 시점
+(또는 지난 스캔)엔 있었는데 지금은 사라진 README"를 잡아 `subfolder`
+타겟으로 큐잉한다. 기준점은 `router_registry.FOLDER_SNAPSHOT_PATH`(레지
+스트리 본체와 별개 파일)에 저장되는 이전 스캔 스냅샷 — 잦은 mtime 변경은
+의도적으로 무시(노이즈), 존재/삭제 여부만 본다.
 
 사용법(단독 실행):
     python ssot_background_watchdog.py
@@ -172,6 +180,34 @@ def _scan(registry_path: Path) -> list[dict]:
                 {"checkedPath": path_str},
             )
             continue
+
+        # 2026-09-04 — 하위 폴더 전체 재귀 스캔(D-0XX, 사용자 요청 "파일
+        # 추적"). 루트 자신의 README 상태(freshness/marker, 아래)와는
+        # 독립적으로 항상 돈다 — 루트 자신의 README가 stale이어도 하위
+        # 폴더 추적은 계속 유효해야 함. 잦은 mtime 변경은 무시하고 "README
+        # 없음"/"있다가 사라짐" 두 가지만 본다.
+        old_snapshot = router_registry.load_folder_snapshot(label)
+        new_snapshot = router_registry.scan_subfolder_readmes(root_path)
+        for rel_path, has_readme in new_snapshot.items():
+            if has_readme:
+                continue
+            # 지난 스냅샷에 True로 있다가 지금 False면 "사라짐"이 더 구체적인
+            # 신호라 그쪽만 큐잉한다 — 둘 다 큐잉하면 같은 폴더에 대해
+            # create_readme+readme_deleted가 동시에 뜨는 중복이 됨.
+            if old_snapshot.get(rel_path) is True:
+                queue(
+                    "subfolder", f"{label}:{rel_path}", "readme_deleted",
+                    "README.md가 있었는데 사라짐(폴더 삭제 포함)",
+                    {"rootLabel": label, "relativePath": rel_path},
+                )
+            else:
+                queue(
+                    "subfolder", f"{label}:{rel_path}", "create_readme",
+                    "README.md 없음(하위 폴더)",
+                    {"rootLabel": label, "relativePath": rel_path, "checkedPath": str(root_path / rel_path)},
+                )
+        router_registry.save_folder_snapshot(label, new_snapshot)
+
         freshness = router_registry.check_root_readme_freshness(r, README_STALE_DAYS)
         if freshness["status"] == "no_readme":
             queue(
@@ -183,7 +219,8 @@ def _scan(registry_path: Path) -> list[dict]:
                     ]
                 },
             )
-        elif freshness["status"] == "stale":
+            continue
+        if freshness["status"] == "stale":
             queue(
                 "root", label, "modify_readme", f"README가 {freshness['gapDays']}일 뒤처짐(mtime 기준)",
                 {
@@ -192,6 +229,21 @@ def _scan(registry_path: Path) -> list[dict]:
                     "staleThresholdDays": README_STALE_DAYS,
                 },
             )
+
+        # 2026-09-03 — roots[]도 labeledFolders[]와 동일하게 SSOT-LABEL
+        # 마커 검사(라벨-폴더-README 3자 일치). README가 "수정"돼 다른
+        # 라벨을 자기선언하게 되거나 마커 자체가 없어지면(fresh/stale
+        # 여부와 무관하게) 여기서 잡는다 — freshness가 이미 찾아둔
+        # readmePath를 재사용해 find_index_files를 두 번 안 부른다.
+        readme_path_str = freshness.get("readmePath")
+        if readme_path_str:
+            marker = router_registry.read_ssot_label_marker(Path(readme_path_str))
+            if marker != label:
+                queue(
+                    "root", label, "modify_readme",
+                    f"SSOT-LABEL 마커 불일치(실제: {marker!r})",
+                    {"readmePath": readme_path_str, "expectedLabel": label, "markerFound": marker},
+                )
 
     for f in router_registry.load_labeled_folders(registry_path):
         label = f.get("label", "")

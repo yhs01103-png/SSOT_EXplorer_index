@@ -144,6 +144,17 @@ def _cmd_register(args: argparse.Namespace) -> int:
     except router_registry.RegistryConflictError as e:
         print(str(e), file=sys.stderr)
         return 1
+
+    # 2026-09-04 — GUI(main.py add_root)와 동일하게 하위 폴더 README 추적
+    # 기준점을 등록 시점에 찍어둔다(D-0XX). 실패해도 등록 자체는 이미
+    # 끝났으니 조용히 넘어간다 — 다음 워치독 스캔이 빈 스냅샷 기준으로
+    # 다시 시작할 뿐.
+    try:
+        snapshot = router_registry.scan_subfolder_readmes(Path(path))
+        router_registry.save_folder_snapshot(args.label, snapshot)
+    except OSError:
+        pass
+
     print(f"등록됨: {args.label} -> {path}")
     return 0
 

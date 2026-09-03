@@ -27,6 +27,14 @@ def _registry(tmp_path):
     return tmp_path / "ssot-roots.json"
 
 
+@pytest.fixture(autouse=True)
+def isolated_folder_snapshot(tmp_path, monkeypatch):
+    """2026-09-04 — `ssot register`(cli._cmd_register)도 이제 router_registry.
+    save_folder_snapshot()을 호출한다(D-0XX). 실제 사용자 파일(~/.claude/
+    scripts/ssot_folder_snapshots.json)을 절대 안 건드리게 격리."""
+    monkeypatch.setattr(router_registry, "FOLDER_SNAPSHOT_PATH", tmp_path / "folder-snapshots.json")
+
+
 # ---------------------------------------------------------- console encoding
 
 def test_fix_windows_console_encoding_tolerates_stream_without_reconfigure(monkeypatch):

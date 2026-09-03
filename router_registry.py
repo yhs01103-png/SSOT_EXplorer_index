@@ -351,8 +351,8 @@ def read_ssot_label_marker(readme_path: Path) -> str | None:
 # 여기 남기지 않는다(labeledFolders/roots가 lastAudited를 이력 없이
 # 덮어쓰는 것과 같은 원칙, 이력이 필요하면 설계 결정이력 md에 남긴다).
 
-PENDING_ACTION_TYPES = {"create_readme", "modify_readme", "fix_path", "retire"}
-PENDING_TARGET_TYPES = {"root", "labeledFolder"}
+PENDING_ACTION_TYPES = {"create_readme", "modify_readme", "fix_path", "retire", "readme_deleted"}
+PENDING_TARGET_TYPES = {"root", "labeledFolder", "subfolder"}
 
 
 def load_pending_actions(registry_path: Path) -> list[dict]:
@@ -434,6 +434,76 @@ def resolve_pending_action(request_id: str, registry_path: Path) -> None:
     if len(remaining) == len(actions):
         raise ValueError(f"requestId '{request_id}'를 찾을 수 없습니다.")
     save_pending_actions(remaining, registry_path)
+
+
+# ------------------------------------------------------------ 하위 폴더 README 스냅샷
+# 2026-09-04 — "루트 하나 등록"만으로는 그 밑 어느 하위 폴더에 README가
+# 없는지, 있던 README가 나중에 사라졌는지 아무도 모른다(list_missing_
+# index_folders는 depth=1만 봄, D-060 — CLAUDE.md 트리워킹이 깊은 계층을
+# 커버한다는 게 근거였는데, README는 그 워킹 대상이 아니라 이 근거가 안
+# 통함). 사용자 요청(파일 추적 목적)으로 등록 시점에 하위 전체를 재귀
+# 스냅샷 찍어두고, 워치독이 매 스캔마다 "README 없는 폴더"/"있다가
+# 사라진 README"만 잡는다 — mtime 변경(잦은 수정)은 의도적으로 무시
+# (노이즈, D-048 README_STALE_DAYS와는 별개 축). 실제 파일은 전혀 안
+# 건드리고(P-01), 스냅샷도 레지스트리 본체가 아니라 별도 사이드 파일에만
+# 남는다("리드미2" 개념 — 진짜 README.md와 절대 안 섞임).
+
+NOISE_DIR_NAMES = {
+    "node_modules", "venv", "__pycache__", "dist", "build",
+    "target", "bin", "obj",
+}  # ssot_mcp_server._NOISE_DIR_NAMES와 동일 목록(D-060) — 노이즈 판단 기준을
+   # 하나로 유지하고 싶지만 그쪽은 mcp SDK 의존 모듈이라 이 워치독/등록
+   # 경로(mcp 미설치로도 동작해야 함, D-088)에서 못 끌어옴 — 값만 복제.
+
+FOLDER_SNAPSHOT_PATH = Path.home() / ".claude" / "scripts" / "ssot_folder_snapshots.json"
+
+
+def scan_subfolder_readmes(root_path: Path) -> dict[str, bool]:
+    """root_path 밑 전체 하위 폴더(재귀, root_path 자신은 제외 — 그건 이미
+    roots[]가 따로 추적)를 훑어 {상대경로: README.md 존재여부}를 반환한다.
+    dot-폴더와 NOISE_DIR_NAMES는 그 자신도, 그 밑도 전부 건너뛴다."""
+    result: dict[str, bool] = {}
+    if not root_path.is_dir():
+        return result
+    for dirpath, dirnames, filenames in os.walk(root_path):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".") and d not in NOISE_DIR_NAMES]
+        current = Path(dirpath)
+        if current == root_path:
+            continue
+        rel = str(current.relative_to(root_path))
+        result[rel] = any(f.lower() == "readme.md" for f in filenames)
+    return result
+
+
+def load_folder_snapshot(root_label: str, snapshot_path: Path | None = None) -> dict[str, bool]:
+    """이전 스캔 시점의 {상대경로: README 존재여부}를 읽는다 — 아직 한
+    번도 스냅샷을 안 찍었으면(신규 등록 직후 실패 등) 빈 dict."""
+    path = snapshot_path or FOLDER_SNAPSHOT_PATH
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data.get(root_label, {})
+
+
+def save_folder_snapshot(
+    root_label: str, snapshot: dict[str, bool], snapshot_path: Path | None = None
+) -> None:
+    """root_label 하나의 스냅샷만 갱신 — 다른 루트의 스냅샷은 보존(save_
+    pending_actions와 동일한 병합 저장 원칙). 레지스트리 본체(ssot-roots.json)
+    와는 완전히 별개 파일이라 RegistryConflictError 동시성 제어 대상이
+    아니다(워치독 단일 프로세스가 순차 실행되는 게 전제, D-088)."""
+    path = snapshot_path or FOLDER_SNAPSHOT_PATH
+    data: dict = {}
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+        except (OSError, json.JSONDecodeError):
+            data = {}
+    data[root_label] = snapshot
+    router_proposals.atomic_write_json(path, data)
 
 
 # ------------------------------------------------------------- 인덱스 파일 탐색
