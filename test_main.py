@@ -609,6 +609,46 @@ def test_management_panel_shows_empty_orchestration_log(isolated_registry, isola
     assert "없음" in panel.orchestration_log_view.toPlainText()
 
 
+# --------------------------------------------- D-093: 분류 피드백 이력(O-012)
+
+def test_format_proposals_text_empty():
+    assert "없음" in m.format_proposals_text([], {})
+
+
+def test_format_proposals_text_shows_decision_and_trust_badge_recent_first():
+    proposals = [
+        {"decidedAt": "2026-09-04 10:00:00", "rootLabel": "a", "score": 0.5,
+         "decision": "approved", "contentPreview": "첫번째 내용"},
+        {"decidedAt": "2026-09-04 10:05:00", "rootLabel": "b", "score": 0.7,
+         "decision": "cancelled", "contentPreview": "두번째 내용"},
+    ]
+    trust_state = {"a": {"trusted": True, "streak": 5}}
+    text = m.format_proposals_text(proposals, trust_state)
+    assert text.index("두번째") < text.index("첫번째")  # 최신이 위로
+    assert "✔승인" in text and "a(0.5)" in text and "✅신뢰됨" in text
+    assert "✘취소" in text and "b(0.7)" in text
+
+
+def test_management_panel_shows_empty_proposals(isolated_registry, isolated_qsettings):
+    m.save_roots([{"label": "a", "path": "C:\\a"}])
+    panel = m.ManagementPanel()
+    assert "없음" in panel.proposals_view.toPlainText()
+
+
+def test_management_panel_shows_proposals_after_record_decision(isolated_registry, isolated_qsettings):
+    """GUI 승인 버튼이 부르는 것과 같은 함수(router_proposals.record_decision)를
+    직접 호출한 뒤 refresh()가 반영하는지 — MCP record_classification_feedback
+    (D-092)도 내부적으로 이 함수를 그대로 위임하므로 같은 경로가 검증된다."""
+    m.save_roots([{"label": "a", "path": "C:\\a"}])
+    router_proposals.record_decision(
+        {"rootLabel": "a", "rootPath": "C:\\a", "score": 0.5, "reason": "테스트"}, "내용", "approved"
+    )
+    panel = m.ManagementPanel()
+    text = panel.proposals_view.toPlainText()
+    assert "없음" not in text
+    assert "a(0.5)" in text
+
+
 def test_format_watchdog_log_text_empty():
     assert "없음" in m.format_watchdog_log_text([])
 

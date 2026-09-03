@@ -84,6 +84,7 @@ import router_orchestrator  # Qt 미의존 순수 모듈 — main.py와 달리 �
 import router_registry  # Qt 미의존(D-069/D-071) — load_roots/find_index_files
 from router_proposals import (  # Qt 미의존, 안전하게 top-level import
     is_developer_mode,
+    record_decision,
     resolve_registry_path,
 )
 
@@ -187,11 +188,55 @@ def classify_content(text: str) -> dict:
     부작용이 아니라 D-044부터 있던 동작 그대로다.
 
     개발자 모드가 꺼져 있으면 분류를 아예 실행하지 않고 에러 dict만
-    반환한다(D-057) — 내부 로그도 안 쌓인다."""
+    반환한다(D-057) — 내부 로그도 안 쌓인다.
+
+    **최종적으로 어느 루트를 선택했는지 결정했으면 `record_classification_
+    feedback`을 그 candidate로 호출해달라(D-092, O-012)** — 강제는 아니지만,
+    호출 안 하면 이 판단의 승인/거부 데이터가 전혀 안 쌓여서 신뢰 폐루프
+    (trusted/acceptanceRate)와 향후 랭킹 재조정 둘 다 영영 근거 데이터를
+    못 모은다."""
     if not is_developer_mode(REGISTRY_PATH):
         return _DEV_MODE_OFF
 
     return router_orchestrator.orchestrate(text, router_registry.load_roots(REGISTRY_PATH))
+
+
+@server.tool()
+def record_classification_feedback(candidate: dict, content_preview: str, decision: str) -> dict:
+    """`classify_content()`가 반환한 `candidates` 배열의 항목 하나를 실제로
+    채택했는지(`decision="approved"`) 아니면 다른 곳으로 갔는지
+    (`decision="cancelled"`)를 기록한다(D-092, O-012).
+
+    **왜 필요한가**: GUI(SaveDocumentDialog)는 승인/취소 버튼을 누르는 순간
+    `router_proposals.record_decision()`이 자동으로 불려서 신뢰 폐루프
+    데이터(`ssot_router_proposals.json`/`ssot_router_trust.json`, D-029/D-030)
+    가 쌓인다. MCP 경유 호출에는 그 "버튼"에 해당하는 이벤트가 아예 없어서
+    (`classify_content`는 신호만 주고 끝), 지금까지 이 채널로는 그 데이터가
+    하나도 안 쌓이고 있었다 — `acceptance_rate()`/`is_trusted()`가 실사용
+    다수를 차지하는 MCP 경로에서는 영원히 비어있는 상태였다는 뜻.
+
+    `candidate`는 `classify_content()`가 반환한 `candidates` 배열의 항목
+    하나를 그대로 넘기면 된다 — 실제로는 `rootLabel`/`rootPath`/`score`/
+    `reason`만 쓰이고 나머지 필드(`signals`/`matchedKeywords` 등)는 무시된다.
+    `decision`은 `"approved"`|`"cancelled"`만 허용 — 다른 값이면 다른 tool처럼
+    조용히 무시하지 않고 `ValueError`를 그대로 전달한다(호출측 실수를 바로
+    드러낸다).
+
+    기록된 데이터는 (1) 개발자 탭의 "분류 피드백 이력" 뷰에서 사람이 그대로
+    볼 수 있고 (2) 다음 `classify_content` 호출부터 `orchestrate()` 5단계
+    (trust_annotation)가 자동으로 다시 읽어 후보에 주석을 붙인다 — 별도
+    조회 tool 없이 다음 호출에 자연히 반영된다.
+
+    **호출은 강제가 아니다** — 안 불러도 아무 일도 안 일어나며,
+    `classify_content` 스스로 이 tool을 대신 호출하지 않는다(응답률은
+    O-012가 이미 기록해둔 미지수).
+
+    개발자 모드가 꺼져 있으면 다른 tool과 동일하게 기록 없이 에러 dict만
+    반환한다(D-057 게이팅 관례)."""
+    if not is_developer_mode(REGISTRY_PATH):
+        return _DEV_MODE_OFF
+
+    return record_decision(candidate, content_preview, decision)
 
 
 @server.tool()

@@ -223,6 +223,47 @@ def test_classify_content_records_orchestration_log(tmp_path):
     assert len(ro.load_orchestration_log()) == 1
 
 
+# --------------------------------------------------- record_classification_feedback
+
+def test_record_classification_feedback_writes_proposal(tmp_path):
+    """D-092(O-012) — classify_content가 반환하는 candidate 항목 하나를 그대로
+    넘기면 router_proposals.record_decision()에 위임돼 원장에 쌓인다."""
+    candidate = {"rootLabel": "a", "rootPath": "C:\\a", "score": 0.5, "reason": "테스트", "signals": ["scope일치"]}
+    entry = mcp_srv.record_classification_feedback(candidate, "내용 미리보기", "approved")
+    assert entry["rootLabel"] == "a"
+    assert entry["decision"] == "approved"
+    proposals = rp.load_proposals()
+    assert len(proposals) == 1
+    assert proposals[0]["rootLabel"] == "a"
+
+
+def test_record_classification_feedback_feeds_trust_loop(tmp_path):
+    """연속 5회 approved를 이 tool로 기록하면 그 다음 classify_content 호출이
+    자동으로 trusted=True를 반영한다 — GUI 경로(D-030)와 동일한 신뢰 폐루프가
+    MCP 경유로도 닫힌다는 게 O-012가 원래 풀려던 문제."""
+    candidate = {"rootLabel": "a", "rootPath": "C:\\a", "score": 0.5, "reason": "테스트"}
+    for _ in range(rp.TRUST_PROMOTION_STREAK):
+        mcp_srv.record_classification_feedback(candidate, "내용", "approved")
+
+    m.save_roots([{"label": "a", "path": "C:\\a", "scope": "특수키워드"}])
+    result = mcp_srv.classify_content("특수키워드 관련 내용")
+    assert result["candidates"][0]["trusted"] is True
+
+
+def test_record_classification_feedback_rejects_invalid_decision():
+    candidate = {"rootLabel": "a", "rootPath": "C:\\a", "score": 0.5, "reason": "테스트"}
+    with pytest.raises(ValueError):
+        mcp_srv.record_classification_feedback(candidate, "내용", "maybe")
+
+
+def test_record_classification_feedback_gated_when_developer_mode_off(tmp_path):
+    rp.set_developer_mode(False, m.REGISTRY_PATH)
+    candidate = {"rootLabel": "a", "rootPath": "C:\\a", "score": 0.5, "reason": "테스트"}
+    result = mcp_srv.record_classification_feedback(candidate, "내용", "approved")
+    assert result == mcp_srv._DEV_MODE_OFF
+    assert rp.load_proposals() == []  # 게이트가 꺼져 있으면 기록도 안 쌓임
+
+
 # --------------------------------------------------------- list_triggered_actions
 
 def test_list_triggered_actions_returns_matching_action(tmp_path):
@@ -710,6 +751,7 @@ def test_tools_are_registered_on_server():
     assert "list_ssot_roots" in names
     assert "check_readme_freshness" in names
     assert "classify_content" in names
+    assert "record_classification_feedback" in names
     assert "list_triggered_actions" in names
     assert "list_registered_actions" in names
     assert "list_missing_index_folders" in names

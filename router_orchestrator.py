@@ -44,7 +44,20 @@ CLI와 같은 계약(JSON 입출력)이지만 3단계를 전부 거친 최종 �
 role을 매겨 점수에 반영(오프라인 원칙 유지, router_classifier.py 참고).
 별도로 4.5단계 — router_ai_judgment.judge_candidates()를 시도하되 아직
 프로바이더 미연결이라 항상 skipped로 기록(semantic 단계와 동일 처리,
-O-014). 파이프라인 6단계로."""
+O-014). 파이프라인 6단계로.
+
+**(D-092, 2026-09-04) — O-016 A안: 시맨틱 단계를 실제 랭킹에 반영**: D-067
+이후로 embed_query_text()는 호출만 되고 결과가 버려지고 있었다(skipped
+기록용). 이제 **이미 keyword/scope 신호로 merged에 오른 후보만** 유사도로
+additive 가점을 받는다(D-033의 "floor 아닌 additive" 원칙 그대로 재사용,
+SCOPE_MATCH_BONUS/ACTIVE_KEYWORD_BONUS/TARGET_ROLE_BONUS와 같은 모양).
+**의도적으로 안 하는 것** — 이 신호 하나만으로 새 후보를 merged에 추가하지
+않는다(O-016 B안, 별도 설계 필요: 루트 전체를 매번 임베딩해야 해서 비용이
+다르고, "키워드가 하나도 안 겹치는 루트가 갑자기 추천된다"는 게 더 큰
+행동 변화라 데이터 없이 먼저 넣지 않는다는 이 프로젝트의 관례를 따름).
+이 범위 제한 덕에 별도 캐싱 인프라 없이도 비용이 자연히 낮다 — 매 호출마다
+임베딩되는 루트 수가 "등록된 전체 루트"가 아니라 "이미 매치된 소수 후보"로
+줄어든다."""
 from __future__ import annotations
 
 import json
@@ -62,6 +75,9 @@ import router_proposals
 ORCHESTRATION_LOG_PATH = Path.home() / ".claude" / "scripts" / "ssot_orchestrator_log.json"
 README_FILENAME = "readme.md"
 PROSE_MATCH_WEIGHT = 0.4  # D-033: 프로즈검색 신호가 additive로 기여하는 최대 가중치
+EMBEDDING_MATCH_BONUS = 0.2  # D-092(O-016 A안): 유사도(0~1)에 곱해 additive 가산.
+# SCOPE_MATCH_BONUS(0.3)/ACTIVE_KEYWORD_BONUS(0.15)/TARGET_ROLE_BONUS(0.15)와
+# 같은 자릿수 — 잠정값(O-016, 표본 부족 그대로 유지), 실사용 데이터로 재조정 대상.
 
 
 def _elapsed_ms(started_at: float) -> float:
@@ -203,13 +219,32 @@ def orchestrate(
         "elapsedMs": _elapsed_ms(_t),
     })
 
-    # 4단계(D-044, O-009) — 시맨틱(임베딩) 매칭: 아직 틀만(router_embeddings.py)
-    # — 프로바이더가 안 붙어 있으면 항상 스킵으로 기록만 하고 결과엔 영향
-    # 없음. 나중에 프로바이더가 붙으면 이 자리에서 실제 랭킹 신호로 확장.
+    # 4단계(D-044/D-067, O-016 A안 — D-092) — 시맨틱(임베딩) 매칭: 이미
+    # keyword/scope 신호로 merged에 오른 후보만 유사도로 additive 가점(모듈
+    # docstring 참고). 프로바이더가 안 붙어 있으면(embed_query_text 시점에
+    # 바로 던짐) 기존과 동일하게 스킵으로만 기록하고 결과엔 영향 없음 —
+    # merged가 비어있으면(이번 실행에 후보가 하나도 없으면) 루트별 embed_text
+    # 호출 자체가 안 일어난다(비용 억제, docstring [의도적으로 안 하는 것] 참고).
     _t = time.perf_counter()
+    semantic_boosted = 0
     try:
-        router_embeddings.embed_query_text(text)
-        steps.append({"stage": "semantic", "skipped": False, "elapsedMs": _elapsed_ms(_t)})
+        query_vec = router_embeddings.embed_query_text(text)
+        for label, cand in merged.items():
+            corpus_text = corpora.get(label, "").strip()
+            if not corpus_text:
+                continue
+            root_vec = router_embeddings.embed_text(corpus_text)
+            similarity = router_embeddings.cosine_similarity(query_vec, root_vec)
+            if similarity < router_embeddings.DEFAULT_MIN_SIMILARITY:
+                continue
+            cand["score"] = round(min(cand["score"] + EMBEDDING_MATCH_BONUS * similarity, 1.0), 3)
+            cand["signals"].append("시맨틱매치")
+            cand["reason"] += f" / 시맨틱 유사도 {similarity:.2f}(가점)"
+            semantic_boosted += 1
+        steps.append({
+            "stage": "semantic", "skipped": False, "boostedCount": semantic_boosted,
+            "elapsedMs": _elapsed_ms(_t),
+        })
     except router_embeddings.EmbeddingProviderNotConfigured:
         steps.append({"stage": "semantic", "skipped": True, "reason": "provider_not_configured", "elapsedMs": _elapsed_ms(_t)})
 

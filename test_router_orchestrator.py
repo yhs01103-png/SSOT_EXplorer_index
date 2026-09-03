@@ -131,13 +131,73 @@ def test_orchestrate_reports_elapsed_ms_per_stage_and_total(tmp_path):
 
 def test_orchestrate_semantic_stage_runs_when_provider_available(tmp_path, monkeypatch):
     """D-067 — 임베딩 프로바이더가 실제로 연결돼 있으면 semantic 단계가
-    skipped=False로 기록돼야 한다(결과 랭킹엔 아직 영향 없음 — 그건 별도
-    후속 작업, router_orchestrator.py 195번째 줄 주석 참고)."""
+    skipped=False로 기록돼야 한다. 이 테스트의 roots는 구조화/scope 신호가
+    전혀 안 걸려 merged가 비어있으므로(label "x", referenceCondition ""),
+    D-092(O-016 A안) 도입 후에도 embed_text 호출 없이(아래 별도 테스트가
+    이 부분을 명시적으로 검증) skipped=False만 그대로 유지된다."""
     monkeypatch.setattr(re_, "embed_query_text", lambda text: [0.1, 0.2, 0.3])
     roots = [{"label": "x", "path": str(tmp_path), "scope": "", "referenceCondition": ""}]
     result = ro.orchestrate("아무 내용", roots, log_path=tmp_path / "log.json")
     semantic_step = next(s for s in result["steps"] if s["stage"] == "semantic")
     assert semantic_step["skipped"] is False
+    assert semantic_step["boostedCount"] == 0
+
+
+# ------------------------------------------------- D-092: O-016 A안(시맨틱 가점)
+
+def test_orchestrate_semantic_boosts_existing_candidate_score(tmp_path, monkeypatch):
+    """O-016 A안 — 이미 keyword/scope 신호로 merged에 오른 후보만 유사도로
+    additive 가점을 받는다(D-033 원칙과 동일 모양). 벡터를 [1,0]으로 고정해
+    코사인 유사도를 1.0으로 결정적으로 만든다."""
+    monkeypatch.setattr(re_, "embed_query_text", lambda text: [1.0, 0.0])
+    monkeypatch.setattr(re_, "embed_text", lambda text: [1.0, 0.0])
+    root_dir = tmp_path / "root"
+    root_dir.mkdir()
+    roots = [{"label": "root", "path": str(root_dir), "scope": "특수키워드", "referenceCondition": ""}]
+
+    result = ro.orchestrate("특수키워드 내용", roots, log_path=tmp_path / "log.json")
+    cand = result["candidates"][0]
+    assert "시맨틱매치" in cand["signals"]
+    # scope일치 단독 점수(0.3, SCOPE_MATCH_BONUS) + EMBEDDING_MATCH_BONUS(0.2)*유사도(1.0)
+    assert cand["score"] == pytest.approx(0.3 + ro.EMBEDDING_MATCH_BONUS, abs=0.001)
+    semantic_step = next(s for s in result["steps"] if s["stage"] == "semantic")
+    assert semantic_step["boostedCount"] == 1
+
+
+def test_orchestrate_semantic_skips_boost_below_min_similarity(tmp_path, monkeypatch):
+    """유사도가 DEFAULT_MIN_SIMILARITY 미만이면 가점도, "시맨틱매치" 신호도
+    안 붙는다 — 직교 벡터([1,0] vs [0,1])로 유사도 0.0을 만든다."""
+    monkeypatch.setattr(re_, "embed_query_text", lambda text: [1.0, 0.0])
+    monkeypatch.setattr(re_, "embed_text", lambda text: [0.0, 1.0])
+    root_dir = tmp_path / "root"
+    root_dir.mkdir()
+    roots = [{"label": "root", "path": str(root_dir), "scope": "특수키워드", "referenceCondition": ""}]
+
+    result = ro.orchestrate("특수키워드 내용", roots, log_path=tmp_path / "log.json")
+    cand = result["candidates"][0]
+    assert "시맨틱매치" not in cand["signals"]
+    assert cand["score"] == pytest.approx(0.3, abs=0.001)
+    semantic_step = next(s for s in result["steps"] if s["stage"] == "semantic")
+    assert semantic_step["boostedCount"] == 0
+
+
+def test_orchestrate_semantic_does_not_embed_when_no_candidates(tmp_path, monkeypatch):
+    """O-016 A안의 핵심 범위 제한 — keyword/scope 신호가 전혀 없어 merged가
+    비어있으면 embed_text가 아예 호출되지 않는다(루트 전체를 매번 임베딩하는
+    B안과 다르게 비용이 자연히 낮다는 설계 근거를 직접 검증). embed_text가
+    호출되면 즉시 실패하는 스파이를 심는다."""
+    monkeypatch.setattr(re_, "embed_query_text", lambda text: [1.0, 0.0])
+
+    def _fail_if_called(text):
+        raise AssertionError("merged에 없는 후보까지 embed_text를 호출하면 안 됨(O-016 A안 범위 밖)")
+
+    monkeypatch.setattr(re_, "embed_text", _fail_if_called)
+    root_dir = tmp_path / "root"
+    root_dir.mkdir()
+    roots = [{"label": "root", "path": str(root_dir), "scope": "", "referenceCondition": ""}]
+
+    result = ro.orchestrate("전혀 무관한 질의", roots, log_path=tmp_path / "log.json")
+    assert result["candidates"] == []
 
 
 # -------------------------------------------------- D-044: 키워드 레지스트리

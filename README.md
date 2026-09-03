@@ -65,8 +65,9 @@ claude mcp add ssot-explorer --scope user -- python /path/to/ssot_mcp_server.py
 }
 ```
 
-세 곳 모두 실제로 붙여서 "Connected" 상태와 tool 7개 노출까지 직접
-확인했다(D-081, 2026-08-24) — 문서상 주장이 아니라 실측이다. 등록 후
+세 곳 모두 실제로 붙여서 "Connected" 상태와 tool 노출까지 직접
+확인했다(D-081, 2026-08-24 — tool 개수는 이후에도 계속 늘어 지금은 8개,
+`@server.tool()` grep으로 실측 재확인) — 문서상 주장이 아니라 실측이다. 등록 후
 `ssot register <path> --label <name>`으로 프로젝트를 몇 개든 추가하면
 그 순간부터 모든 연결된 IDE가 같은 인덱스를 본다.
 
@@ -113,10 +114,12 @@ Cursor 계열) 대비 정밀 비교는 아래 두 문서에 더 깊게 있다.
   결함), 원인을 IDF 공유+additive 병합으로 고친 뒤 같은 질의로 재검증해서
   개선을 수치로 확인 — "그럴듯해 보이는" 설계가 아니라 실행 결과로 다음
   결정을 내리는 방식을 스스로 계속 적용.
-- **신호와 실행의 엄격한 분리(P-01)** — MCP 서버의 tool 7개는 전부 읽기
-  전용이다(개발자모드 게이팅까지 포함, D-057). "이 폴더가 낡았다"는 신호는
-  주지만 README를 대신 고쳐 쓰지 않는다 — 자동화를 넓히는 대신 어디까지가
-  안전한 자동화인지 경계를 계속 명시적으로 지켰다.
+- **신호와 실행의 엄격한 분리(P-01)** — MCP 서버의 tool 8개 전부 **프로젝트
+  파일**(README/CLAUDE.md 등)에 대해서는 읽기 전용이다(개발자모드 게이팅까지
+  포함, D-057). "이 폴더가 낡았다"는 신호는 주지만 README를 대신 고쳐 쓰지
+  않는다 — 유일한 예외는 `record_classification_feedback`(D-092)이 이 앱
+  자신의 내부 피드백 원장에만 쓰는 것뿐, 그 경계조차 도구 하나로 좁혀서
+  지켰다.
 
 ## 아키텍처 분석 & 로드맵
 
@@ -291,7 +294,8 @@ pip install ".[all]"        # 전부
   연결하기" 참고): `python ssot_mcp_server.py`로 stdio transport 실행
   (공식 `mcp` SDK). 파일 조작은 절대 안 함 — Claude Code/Cursor/Windsurf
   등 MCP를 지원하는 IDE/에이전트가 이 서버의 tool을 불러서 "신호"만 받고,
-  실제 조치는 그쪽이 한다는 게 핵심(P-01 그대로 유지). tool 7개:
+  실제 조치는 그쪽이 한다는 게 핵심(P-01 그대로 유지, 아래 예외 1개 제외).
+  tool 8개:
   `list_ssot_roots()`(등록 루트 목록 — 각 항목에
   `pathExists`도 포함, D-052 — 폴더가 삭제/이동됐으면 false, 자동 등록해제는
   안 함),
@@ -299,7 +303,15 @@ pip install ".[all]"        # 전부
   다른 파일들의 최신 수정시각 대비 며칠 뒤처졌는지 — git 없는 루트라 커밋
   이력 대신 mtime 기반), `classify_content(text)`(D-050 — "맥락형 인덱싱"을
   MCP로 노출, 기존 `router_orchestrator.orchestrate()` 6단계 파이프라인을
-  그대로 재사용해 텍스트가 어느 등록 루트에 속할지 순위 매김),
+  그대로 재사용해 텍스트가 어느 등록 루트에 속할지 순위 매김. 4단계(시맨틱)는
+  D-092부터 스킵 기록에 그치지 않고 이미 keyword/scope로 뽑힌 후보에 한해
+  임베딩 유사도로 additive 가점도 준다),
+  `record_classification_feedback(candidate, content_preview, decision)`
+  (D-092, O-012 — `classify_content`가 반환한 candidate 하나를 실제로
+  채택했는지 기록. 이 tool만 유일하게 "쓰기"를 하는데, 대상은 프로젝트
+  파일이 아니라 이 앱 자신의 내부 피드백 원장(`ssot_router_proposals.json`/
+  `ssot_router_trust.json`) — GUI 승인 버튼(D-029)과 같은 파일에 합쳐져서
+  MCP 경유 호출도 신뢰 폐루프에 처음으로 반영된다. 호출은 강제 아님),
   `list_triggered_actions(root_label, changed_paths)`(D-058, O-013, D-061 —
   "액션 레지스트리". 루트가 `actions: [{trigger, policy, scriptPath?,
   prompt?}]`를 선언해두면(스크립트 실행이든 순수 자연어 규칙이든 최소 하나)
@@ -314,12 +326,12 @@ pip install ".[all]"        # 전부
   `check_labeled_folders_audit(label?)`(D-073 — `labeledFolders[]` 30일
   감사 문턱값 + README 자기선언 마커(`<!-- SSOT-LABEL: 이름 -->`)가
   레지스트리 label과 실제로 일치하는지 신호). **Claude Code/Cursor/
-  Windsurf 3개 IDE 전부에 실제로 등록해서 "Connected" 상태와 tool 7개
-  노출까지 확인 완료**(D-049/D-062/D-081 — Claude Code는 프로젝트+사용자
-  스코프 둘 다, Cursor/Windsurf는 2026-08-24 실측). MCP 경유 호출의
-  승인/거부 신호를 어떻게 모을지는 아직 미정(O-012) —
-  `list_triggered_actions`의 `policy` 힌트는 이것과 별개(O-013 참고,
-  호출자가 스스로 판단하는 용도).
+  Windsurf 3개 IDE 전부에 실제로 등록해서 "Connected" 상태와 tool 노출까지
+  확인 완료**(D-049/D-062/D-081 — Claude Code는 프로젝트+사용자 스코프 둘
+  다, Cursor/Windsurf는 2026-08-24 실측, tool 개수는 이후 8개로 늘어남).
+  MCP 경유 호출의 승인/거부 신호는 `record_classification_feedback`
+  (D-092)로 모은다 — `list_triggered_actions`의 `policy` 힌트는 이것과
+  별개(O-013 참고, 호출자가 스스로 판단하는 용도).
 
 ## 이 앱이 안 하는 것
 

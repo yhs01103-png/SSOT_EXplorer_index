@@ -642,6 +642,28 @@ def format_watchdog_log_text(runs: list[dict], limit: int = 20) -> str:
     return "\n".join(lines)
 
 
+def format_proposals_text(proposals: list[dict], trust_state: dict, limit: int = 20) -> str:
+    """2026-09-04(D-093, O-012 해소) — 분류 피드백 원장(ssot_router_proposals.
+    json, D-029)을 개발자 탭에 보여준다. 이 데이터 자체는 D-029부터
+    SaveDocumentDialog 승인/취소 버튼이 쌓아왔지만 지금까지 뷰가 아예 없었다
+    (grep으로 확인 — 다른 로그 5종은 다 있는데 이것만 빠져 있었음). D-092로
+    MCP `record_classification_feedback` tool이 추가되면서 GUI/MCP 양쪽
+    피드백이 같은 파일에 합쳐지므로, 이 뷰 하나가 두 경로 전부를 보여준다.
+    각 줄에 그 루트의 현재 신뢰 상태(연속 5승인 시 ✅, D-030)도 같이 표시.
+    다른 로그뷰와 동일 관례(최신이 위, 최근 limit개만)."""
+    if not proposals:
+        return "(기록 없음 — SaveDocumentDialog 승인/취소 또는 MCP record_classification_feedback 호출 시 쌓임)"
+    recent = proposals[-limit:]
+    lines = []
+    for p in reversed(recent):
+        label = p.get("rootLabel") or "?"
+        badge = " ✅신뢰됨" if trust_state.get(label, {}).get("trusted") else ""
+        mark = "✔승인" if p.get("decision") == "approved" else "✘취소"
+        preview = (p.get("contentPreview") or "").replace("\n", " ")[:40]
+        lines.append(f"{p.get('decidedAt', '?')}  {mark}  {label}({p.get('score', '?')}){badge}  \"{preview}\"")
+    return "\n".join(lines)
+
+
 def get_available_drives() -> list[str]:
     """존재하는 Windows 드라이브 문자 목록(C:\\, D:\\ 등) — 외부 의존성 없이
     알파벳을 순회하며 확인한다. 2026-08-13(D-028) — "앱을 켜면 전체 탐색기가
@@ -885,6 +907,14 @@ class ManagementPanel(QWidget):
         self.orchestration_log_view.setMaximumHeight(110)
         layout.addWidget(self.orchestration_log_view)
 
+        # 2026-09-04(D-093, O-012) — 분류 피드백 원장(D-029부터 쌓여왔지만
+        # 뷰가 없었던 데이터). GUI 승인/취소 버튼 + MCP record_classification_
+        # feedback tool(D-092) 양쪽이 같은 파일에 쓰므로 뷰도 하나로 합친다.
+        layout.addWidget(QLabel("분류 피드백 이력 (승인/취소 원장 — GUI 버튼 + MCP record_classification_feedback 공통)"))
+        self.proposals_view = QTextBrowser()
+        self.proposals_view.setMaximumHeight(110)
+        layout.addWidget(self.proposals_view)
+
         # 2026-08-28(D-088 후속) — 워치독은 GUI 프로세스 밖(작업 스케줄러)
         # 에서 도니까, 이 앱이 그 실행 이력을 사후에 읽어서 보여주는 것뿐
         # (다른 로그뷰와 동일 원칙 — 이 앱은 워치독을 실행하지 않는다).
@@ -927,6 +957,9 @@ class ManagementPanel(QWidget):
         )
         self.orchestration_log_view.setPlainText(
             format_orchestration_log_text(router_orchestrator.load_orchestration_log())
+        )
+        self.proposals_view.setPlainText(
+            format_proposals_text(router_proposals.load_proposals(), router_proposals.load_trust_state())
         )
         self.watchdog_log_view.setPlainText(
             format_watchdog_log_text(ssot_background_watchdog.load_watchdog_log())
