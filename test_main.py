@@ -23,6 +23,7 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QStyle
 
 import main as m
 import router_proposals
+import sync_formats_dialog
 
 # ------------------------------------------------------------------ fixtures
 
@@ -39,9 +40,16 @@ def isolated_registry(tmp_path, monkeypatch):
     (flutter_App\\.claude\\ssot-roots.json)를 절대 안 건드리게 REGISTRY_PATH를
     임시 경로로 스왑 + 매 테스트 시작 전 _LAST_KNOWN_HASH를 리셋(테스트 간
     상태 누수 방지, D-021 낙관적 동시성 기준선이 이전 테스트 값으로 새는 걸
-    막는다)."""
+    막는다).
+
+    2026-09-04(D-106, O-021 Stage 4-3) — SyncFormatsDialog가
+    sync_formats_dialog.py로 이관되며 자기만의 REGISTRY_PATH 사본을 갖는다
+    (ssot_mcp_server.py와 동일한 "여러 최상위 모듈이 각자 캐싱" 패턴, 그
+    파일 docstring 참고) — m.REGISTRY_PATH만 patch하면 그 모듈은 여전히
+    실제 사용자 레지스트리를 본다. 같은 값으로 같이 patch."""
     reg_path = tmp_path / "ssot-roots.json"
     monkeypatch.setattr(m, "REGISTRY_PATH", reg_path)
+    monkeypatch.setattr(sync_formats_dialog, "REGISTRY_PATH", reg_path)
     m._LAST_KNOWN_HASH = ""
     yield reg_path
 
@@ -333,7 +341,10 @@ def test_sync_dialog_confirms_before_overwriting_hand_edited_file(monkeypatch, t
     monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.Yes))
     dlg = m.SyncFormatsDialog(tmp_path, entry)
     dlg.sync_one("CLAUDE.md")
-    assert m.router_sync.SYNC_MARKER in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+    # 2026-09-04(D-106, O-021 Stage 4-3) — main.py가 더 이상 router_sync를
+    # 직접 import 안 함(SyncFormatsDialog가 sync_formats_dialog.py로 옮겨감).
+    # m.SYNC_MARKER(재노출, main.py 상단 import 참고)로 대체.
+    assert m.SYNC_MARKER in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
     assert "ok" in dlg.status_label.text()
 
 
