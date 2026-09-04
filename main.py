@@ -501,7 +501,9 @@ def save_roots(roots: list[dict]) -> None:
 import router_sync  # noqa: E402 — 관련 재노출 코드 바로 옆에 의도적으로 배치(위 주석 참고)
 from router_sync import (  # noqa: E402
     FORMAT_TARGETS,
-    SYNC_MARKER,
+    SYNC_MARKER,  # noqa: F401 — 2026-09-04(D-102) export_all_roots()가 main_pipeline로 옮겨가며
+    # 이 파일 안에서 직접은 안 불리게 됐지만, test_main.py가 m.SYNC_MARKER로 재노출 여부 자체를
+    # 검증하는 공개 별칭이라 유지(resolve_format_target과 동일 이유, 바로 아래 참고).
     resolve_claude_md_target,
     resolve_format_target,  # noqa: F401 — 이 파일 안에서 직접은 안 불림(router_sync.resolve_format_target로만
     # 씀), 하지만 test_main.py가 m.resolve_format_target로 재노출 여부 자체를 검증하는 공개 별칭이라 유지.
@@ -510,14 +512,6 @@ from router_sync import (  # noqa: E402
 
 def generate_init_claude_md(entry: dict) -> str:
     return router_sync.generate_init_claude_md(entry, REGISTRY_PATH)
-
-
-def generate_full_export_claude_md(entry: dict) -> str:
-    return router_sync.generate_full_export_claude_md(entry)
-
-
-def generate_full_export_readme_md(entry: dict) -> str:
-    return router_sync.generate_full_export_readme_md(entry)
 
 
 def format_registry_text(roots: list[dict]) -> str:
@@ -1133,11 +1127,13 @@ class SyncFormatsDialog(QDialog):
         layout.addWidget(close_btn)
 
     def _sync(self, formats: list[str]):
-        """router_sync.sync_root()를 부르고, "needs-confirmation"이 나온
-        포맷만 이 자리에서 QMessageBox로 물어본 뒤 force=True로 재호출한다
-        (D-068 — 실제 쓰기 판단/생성 로직은 router_sync에 있고, 여기는
-        "어떻게 확인받을지"만 안다 — GUI만의 책임)."""
-        first = router_sync.sync_root(self.root_path, self.entry, REGISTRY_PATH, formats=formats)
+        """1차 시도(main_pipeline.sync_formats)를 부르고, "needs-confirmation"
+        이 나온 포맷만 이 자리에서 QMessageBox로 물어본 뒤 확인된 것만
+        main_pipeline.confirm_sync_formats로 재시도한다(D-068 — 실제 쓰기
+        판단/생성 로직은 router_sync에 있고, 여기는 "어떻게 확인받을지"만
+        안다 — GUI만의 책임. 2026-09-04 D-102, O-021 Stage 3에서 두 호출
+        사이의 조립 로직을 main_pipeline.py로 이관)."""
+        first = main_pipeline.sync_formats(self.root_path, self.entry, REGISTRY_PATH, formats)
         needs_confirm = [f for f, r in first.items() if r == "needs-confirmation"]
         confirmed = []
         for fmt in needs_confirm:
@@ -1150,15 +1146,9 @@ class SyncFormatsDialog(QDialog):
             )
             if resp == QMessageBox.Yes:
                 confirmed.append(fmt)
-        if confirmed:
-            second = router_sync.sync_root(
-                self.root_path, self.entry, REGISTRY_PATH, formats=confirmed, force=True
-            )
-            first.update(second)
-        for fmt in needs_confirm:
-            if fmt not in confirmed:
-                first[fmt] = "skip"  # 사용자가 거부 — "건너뜀"으로 표시(취소와 동일 취급)
-        return first
+        return main_pipeline.confirm_sync_formats(
+            self.root_path, self.entry, REGISTRY_PATH, first, needs_confirm, confirmed,
+        )
 
     def sync_one(self, format_name: str):
         results = self._sync([format_name])
@@ -1172,20 +1162,17 @@ class SyncFormatsDialog(QDialog):
         self.status_label.setText("\n".join(lines))
 
     def mark_reviewed(self):
-        today = datetime.now().strftime("%Y-%m-%d")
-        roots = load_roots()
-        target_entry = next((r for r in roots if r["label"] == self.entry["label"]), None)
-        if not target_entry:
+        """2026-09-04(D-102, O-021 Stage 3) — 저장 로직은 main_pipeline.
+        mark_root_reviewed()로 이관, 이 메서드는 결과 표시만 담당한다."""
+        result = main_pipeline.mark_root_reviewed(self.entry["label"], REGISTRY_PATH)
+        if result["status"] == "not_found":
             self.status_label.setText("❌ 레지스트리에서 항목을 못 찾음")
             return
-        target_entry["lastReviewed"] = today
-        try:
-            save_roots(roots)
-        except RegistryConflictError as e:
-            self.status_label.setText(f"⚠️ {e}")
+        if result["status"] == "conflict":
+            self.status_label.setText(f"⚠️ {result['error']}")
             return
-        self.entry["lastReviewed"] = today
-        self.status_label.setText(f"✅ 리뷰 완료로 표시: {today}")
+        self.entry["lastReviewed"] = result["reviewedAt"]
+        self.status_label.setText(f"✅ 리뷰 완료로 표시: {result['reviewedAt']}")
 
 
 # ------------------------------------------------------- 라우터(D-029) — 저장
@@ -1677,7 +1664,7 @@ class SSOTExplorer(QMainWindow):
         (별도 프로세스)도 같은 값을 보게 하고, 이 세션의 탭/버튼 상태도
         즉시 반영한다."""
         self.developer_mode = checked
-        router_proposals.set_developer_mode(checked, REGISTRY_PATH)
+        main_pipeline.set_developer_mode(checked, REGISTRY_PATH)
         self._apply_developer_mode_visibility()
         self.manage_action.setEnabled(checked)
         self.statusBar().showMessage(
@@ -1898,7 +1885,9 @@ class SSOTExplorer(QMainWindow):
     def export_all_roots(self):
         """레지스트리 전체를 완전판 CLAUDE.md로 내보낸다(앱/레지스트리를 더
         이상 안 쓰게 될 때를 위한 스냅샷) — 동기화 마커 없는(=손편집) 파일은
-        건너뛰고 보고만 한다, 절대 안 건드림."""
+        건너뛰고 보고만 한다, 절대 안 건드림. 2026-09-04(D-102, O-021
+        Stage 3) — 순회+쓰기 로직은 main_pipeline.export_all_roots_to_files()
+        로 이관, 이 메서드는 확인 다이얼로그+결과 표시만 담당한다."""
         if not self.roots:
             QMessageBox.information(self, "전체 내보내기", "등록된 루트가 없습니다.")
             return
@@ -1912,33 +1901,8 @@ class SSOTExplorer(QMainWindow):
         if resp != QMessageBox.Yes:
             return
 
-        exported, skipped, failed = [], [], []
-        for entry in self.roots:
-            root_path = Path(entry["path"])
-            claude_path = resolve_claude_md_target(root_path)
-            if claude_path.exists():
-                existing = claude_path.read_text(encoding="utf-8", errors="replace")
-                if SYNC_MARKER not in existing:
-                    skipped.append(entry["label"])
-                    continue
-            try:
-                claude_path.write_text(generate_full_export_claude_md(entry), encoding="utf-8")
-                exported.append(entry["label"])
-            except OSError:
-                failed.append(entry["label"])
-                continue
-
-            if (entry.get("readmeReferenceCondition") or "").strip():
-                readme_path = root_path / "README.md"
-                if readme_path.exists():
-                    existing_readme = readme_path.read_text(encoding="utf-8", errors="replace")
-                    if SYNC_MARKER not in existing_readme:
-                        continue  # README는 손편집 보호, CLAUDE.md만 내보내고 건너뜀
-                try:
-                    readme_path.write_text(generate_full_export_readme_md(entry), encoding="utf-8")
-                except OSError:
-                    pass
-
+        result = main_pipeline.export_all_roots_to_files(self.roots)
+        exported, skipped, failed = result["exported"], result["skipped"], result["failed"]
         msg = f"내보냄: {len(exported)}개\n건너뜀(손편집 보호): {len(skipped)}개"
         if skipped:
             msg += "\n  - " + ", ".join(skipped)

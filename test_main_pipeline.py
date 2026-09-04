@@ -231,3 +231,121 @@ def test_remove_root_entry_conflict_returns_disk_state(tmp_path):
     result = mp.remove_root_entry(0, roots, registry_path)
     assert result["status"] == "conflict"
     assert {r["label"] for r in result["roots"]} == {"a", "external"}
+
+
+# ------------------------------------------------------- sync_formats/confirm_sync_formats
+
+def test_sync_formats_creates_new_file(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    entry = {"label": "a", "path": str(tmp_path)}
+    results = mp.sync_formats(tmp_path, entry, registry_path, ["CLAUDE.md"])
+    assert results["CLAUDE.md"] == "ok"
+    assert (tmp_path / "CLAUDE.md").exists()
+
+
+def test_sync_formats_needs_confirmation_for_hand_edited_file(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    (tmp_path / "CLAUDE.md").write_text("손으로 쓴 내용", encoding="utf-8")
+    entry = {"label": "a", "path": str(tmp_path)}
+    results = mp.sync_formats(tmp_path, entry, registry_path, ["CLAUDE.md"])
+    assert results["CLAUDE.md"] == "needs-confirmation"
+    assert (tmp_path / "CLAUDE.md").read_text(encoding="utf-8") == "손으로 쓴 내용"
+
+
+def test_confirm_sync_formats_overwrites_confirmed_and_skips_declined(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    (tmp_path / "CLAUDE.md").write_text("손편집 A", encoding="utf-8")
+    entry = {"label": "a", "path": str(tmp_path)}
+    first = mp.sync_formats(tmp_path, entry, registry_path, ["CLAUDE.md"])
+    assert first["CLAUDE.md"] == "needs-confirmation"
+
+    merged = mp.confirm_sync_formats(
+        tmp_path, entry, registry_path, first, needs_confirm=["CLAUDE.md"], confirmed=["CLAUDE.md"],
+    )
+    assert merged["CLAUDE.md"] == "ok"
+    assert "손편집 A" not in (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+
+
+def test_confirm_sync_formats_marks_declined_as_skip(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    (tmp_path / "CLAUDE.md").write_text("손편집 A", encoding="utf-8")
+    entry = {"label": "a", "path": str(tmp_path)}
+    first = mp.sync_formats(tmp_path, entry, registry_path, ["CLAUDE.md"])
+
+    merged = mp.confirm_sync_formats(
+        tmp_path, entry, registry_path, first, needs_confirm=["CLAUDE.md"], confirmed=[],
+    )
+    assert merged["CLAUDE.md"] == "skip"
+    assert (tmp_path / "CLAUDE.md").read_text(encoding="utf-8") == "손편집 A"  # 안 건드림
+    assert first["CLAUDE.md"] == "needs-confirmation"  # 원본은 안 변형됨
+
+
+# --------------------------------------------------------- mark_root_reviewed
+
+def test_mark_root_reviewed_updates_last_reviewed(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    rr.save_roots([{"label": "a", "path": "C:\\a", "referenceCondition": "", "lastReviewed": ""}], registry_path)
+
+    result = mp.mark_root_reviewed("a", registry_path)
+    assert result["status"] == "ok"
+    assert result["reviewedAt"]
+    roots = rr.load_roots(registry_path)
+    assert roots[0]["lastReviewed"] == result["reviewedAt"]
+
+
+def test_mark_root_reviewed_not_found(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    rr.save_roots([], registry_path)
+    result = mp.mark_root_reviewed("nope", registry_path)
+    assert result["status"] == "not_found"
+
+
+def test_mark_root_reviewed_conflict(tmp_path, monkeypatch):
+    """mark_root_reviewed()는 재시도 없이 load→save 한 번뿐이라(add_pending_
+    action류의 D-096 재시도와 다름 — roots[]는 사람이 편집하는 배열이라
+    재시도가 안 맞는다는 기존 원칙 그대로), save_roots 자체를 스파이로
+    바꿔 충돌 분기를 직접 검증한다."""
+    registry_path = tmp_path / "ssot-roots.json"
+    rr.save_roots([{"label": "a", "path": "C:\\a", "referenceCondition": "", "lastReviewed": ""}], registry_path)
+
+    def _raise_conflict(roots, path):
+        raise rr.RegistryConflictError("simulated conflict")
+
+    monkeypatch.setattr(rr, "save_roots", _raise_conflict)
+    result = mp.mark_root_reviewed("a", registry_path)
+    assert result["status"] == "conflict"
+    assert "error" in result
+
+
+# --------------------------------------------------------- export_all_roots_to_files
+
+def test_export_all_roots_to_files_writes_new_files(tmp_path):
+    root_dir = tmp_path / "proj"
+    root_dir.mkdir()
+    entry = {"label": "proj", "path": str(root_dir)}
+    result = mp.export_all_roots_to_files([entry])
+    assert result["exported"] == ["proj"]
+    assert result["skipped"] == []
+    assert result["failed"] == []
+    assert (root_dir / "CLAUDE.md").exists()
+
+
+def test_export_all_roots_to_files_skips_hand_edited_claude_md(tmp_path):
+    root_dir = tmp_path / "proj"
+    root_dir.mkdir()
+    (root_dir / "CLAUDE.md").write_text("손편집", encoding="utf-8")
+    entry = {"label": "proj", "path": str(root_dir)}
+    result = mp.export_all_roots_to_files([entry])
+    assert result["skipped"] == ["proj"]
+    assert result["exported"] == []
+    assert (root_dir / "CLAUDE.md").read_text(encoding="utf-8") == "손편집"
+
+
+# --------------------------------------------------------- set_developer_mode
+
+def test_set_developer_mode_delegates_to_router_proposals(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    mp.set_developer_mode(False, registry_path)
+    assert rp.is_developer_mode(registry_path) is False
+    mp.set_developer_mode(True, registry_path)
+    assert rp.is_developer_mode(registry_path) is True

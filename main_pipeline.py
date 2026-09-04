@@ -21,6 +21,7 @@ router_proposals/router_sync와 파일 I/O를 직접 불렀다 — 이 모듈이
 """
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 import router_proposals
@@ -144,3 +145,98 @@ def remove_root_entry(idx: int, roots: list[dict], registry_path: Path) -> dict:
     except router_registry.RegistryConflictError as e:
         return {"status": "conflict", "error": str(e), "roots": router_registry.load_roots(registry_path)}
     return {"status": "ok", "removed": removed, "roots": new_roots}
+
+
+def sync_formats(root_path: Path, entry: dict, registry_path: Path, formats: list[str]) -> dict:
+    """`SyncFormatsDialog._sync()`의 1차 시도 — `router_sync.sync_root()`를
+    그대로 호출한다(D-068, 실제 판단/생성 로직은 router_sync 소유 — 여기는
+    그 경계를 파이프라인 이름으로 재노출). 결과 dict의 status가
+    "needs-confirmation"인 포맷은 UX가 사람 확인을 거쳐
+    `confirm_sync_formats()`로 재호출해야 한다."""
+    return router_sync.sync_root(root_path, entry, registry_path, formats=formats)
+
+
+def confirm_sync_formats(
+    root_path: Path, entry: dict, registry_path: Path,
+    first_results: dict, needs_confirm: list[str], confirmed: list[str],
+) -> dict:
+    """`SyncFormatsDialog._sync()`의 2차 처리 — 사용자가 확인한(`confirmed`)
+    포맷만 force=True로 재시도하고, 확인은 물어봤지만 거부한(needs_confirm
+    이지만 confirmed엔 없는) 포맷은 "skip"으로 표시한다(취소와 동일
+    취급). `first_results`는 변형하지 않고 새 dict를 반환한다."""
+    merged = dict(first_results)
+    if confirmed:
+        second = router_sync.sync_root(root_path, entry, registry_path, formats=confirmed, force=True)
+        merged.update(second)
+    for fmt in needs_confirm:
+        if fmt not in confirmed:
+            merged[fmt] = "skip"
+    return merged
+
+
+def mark_root_reviewed(label: str, registry_path: Path) -> dict:
+    """`SyncFormatsDialog.mark_reviewed()`의 저장 로직 — 레지스트리를 새로
+    읽어(다이얼로그가 들고 있는 entry는 스냅샷이라 최신이 아닐 수 있음)
+    오늘 날짜로 lastReviewed를 갱신하고 저장한다.
+
+    반환 status: "not_found"(레지스트리에서 label을 못 찾음) /
+    "conflict"(RegistryConflictError, "error" 포함) / "ok"(성공,
+    "reviewedAt" 포함)."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    roots = router_registry.load_roots(registry_path)
+    target = next((r for r in roots if r["label"] == label), None)
+    if target is None:
+        return {"status": "not_found"}
+    target["lastReviewed"] = today
+    try:
+        router_registry.save_roots(roots, registry_path)
+    except router_registry.RegistryConflictError as e:
+        return {"status": "conflict", "error": str(e)}
+    return {"status": "ok", "reviewedAt": today}
+
+
+def export_all_roots_to_files(roots: list[dict]) -> dict:
+    """`export_all_roots()`의 순회+쓰기 로직 — 레지스트리 전체를 완전판
+    CLAUDE.md/README.md로 내보낸다(앱/레지스트리 없이도 동작하는 스냅샷).
+    동기화 마커 없는(=손편집) 파일은 건너뛰고 절대 안 건드린다.
+
+    반환: {"exported": [...], "skipped": [...], "failed": [...]} (전부
+    label 목록)."""
+    exported: list[str] = []
+    skipped: list[str] = []
+    failed: list[str] = []
+    for entry in roots:
+        root_path = Path(entry["path"])
+        claude_path = router_sync.resolve_claude_md_target(root_path)
+        if claude_path.exists():
+            existing = claude_path.read_text(encoding="utf-8", errors="replace")
+            if router_sync.SYNC_MARKER not in existing:
+                skipped.append(entry["label"])
+                continue
+        try:
+            claude_path.write_text(router_sync.generate_full_export_claude_md(entry), encoding="utf-8")
+            exported.append(entry["label"])
+        except OSError:
+            failed.append(entry["label"])
+            continue
+
+        if (entry.get("readmeReferenceCondition") or "").strip():
+            readme_path = root_path / "README.md"
+            if readme_path.exists():
+                existing_readme = readme_path.read_text(encoding="utf-8", errors="replace")
+                if router_sync.SYNC_MARKER not in existing_readme:
+                    continue  # README는 손편집 보호, CLAUDE.md만 내보내고 건너뜀
+            try:
+                readme_path.write_text(router_sync.generate_full_export_readme_md(entry), encoding="utf-8")
+            except OSError:
+                pass
+    return {"exported": exported, "skipped": skipped, "failed": failed}
+
+
+def set_developer_mode(enabled: bool, registry_path: Path) -> None:
+    """`on_developer_mode_toggled()`의 저장 호출 — router_proposals.
+    set_developer_mode()에 그대로 위임하는 얇은 재노출이다. 로직 자체는
+    이미 router_proposals 소유(레지스트리 필드 하나만 갱신, 낙관적 동시성
+    제어 생략은 D-057 참고) — 여기서는 UX가 그 모듈을 직접 안 부르고
+    파이프라인 경계를 하나만 거치게 하는 목적."""
+    router_proposals.set_developer_mode(enabled, registry_path)
