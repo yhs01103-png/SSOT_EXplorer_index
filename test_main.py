@@ -1477,6 +1477,52 @@ def test_save_document_dialog_rejects_path_traversal_filename(tmp_path):
         dlg.close()
 
 
+def test_save_document_dialog_save_asks_confirmation_when_file_exists(tmp_path, monkeypatch):
+    """D-100(O-021 Stage 3) 전엔 커버되지 않았던 경로 — 파일이 이미 있으면
+    main_pipeline.save_new_document()가 "needs_confirmation"을 돌려주고,
+    다이얼로그는 QMessageBox.question으로 물어본 뒤 No면 안 덮어써야 한다."""
+    root_dir = tmp_path / "flutter_App"
+    root_dir.mkdir()
+    existing = root_dir / "메모.md"
+    existing.write_text("기존 내용", encoding="utf-8")
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.No))
+    roots = [{"label": "flutter_App", "path": str(root_dir), "scope": "플러터 앱 개발", "referenceCondition": ""}]
+    dlg = m.SaveDocumentDialog(roots)
+    try:
+        dlg.content_edit.setPlainText("플러터 앱 개발 새 내용")
+        _run_classification_sync(dlg)
+        dlg.candidates_list.setCurrentRow(0)
+        dlg.filename_edit.setText("메모.md")
+        dlg.save_to_selected()
+
+        assert existing.read_text(encoding="utf-8") == "기존 내용"  # No라서 안 덮어씀
+        assert router_proposals.load_proposals() == []
+    finally:
+        dlg.close()
+
+
+def test_save_document_dialog_save_overwrites_on_confirmation(tmp_path, monkeypatch):
+    root_dir = tmp_path / "flutter_App"
+    root_dir.mkdir()
+    existing = root_dir / "메모.md"
+    existing.write_text("기존 내용", encoding="utf-8")
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(lambda *a, **k: QMessageBox.Yes))
+    monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a, **k: None))
+    roots = [{"label": "flutter_App", "path": str(root_dir), "scope": "플러터 앱 개발", "referenceCondition": ""}]
+    dlg = m.SaveDocumentDialog(roots)
+    try:
+        dlg.content_edit.setPlainText("플러터 앱 개발 새 내용")
+        _run_classification_sync(dlg)
+        dlg.candidates_list.setCurrentRow(0)
+        dlg.filename_edit.setText("메모.md")
+        dlg.save_to_selected()
+
+        assert existing.read_text(encoding="utf-8") == "플러터 앱 개발 새 내용"
+        assert len(router_proposals.load_proposals()) == 1
+    finally:
+        dlg.close()
+
+
 def test_save_document_dialog_save_without_selection_shows_warning(tmp_path):
     roots = [{"label": "x", "path": str(tmp_path), "scope": "", "referenceCondition": ""}]
     dlg = m.SaveDocumentDialog(roots)

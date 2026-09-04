@@ -57,6 +57,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import main_pipeline
 import router_keyword_registry
 import router_orchestrator
 import router_proposals
@@ -1312,7 +1313,11 @@ class SaveDocumentDialog(QDialog):
         시점에 캡처한 self.classified_text를 그대로 썼는데, "분류 제안 보기"를
         누른 뒤 내용을 더 고쳤다면 화면엔 새 내용이 보이는데 저장은 옛 내용으로
         조용히 되는 버그였음 — 저장은 항상 지금 이 순간의 텍스트박스 내용을
-        읽는다."""
+        읽는다.
+
+        2026-09-04(D-100, O-021 Stage 3) — 경로검증/쓰기/record_decision은
+        main_pipeline.save_new_document()로 이관, 이 메서드는 그 결과를
+        받아 UX(상태 메시지/확인 다이얼로그)만 담당한다."""
         items = self.candidates_list.selectedItems()
         if not items:
             self.status_label.setText("⚠️ 먼저 후보 목록에서 하나를 선택하세요.")
@@ -1322,38 +1327,27 @@ class SaveDocumentDialog(QDialog):
         if not raw_filename:
             self.status_label.setText("⚠️ 파일명을 입력하세요.")
             return
-        # 절대경로나 '..'가 섞인 파일명이면 등록된 루트 밖으로 쓰기가 샐 수
-        # 있음(code-review 발견) — 두 단계로 막는다: (1) 파츠 검사로 명백한
-        # 케이스 즉시 거절 (2) resolve() 기반으로 최종 목적지가 실제로 루트
-        # 밑인지 재확인(심볼릭 링크 등 우회까지 방어).
-        name_path = Path(raw_filename)
-        root_path = Path(candidate["rootPath"])
-        if name_path.is_absolute() or ".." in name_path.parts:
+        content = self.content_edit.toPlainText()
+        result = main_pipeline.save_new_document(candidate, raw_filename, content)
+        if result["status"] == "invalid_filename":
             self.status_label.setText("⚠️ 파일명에 절대경로나 '..'는 쓸 수 없습니다.")
             return
-        target = root_path / name_path
-        try:
-            target.resolve().relative_to(root_path.resolve())
-        except ValueError:
+        if result["status"] == "outside_root":
             self.status_label.setText("⚠️ 파일명이 등록된 루트 밖을 가리킵니다.")
             return
-        if target.exists():
+        if result["status"] == "needs_confirmation":
             resp = QMessageBox.question(
                 self, "덮어쓰기 확인",
-                f"{target}\n\n이미 존재합니다. 덮어쓸까요?",
+                f"{result['targetPath']}\n\n이미 존재합니다. 덮어쓸까요?",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
             )
             if resp != QMessageBox.Yes:
                 return
-        content = self.content_edit.toPlainText()
-        try:
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(content, encoding="utf-8")
-        except OSError as e:
-            self.status_label.setText(f"❌ 저장 실패: {e}")
+            result = main_pipeline.save_new_document(candidate, raw_filename, content, overwrite=True)
+        if result["status"] == "write_failed":
+            self.status_label.setText(f"❌ 저장 실패: {result['error']}")
             return
-        router_proposals.record_decision(candidate, content, "approved")
-        QMessageBox.information(self, "저장 완료", f"저장됨: {target}")
+        QMessageBox.information(self, "저장 완료", f"저장됨: {result['targetPath']}")
         self.accept()
 
     def cancel_and_close(self):
@@ -1362,7 +1356,7 @@ class SaveDocumentDialog(QDialog):
             # 후보 기준으로 "취소" 기록(제안 정밀도 데이터 누적, 사용자
             # 요청사항). 아예 분류를 안 돌려본 채 닫으면 기록 안 함 —
             # 판단할 제안 자체가 없었으니까.
-            router_proposals.record_decision(self.candidates[0], self.classified_text, "cancelled")
+            main_pipeline.record_save_cancelled(self.candidates[0], self.classified_text)
         self.reject()
 
     def _stop_worker(self):
