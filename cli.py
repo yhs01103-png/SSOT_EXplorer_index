@@ -6,9 +6,10 @@ O-017에서 정한 순서의 3번째 항목 — classify는 이미 CLI 계약이
 sync/register도 순수 함수가 됐으니 이제 서브커맨드로 하나로 묶는다.
 
 이 모듈은 router_orchestrator/router_classifier/router_sync/router_registry
-/router_proposals만 임포트한다 — `main`도 `ssot_mcp_server`도 안 건드리므로
-PySide6/fastembed 둘 다 필요 없다(pyproject.toml의 `core` extras만으로
-이 파일 전체가 동작한다는 게 이 모듈의 존재 이유).
+/router_proposals/ssot_background_watchdog만 임포트한다 — `main`도
+`ssot_mcp_server`도 안 건드리므로 PySide6/fastembed 둘 다 필요 없다
+(pyproject.toml의 `core` extras만으로 이 파일 전체가 동작한다는 게 이
+모듈의 존재 이유 — ssot_background_watchdog도 같은 이유로 core-only).
 
 서브커맨드:
   ssot classify <text>            router_orchestrator의 6단계 파이프라인
@@ -17,6 +18,9 @@ PySide6/fastembed 둘 다 필요 없다(pyproject.toml의 `core` extras만으로
   ssot register <path> --label X  새 루트 등록
   ssot init [path]                등록 후보 폴더 나열(등록은 안 함, 신호만 —
                                    P-01과 같은 원칙: 실제 등록 여부는 사람이 판단)
+  ssot schedule-watchdog          워치독을 Windows 작업 스케줄러에 등록/해제
+                                   (D-095 — 시스템 설정 변경이라 사람 확인 필요,
+                                   sync의 손편집 확인과 동일한 흐름)
 
 모든 명령은 사람이 읽는 출력이 기본이고, `--json`으로 기계가 읽는 JSON으로
 바꿀 수 있다(파이프라인/스크립트에서 쓰기 위함)."""
@@ -32,6 +36,7 @@ import router_orchestrator
 import router_proposals
 import router_registry
 import router_sync
+import ssot_background_watchdog as watchdog
 
 _NOISE_DIR_NAMES = {
     ".git", "node_modules", "__pycache__", ".venv", "venv", "dist", "build",
@@ -194,6 +199,44 @@ def _cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
+# ------------------------------------------------------------- schedule-watchdog
+
+def _cmd_schedule_watchdog(args: argparse.Namespace) -> int:
+    """D-095 — 워치독을 Windows 작업 스케줄러에 등록/해제. 실제 시스템
+    설정을 바꾸는 명령이라 sync의 손편집 확인과 동일한 흐름(대화형이면
+    y/N, 비대화형이면 --yes 필수, --force 없음 — 시스템 변경은 sync의
+    "이미 확인받은 --force"보다 매번 더 명시적이어야 한다는 판단)."""
+    if sys.platform != "win32":
+        print("작업 스케줄러 등록은 Windows 전용입니다(schtasks). 다른 OS는 cron 등으로 직접 등록하세요.", file=sys.stderr)
+        return 1
+
+    command = args.command.split() if args.command else None
+    if args.uninstall:
+        action_desc = f"작업 스케줄러에서 '{args.task_name}' 제거"
+    else:
+        resolved = command or watchdog.resolve_watchdog_command()
+        action_desc = f"작업 스케줄러에 '{args.task_name}' 등록 — 매일 {args.time}에 실행: {' '.join(resolved)}"
+
+    if not args.yes:
+        if not sys.stdin.isatty():
+            print(f"{action_desc}\n(비대화형 세션이라 건너뜀 — --yes로 재실행)", file=sys.stderr)
+            return 1
+        answer = input(f"{action_desc}\n실행할까요? [y/N] ")
+        if answer.strip().lower() != "y":
+            print("취소됨.")
+            return 1
+
+    if args.uninstall:
+        result = watchdog.uninstall_scheduled_task(args.task_name)
+    else:
+        result = watchdog.install_scheduled_task(args.task_name, args.time, command)
+    if result.returncode != 0:
+        print(f"실패(schtasks 종료코드 {result.returncode}):\n{result.stderr or result.stdout}", file=sys.stderr)
+        return 1
+    print(f"완료: {action_desc}")
+    return 0
+
+
 # ------------------------------------------------------------------------- list
 
 def _cmd_list(args: argparse.Namespace) -> int:
@@ -246,6 +289,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_init.add_argument("--registry", default=None, help="ssot-roots.json 경로(생략 시 기본 위치)")
     p_init.add_argument("--json", action="store_true", help="JSON으로 출력")
     p_init.set_defaults(func=_cmd_init)
+
+    p_schedule = sub.add_parser("schedule-watchdog", help="워치독을 Windows 작업 스케줄러에 등록/해제(D-095)")
+    p_schedule.add_argument("--task-name", default=watchdog.DEFAULT_TASK_NAME, help="작업 스케줄러에 등록할 이름")
+    p_schedule.add_argument("--time", default=watchdog.DEFAULT_SCHEDULE_TIME, help="매일 실행할 시각(HH:MM, 24시간제)")
+    p_schedule.add_argument("--command", default=None, help="직접 실행 명령 지정(생략 시 설치된 ssot-watchdog 또는 현재 인터프리터로 자동 판단)")
+    p_schedule.add_argument("--uninstall", action="store_true", help="등록 대신 제거")
+    p_schedule.add_argument("--yes", action="store_true", help="확인 없이 바로 실행(비대화형 자동화용)")
+    p_schedule.set_defaults(func=_cmd_schedule_watchdog)
 
     p_list = sub.add_parser("list", help="등록된 루트 목록")
     p_list.add_argument("--registry", default=None, help="ssot-roots.json 경로(생략 시 기본 위치)")

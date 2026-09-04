@@ -21,6 +21,7 @@ import router_classifier
 import router_orchestrator
 import router_registry
 import router_sync
+import ssot_background_watchdog as watchdog
 
 
 def _registry(tmp_path):
@@ -257,3 +258,123 @@ def test_sync_force_flag_skips_confirmation_prompt_entirely(tmp_path, monkeypatc
 
     assert exit_code == 0
     assert router_sync.SYNC_MARKER in (root_dir / "CLAUDE.md").read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------- D-095: schedule-watchdog
+#
+# 실제 schtasks는 절대 안 부른다 — install_scheduled_task/uninstall_scheduled_task
+# 를 스파이로 바꿔 "호출됐는지/무슨 인자였는지"만 검증한다(sync 테스트가
+# 실제 파일 I/O는 허용하되 시스템 설정 변경은 항상 몽키패치하는 것과 같은
+# 이유 — 이건 로컬 파일이 아니라 Windows 작업 스케줄러 자체를 바꾼다).
+
+class _FakeResult:
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def test_schedule_watchdog_rejects_non_windows(monkeypatch, capsys):
+    monkeypatch.setattr(cli.sys, "platform", "linux")
+    exit_code = cli.main(["schedule-watchdog", "--yes"])
+    assert exit_code == 1
+    assert "Windows" in capsys.readouterr().err
+
+
+def test_schedule_watchdog_yes_flag_installs_without_prompt(monkeypatch):
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    captured = {}
+
+    def _fake_install(task_name, time_str, command):
+        captured["args"] = (task_name, time_str, command)
+        return _FakeResult(returncode=0)
+
+    monkeypatch.setattr(watchdog, "install_scheduled_task", _fake_install)
+
+    def _explode(*a, **k):
+        raise AssertionError("--yes인데 input()이 호출됨")
+    monkeypatch.setattr("builtins.input", _explode)
+
+    exit_code = cli.main(["schedule-watchdog", "--yes", "--task-name", "T", "--time", "10:00"])
+    assert exit_code == 0
+    assert captured["args"] == ("T", "10:00", None)
+
+
+def test_schedule_watchdog_noninteractive_without_yes_skips(monkeypatch, capsys):
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+    def _explode(*a, **k):
+        raise AssertionError("확인 없이 install_scheduled_task가 호출됨")
+    monkeypatch.setattr(watchdog, "install_scheduled_task", _explode)
+
+    exit_code = cli.main(["schedule-watchdog"])
+    assert exit_code == 1
+    assert "--yes" in capsys.readouterr().err
+
+
+def test_schedule_watchdog_interactive_prompt_declined(monkeypatch, capsys):
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "n")
+
+    def _explode(*a, **k):
+        raise AssertionError("취소했는데 install_scheduled_task가 호출됨")
+    monkeypatch.setattr(watchdog, "install_scheduled_task", _explode)
+
+    exit_code = cli.main(["schedule-watchdog"])
+    assert exit_code == 1
+    assert "취소됨" in capsys.readouterr().out
+
+
+def test_schedule_watchdog_interactive_prompt_accepted(monkeypatch):
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    monkeypatch.setattr(watchdog, "install_scheduled_task", lambda *a, **k: _FakeResult(returncode=0))
+
+    exit_code = cli.main(["schedule-watchdog"])
+    assert exit_code == 0
+
+
+def test_schedule_watchdog_reports_failure(monkeypatch, capsys):
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    monkeypatch.setattr(
+        watchdog, "install_scheduled_task",
+        lambda *a, **k: _FakeResult(returncode=1, stderr="ERROR: access denied"),
+    )
+    exit_code = cli.main(["schedule-watchdog", "--yes"])
+    assert exit_code == 1
+    assert "access denied" in capsys.readouterr().err
+
+
+def test_schedule_watchdog_uninstall_calls_uninstall_not_install(monkeypatch):
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    captured = {}
+
+    def _fake_uninstall(task_name):
+        captured["task_name"] = task_name
+        return _FakeResult(returncode=0)
+
+    def _explode(*a, **k):
+        raise AssertionError("--uninstall인데 install_scheduled_task가 호출됨")
+
+    monkeypatch.setattr(watchdog, "uninstall_scheduled_task", _fake_uninstall)
+    monkeypatch.setattr(watchdog, "install_scheduled_task", _explode)
+
+    exit_code = cli.main(["schedule-watchdog", "--uninstall", "--yes", "--task-name", "T"])
+    assert exit_code == 0
+    assert captured["task_name"] == "T"
+
+
+def test_schedule_watchdog_custom_command_passed_through(monkeypatch):
+    monkeypatch.setattr(cli.sys, "platform", "win32")
+    captured = {}
+
+    def _fake_install(task_name, time_str, command):
+        captured["command"] = command
+        return _FakeResult(returncode=0)
+
+    monkeypatch.setattr(watchdog, "install_scheduled_task", _fake_install)
+    cli.main(["schedule-watchdog", "--yes", "--command", "python watchdog.py"])
+    assert captured["command"] == ["python", "watchdog.py"]

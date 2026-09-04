@@ -404,3 +404,110 @@ def test_scan_and_queue_updates_snapshot_after_scan(tmp_path, monkeypatch):
     watchdog.scan_and_queue(registry_path)
 
     assert rr.load_folder_snapshot("a", snapshot_path) == {"sub": False}
+
+
+# ---------------------------------------------------- D-095: 작업 스케줄러 등록
+#
+# 실제 schtasks를 실행하는 테스트는 없다(시스템 설정을 바꾸는 명령이라
+# CI/로컬 어디서도 부작용을 남기면 안 됨) — subprocess.run을 스파이로
+# 바꿔 "무슨 명령으로 호출했는지"만 검증한다.
+
+def test_build_schtasks_command_uses_resolved_command_by_default(monkeypatch):
+    monkeypatch.setattr(watchdog, "resolve_watchdog_command", lambda: ["ssot-watchdog"])
+    cmd = watchdog.build_schtasks_command()
+    assert cmd == [
+        "schtasks", "/create",
+        "/tn", watchdog.DEFAULT_TASK_NAME,
+        "/tr", "ssot-watchdog",
+        "/sc", "daily",
+        "/st", watchdog.DEFAULT_SCHEDULE_TIME,
+        "/f",
+    ]
+
+
+def test_build_schtasks_command_quotes_parts_with_spaces():
+    cmd = watchdog.build_schtasks_command(command=["C:\\Program Files\\python.exe", "C:\\a b\\watchdog.py"])
+    tr_value = cmd[cmd.index("/tr") + 1]
+    assert tr_value == '"C:\\Program Files\\python.exe" "C:\\a b\\watchdog.py"'
+
+
+def test_build_schtasks_command_rejects_bad_time_format():
+    with pytest.raises(ValueError):
+        watchdog.build_schtasks_command(time_str="9am")
+
+
+def test_build_schtasks_command_custom_task_name_and_time():
+    cmd = watchdog.build_schtasks_command(task_name="MyTask", time_str="23:30", command=["x"])
+    assert cmd[cmd.index("/tn") + 1] == "MyTask"
+    assert cmd[cmd.index("/st") + 1] == "23:30"
+
+
+def test_build_schtasks_delete_and_query_commands():
+    assert watchdog.build_schtasks_delete_command("MyTask") == ["schtasks", "/delete", "/tn", "MyTask", "/f"]
+    assert watchdog.build_schtasks_query_command("MyTask") == ["schtasks", "/query", "/tn", "MyTask"]
+
+
+def test_resolve_watchdog_command_prefers_installed_console_script(monkeypatch):
+    monkeypatch.setattr(watchdog.shutil, "which", lambda name: r"C:\Scripts\ssot-watchdog.exe" if name == "ssot-watchdog" else None)
+    assert watchdog.resolve_watchdog_command() == [r"C:\Scripts\ssot-watchdog.exe"]
+
+
+def test_resolve_watchdog_command_falls_back_to_interpreter(monkeypatch):
+    monkeypatch.setattr(watchdog.shutil, "which", lambda name: None)
+    cmd = watchdog.resolve_watchdog_command()
+    assert cmd[0] == watchdog.sys.executable
+    assert cmd[1].endswith("ssot_background_watchdog.py")
+
+
+def test_is_scheduled_task_installed_true_on_zero_exit(monkeypatch):
+    class _Result:
+        returncode = 0
+    monkeypatch.setattr(watchdog.subprocess, "run", lambda *a, **k: _Result())
+    assert watchdog.is_scheduled_task_installed("x") is True
+
+
+def test_is_scheduled_task_installed_false_on_nonzero_exit(monkeypatch):
+    class _Result:
+        returncode = 1
+    monkeypatch.setattr(watchdog.subprocess, "run", lambda *a, **k: _Result())
+    assert watchdog.is_scheduled_task_installed("x") is False
+
+
+def test_is_scheduled_task_installed_false_when_schtasks_missing(monkeypatch):
+    def _raise(*a, **k):
+        raise FileNotFoundError("schtasks not found")
+    monkeypatch.setattr(watchdog.subprocess, "run", _raise)
+    assert watchdog.is_scheduled_task_installed("x") is False
+
+
+def test_install_scheduled_task_calls_subprocess_with_built_command(monkeypatch):
+    captured = {}
+
+    class _Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def _fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return _Result()
+
+    monkeypatch.setattr(watchdog.subprocess, "run", _fake_run)
+    result = watchdog.install_scheduled_task("MyTask", "10:15", command=["x"])
+    assert result.returncode == 0
+    assert captured["cmd"] == watchdog.build_schtasks_command("MyTask", "10:15", ["x"])
+
+
+def test_uninstall_scheduled_task_calls_subprocess_with_delete_command(monkeypatch):
+    captured = {}
+
+    class _Result:
+        returncode = 0
+
+    def _fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        return _Result()
+
+    monkeypatch.setattr(watchdog.subprocess, "run", _fake_run)
+    watchdog.uninstall_scheduled_task("MyTask")
+    assert captured["cmd"] == watchdog.build_schtasks_delete_command("MyTask")
