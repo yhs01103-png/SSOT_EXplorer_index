@@ -636,6 +636,12 @@ def format_watchdog_log_text(runs: list[dict], limit: int = 20) -> str:
             f"{r['ranAt']}  검사 루트{r.get('checkedRoots', 0)}+라벨폴더{r.get('checkedLabeledFolders', 0)}"
             f"  발견 {r.get('newFindingsCount', 0)}건  토스트{toast_text}"
         )
+        # 2026-09-04(D-096) — 스캔 도중 예외가 나면(레지스트리 쓰기 충돌 등)
+        # findings/toast는 비어있어도 이 줄만으로 "그날 실패했다"가 보여야
+        # 한다 — 예전엔 이 경우 로그 자체가 안 남아 무인 실행 실패가 완전히
+        # 조용히 사라졌다.
+        if r.get("error"):
+            lines.append(f"    ❌ 실패: {r['error']}")
         for f in r.get("findings", []):
             evidence = ", ".join(f"{k}={v}" for k, v in (f.get("evidence") or {}).items())
             lines.append(f"    [{f['targetType']}/{f['targetLabel']}] {f['actionType']}: {f['note']} ({evidence})")

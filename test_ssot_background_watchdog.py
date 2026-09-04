@@ -498,6 +498,45 @@ def test_install_scheduled_task_calls_subprocess_with_built_command(monkeypatch)
     assert captured["cmd"] == watchdog.build_schtasks_command("MyTask", "10:15", ["x"])
 
 
+# -------------------------------------------------- D-096: main() 예외 방어
+
+def test_main_logs_error_instead_of_crashing_when_scan_fails(tmp_path, monkeypatch):
+    """무인 실행(작업 스케줄러)이라 main()이 여기서 죽으면 그날 로그 자체가
+    안 남는다 — _scan()이 뭘 던지든 잡아서 error 필드로 남기고 계속
+    진행해야 한다."""
+    log_path = tmp_path / "watchdog-log.json"
+    monkeypatch.setattr(watchdog, "WATCHDOG_LOG_PATH", log_path)
+    monkeypatch.setattr(watchdog, "resolve_registry_path", lambda: tmp_path / "ssot-roots.json")
+
+    def _boom(registry_path):
+        raise watchdog.router_registry.RegistryConflictError("simulated exhausted retries")
+
+    monkeypatch.setattr(watchdog, "_scan", _boom)
+    monkeypatch.setattr(
+        watchdog, "send_toast",
+        lambda title, body: (_ for _ in ()).throw(watchdog.ToastProviderNotConfigured("no toast in test")),
+    )
+
+    watchdog.main()  # must not raise
+
+    runs = watchdog.load_watchdog_log(log_path)
+    assert len(runs) == 1
+    assert runs[0]["findings"] == []
+    assert "RegistryConflictError" in runs[0]["error"]
+
+
+def test_main_leaves_error_none_on_success(tmp_path, monkeypatch):
+    log_path = tmp_path / "watchdog-log.json"
+    monkeypatch.setattr(watchdog, "WATCHDOG_LOG_PATH", log_path)
+    monkeypatch.setattr(watchdog, "resolve_registry_path", lambda: tmp_path / "ssot-roots.json")
+    monkeypatch.setattr(watchdog, "_scan", lambda registry_path: [])
+
+    watchdog.main()
+
+    runs = watchdog.load_watchdog_log(log_path)
+    assert runs[0]["error"] is None
+
+
 def test_uninstall_scheduled_task_calls_subprocess_with_delete_command(monkeypatch):
     captured = {}
 

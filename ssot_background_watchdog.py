@@ -136,11 +136,17 @@ def _log_run(
     findings: list[dict],
     toast_fired: bool,
     log_path: Path,
+    error: str | None = None,
 ) -> None:
     """매 실행을 원자적 쓰기로 기록(router_orchestrator._log_run과 동일
     패턴) — 상한 도달 시 오래된 것부터 버린다(세션 컨텍스트 로그와 동일
     관례, 단 이 로그는 O-017 판단 데이터라 상한 자체를 훨씬 넉넉하게 잡음,
-    WATCHDOG_LOG_MAX_ENTRIES 참고)."""
+    WATCHDOG_LOG_MAX_ENTRIES 참고).
+
+    D-096 — `error`가 있으면(main()이 스캔 도중 예외를 잡은 경우) 그대로
+    같이 남긴다 — 무인 실행이라 이 로그 자체가 "그날 실패했었다"는 걸 알 수
+    있는 유일한 흔적이다(전에는 예외가 여기까지 오지도 못하고 죽어서 로그
+    자체가 안 남았음)."""
     runs = load_watchdog_log(log_path)
     runs.append({
         "id": len(runs) + 1,
@@ -150,6 +156,7 @@ def _log_run(
         "findings": findings,
         "newFindingsCount": len(findings),
         "toastFired": toast_fired,
+        "error": error,
     })
     runs = runs[-WATCHDOG_LOG_MAX_ENTRIES:]
     router_proposals.atomic_write_json(log_path, runs)
@@ -312,9 +319,24 @@ def main() -> None:
     라벨폴더 개수, 발견 목록 + 근거, 토스트를 실제로 띄웠는지까지). 알림
     본문은 요약(최대 5줄)이지만, 로그에는 요약이 아니라 findings 전체와
     evidence가 그대로 남는다 — "무슨 파일을, 무슨 근거로 판단했는지"는
-    알림이 아니라 이 로그에서 확인한다."""
+    알림이 아니라 이 로그에서 확인한다.
+
+    D-096 — `_scan()`을 try/except로 감싼다. add_pending_action이 재시도해도
+    (RegistryConflictError를 5번 다 소진했거나, 정말 예상 못 한 다른 예외가
+    나면) 무인 실행이라 이 함수 자체가 여기서 죽으면 _log_run이 아예
+    호출 안 돼 그날 실행 흔적이 통째로 사라진다(작업 스케줄러 로그를
+    따로 안 보는 한 알 방법이 없음) — 예외를 잡아 로그에 error로 남기고
+    계속 진행한다(main.py의 sys.excepthook과 같은 "안 죽는 게 최우선"
+    원칙, 대상만 GUI 다이얼로그 대신 이 로그)."""
     registry_path = resolve_registry_path()
-    findings = _scan(registry_path)
+    error_message: str | None = None
+    try:
+        findings = _scan(registry_path)
+    except Exception as e:
+        log.error("워치독 스캔 실패: %s", e, exc_info=True)
+        findings = []
+        error_message = f"{type(e).__name__}: {e}"
+
     roots_count = len(router_registry.load_roots(registry_path))
     labeled_count = len(router_registry.load_labeled_folders(registry_path))
 
@@ -329,8 +351,14 @@ def main() -> None:
             toast_fired = True
         except ToastProviderNotConfigured as e:
             log.info(f"토스트 알림 생략({e}) - 큐잉은 완료됨: {notices}")
+    elif error_message:
+        try:
+            send_toast("SSOT_Explorer - 워치독 실행 실패", error_message[:200])
+            toast_fired = True
+        except ToastProviderNotConfigured as e:
+            log.info(f"토스트 알림 생략({e}) - 실패만 로그에 남김: {error_message}")
 
-    _log_run(roots_count, labeled_count, findings, toast_fired, WATCHDOG_LOG_PATH)
+    _log_run(roots_count, labeled_count, findings, toast_fired, WATCHDOG_LOG_PATH, error=error_message)
 
 
 # ---------------------------------------------------- D-095: 작업 스케줄러 등록

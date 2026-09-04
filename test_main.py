@@ -686,6 +686,24 @@ def test_format_watchdog_log_text_recent_first():
     assert text.index("10:00:00") < text.index("09:00:00")  # 최신이 위로
 
 
+def test_format_watchdog_log_text_shows_error(tmp_path):
+    """D-096 — 스캔이 예외로 실패해도(findings/toast 없이) error 필드가
+    있으면 그 사실이 로그 텍스트에 드러나야 한다 — 전엔 이 경우 로그
+    자체가 안 남아 무인 실행 실패가 조용히 사라졌음."""
+    runs = [{
+        "ranAt": "2026-09-04 09:00:00",
+        "checkedRoots": 0,
+        "checkedLabeledFolders": 0,
+        "newFindingsCount": 0,
+        "toastFired": False,
+        "findings": [],
+        "error": "RegistryConflictError: 레지스트리가 마지막으로 읽은 이후 다른 곳에서 바뀌었습니다.",
+    }]
+    text = m.format_watchdog_log_text(runs)
+    assert "❌" in text
+    assert "RegistryConflictError" in text
+
+
 def test_management_panel_shows_empty_watchdog_log(isolated_registry, isolated_qsettings):
     m.save_roots([{"label": "a", "path": "C:\\a"}])
     panel = m.ManagementPanel()

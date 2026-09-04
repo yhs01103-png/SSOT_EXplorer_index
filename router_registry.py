@@ -403,37 +403,68 @@ def save_pending_actions(actions: list[dict], registry_path: Path) -> None:
     _last_known_hash[key] = _hash_bytes(raw)
 
 
+# 2026-09-04(D-096) — GUI/CLI/MCP/워치독 네 프로세스가 전부 이 큐에 쓸 수
+# 있는데, save_pending_actions()의 OCC는 "충돌하면 멈춘다"는 save_roots()와
+# 같은 방어선을 그대로 쓴다. save_roots()는 사람이 편집 중인 배열이라
+# "덮어써도 되는지" 판단을 사람에게 되돌려주는 게 맞지만, pendingActions는
+# append-only 큐라 성격이 다르다 — 이 항목 자체는 다른 프로세스가 뭘
+# 바꿨든 "새로 하나 추가"일 뿐 내용 충돌이 없다(resolve_pending_action의
+# "이 requestId만 지운다"도 마찬가지). 그래서 이 둘만 최신 상태를 다시
+# 읽어 재시도한다 — 특히 워치독(main() → 사람 없는 무인 실행, D-095로 매일
+# 스케줄러가 돈다)이 GUI 저장과 우연히 겹쳐 RegistryConflictError를 그대로
+# 맞으면, 그날 스캔에서 이미 찾은 다른 findings까지 전부 로그 없이
+# 사라진다는 게 상용 비교 분석에서 지적된 실제 위험 시나리오였다.
+_PENDING_ACTION_MAX_RETRIES = 5
+
+
 def add_pending_action(entry: dict, registry_path: Path) -> str:
     """GUI 버튼(또는 백그라운드 감지 스크립트)이 부르는 진입점 — targetType/
     targetLabel/actionType/requestedAt은 호출자가 채워도 되고, requestedAt을
     안 주면 오늘 날짜로 채운다. requestId(uuid4 hex)를 새로 발급해 반환한다
     — 나중에 resolve_pending_action이 정확히 이 항목만 지우기 위한 키(같은
     targetLabel에 같은 actionType이 시차를 두고 두 번 큐잉될 수도 있어서,
-    targetLabel+actionType 조합만으론 유일성이 보장 안 됨)."""
+    targetLabel+actionType 조합만으론 유일성이 보장 안 됨).
+
+    D-096 — 다른 프로세스가 그 사이 레지스트리를 바꿔 RegistryConflictError가
+    나면, 최신 상태를 다시 읽어 이 항목을 재시도한다(최대
+    _PENDING_ACTION_MAX_RETRIES번) — append-only라 재시도가 항상 안전."""
     if entry.get("targetType") not in PENDING_TARGET_TYPES:
         raise ValueError(f"targetType은 {sorted(PENDING_TARGET_TYPES)} 중 하나여야 합니다.")
     if entry.get("actionType") not in PENDING_ACTION_TYPES:
         raise ValueError(f"actionType은 {sorted(PENDING_ACTION_TYPES)} 중 하나여야 합니다.")
-    actions = load_pending_actions(registry_path)
     request_id = uuid.uuid4().hex
     new_entry = dict(entry)
     new_entry["requestId"] = request_id
     new_entry.setdefault("requestedAt", date.today().strftime("%Y-%m-%d"))
     new_entry.setdefault("note", "")
-    actions.append(new_entry)
-    save_pending_actions(actions, registry_path)
-    return request_id
+    for attempt in range(_PENDING_ACTION_MAX_RETRIES):
+        actions = load_pending_actions(registry_path)
+        actions.append(new_entry)
+        try:
+            save_pending_actions(actions, registry_path)
+            return request_id
+        except RegistryConflictError:
+            if attempt == _PENDING_ACTION_MAX_RETRIES - 1:
+                raise
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 def resolve_pending_action(request_id: str, registry_path: Path) -> None:
     """Claude Code가 사용자 승인을 받아 실제로 처리(README 생성/경로 수정/
     은퇴 등)를 마친 뒤 호출 — 그 요청을 큐에서 제거한다(완료 이력은 안
-    남김, 위 섹션 설명 참고)."""
-    actions = load_pending_actions(registry_path)
-    remaining = [a for a in actions if a.get("requestId") != request_id]
-    if len(remaining) == len(actions):
-        raise ValueError(f"requestId '{request_id}'를 찾을 수 없습니다.")
-    save_pending_actions(remaining, registry_path)
+    남김, 위 섹션 설명 참고). add_pending_action과 동일 이유로 충돌 시
+    최신 상태를 다시 읽어 재시도한다(D-096)."""
+    for attempt in range(_PENDING_ACTION_MAX_RETRIES):
+        actions = load_pending_actions(registry_path)
+        remaining = [a for a in actions if a.get("requestId") != request_id]
+        if len(remaining) == len(actions):
+            raise ValueError(f"requestId '{request_id}'를 찾을 수 없습니다.")
+        try:
+            save_pending_actions(remaining, registry_path)
+            return
+        except RegistryConflictError:
+            if attempt == _PENDING_ACTION_MAX_RETRIES - 1:
+                raise
 
 
 # ------------------------------------------------------------ 하위 폴더 README 스냅샷

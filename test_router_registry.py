@@ -9,6 +9,8 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 
+import pytest
+
 import router_registry as rr
 
 
@@ -353,6 +355,69 @@ def test_resolve_pending_action_unknown_id_raises(tmp_path):
         raise AssertionError("should have raised")
     except ValueError as e:
         assert "no-such-id" in str(e)
+
+
+# --------------------------------------- D-096: pendingActions 충돌 재시도
+
+def test_add_pending_action_retries_after_conflict_then_succeeds(tmp_path, monkeypatch):
+    registry_path = tmp_path / "ssot-roots.json"
+    rr.add_root({"label": "a", "path": "C:\\a"}, registry_path)  # 파일 생성 + hash 기록
+
+    real_save = rr.save_pending_actions
+    calls = {"n": 0}
+
+    def _flaky_save(actions, path):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise rr.RegistryConflictError("simulated conflict")
+        return real_save(actions, path)
+
+    monkeypatch.setattr(rr, "save_pending_actions", _flaky_save)
+
+    request_id = rr.add_pending_action(
+        {"targetType": "root", "targetLabel": "a", "actionType": "create_readme"}, registry_path
+    )
+    assert calls["n"] == 2  # 1번째 충돌 → 재시도로 2번째 성공
+    actions = rr.load_pending_actions(registry_path)
+    assert [a["requestId"] for a in actions] == [request_id]
+
+
+def test_add_pending_action_raises_after_exhausting_retries(tmp_path, monkeypatch):
+    registry_path = tmp_path / "ssot-roots.json"
+    rr.add_root({"label": "a", "path": "C:\\a"}, registry_path)
+
+    def _always_conflict(actions, path):
+        raise rr.RegistryConflictError("persistent conflict")
+
+    monkeypatch.setattr(rr, "save_pending_actions", _always_conflict)
+
+    with pytest.raises(rr.RegistryConflictError):
+        rr.add_pending_action(
+            {"targetType": "root", "targetLabel": "a", "actionType": "create_readme"}, registry_path
+        )
+    assert rr.load_pending_actions(registry_path) == []  # 전부 실패했으니 아무것도 안 남음
+
+
+def test_resolve_pending_action_retries_after_conflict_then_succeeds(tmp_path, monkeypatch):
+    registry_path = tmp_path / "ssot-roots.json"
+    request_id = rr.add_pending_action(
+        {"targetType": "root", "targetLabel": "a", "actionType": "create_readme"}, registry_path
+    )
+
+    real_save = rr.save_pending_actions
+    calls = {"n": 0}
+
+    def _flaky_save(actions, path):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise rr.RegistryConflictError("simulated conflict")
+        return real_save(actions, path)
+
+    monkeypatch.setattr(rr, "save_pending_actions", _flaky_save)
+
+    rr.resolve_pending_action(request_id, registry_path)
+    assert calls["n"] == 2
+    assert rr.load_pending_actions(registry_path) == []
 
 
 def test_save_pending_actions_preserves_other_keys(tmp_path):
