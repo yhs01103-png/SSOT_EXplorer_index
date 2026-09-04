@@ -27,12 +27,24 @@ router_paths.SESSION_CONTEXT_LOG_PATH(별개 경로, 훅 전용 로그)만 쓴�
 from __future__ import annotations
 
 import json
+import shutil
+import sys
 from collections import Counter
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
 from router_paths import SESSION_CONTEXT_LOG_PATH
+
+
+def find_python_interpreter() -> str:
+    """드리프트 스크립트를 실행할 python 인터프리터 경로를 찾는다.
+    sys.executable은 exe로 패키징(PyInstaller)된 상태에서는 SSOT_Explorer.exe
+    자기 자신을 가리켜서 못 쓴다 — 그럴 때만 PATH에서 진짜 python을 찾는다."""
+    if not getattr(sys, "frozen", False):
+        return sys.executable
+    found = shutil.which("python") or shutil.which("python3")
+    return found or "python"
 
 # 2026-08-14(D-038, H-005 다음 항목) — 레지스트리 스키마 검증. jsonschema는
 # 진단용 부가기능이라 kiwipiepy(D-034)와 같은 선택적 의존성 원칙 — 미설치

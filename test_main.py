@@ -22,6 +22,7 @@ from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import QApplication, QMessageBox, QStyle
 
 import main as m
+import management_panel
 import router_proposals
 import sync_formats_dialog
 
@@ -46,10 +47,15 @@ def isolated_registry(tmp_path, monkeypatch):
     sync_formats_dialog.py로 이관되며 자기만의 REGISTRY_PATH 사본을 갖는다
     (ssot_mcp_server.py와 동일한 "여러 최상위 모듈이 각자 캐싱" 패턴, 그
     파일 docstring 참고) — m.REGISTRY_PATH만 patch하면 그 모듈은 여전히
-    실제 사용자 레지스트리를 본다. 같은 값으로 같이 patch."""
+    실제 사용자 레지스트리를 본다. 같은 값으로 같이 patch.
+
+    2026-09-04(D-108, O-021 Stage 4-4) — ManagementPanel도
+    management_panel.py로 이관되며 동일한 이유로 자기만의 REGISTRY_PATH
+    사본을 갖는다 — 같이 patch."""
     reg_path = tmp_path / "ssot-roots.json"
     monkeypatch.setattr(m, "REGISTRY_PATH", reg_path)
     monkeypatch.setattr(sync_formats_dialog, "REGISTRY_PATH", reg_path)
+    monkeypatch.setattr(management_panel, "REGISTRY_PATH", reg_path)
     m._LAST_KNOWN_HASH = ""
     yield reg_path
 

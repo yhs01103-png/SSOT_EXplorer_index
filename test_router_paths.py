@@ -27,11 +27,19 @@ def test_static_asset_paths_live_next_to_this_module():
 
 
 def test_main_reexports_match_router_paths():
+    """2026-09-04(D-108, O-021 Stage 4-4) — DRIFT_LOG_PATH/DRIFT_SCRIPT_PATH는
+    ManagementPanel이 management_panel.py로 옮겨가며 main.py 안에서 더 이상
+    안 쓰여 재노출 목록에서 빠졌다(아래 test_management_panel_reexports가
+    그쪽에서 대신 확인)."""
     import main as m
-    assert m.DRIFT_LOG_PATH is rp.DRIFT_LOG_PATH
-    assert m.DRIFT_SCRIPT_PATH is rp.DRIFT_SCRIPT_PATH
     assert m.LOG_PATH is rp.LOG_PATH
     assert m.SCRIPTS_DIR is rp.SCRIPTS_DIR
+
+
+def test_management_panel_reexports_match_router_paths():
+    import management_panel as mp
+    assert mp.DRIFT_LOG_PATH is rp.DRIFT_LOG_PATH
+    assert mp.DRIFT_SCRIPT_PATH is rp.DRIFT_SCRIPT_PATH
 
 
 def test_main_view_reexports_match_router_paths():

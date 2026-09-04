@@ -18,7 +18,6 @@
 import json
 import logging
 import os
-import shutil
 import subprocess
 import sys
 import traceback
@@ -26,13 +25,12 @@ import webbrowser
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QProcess, QSettings, Qt
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QAction, QColor, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QFileDialog,
-    QHBoxLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
@@ -41,7 +39,6 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
-    QPushButton,
     QSplitter,
     QStyle,
     QTabWidget,
@@ -54,54 +51,54 @@ from PySide6.QtWidgets import (
 )
 
 import main_pipeline
-import router_keyword_registry
-import router_orchestrator
 import router_proposals
 import router_registry
-import router_watcher
-import ssot_background_watchdog
 
 # 2026-09-04(D-103, O-021 Stage 4-1) — Qt/REGISTRY_PATH 어느 쪽도 안 건드리는
 # 순수 뷰 포맷터/조회 함수는 main_view.py로 이관(레이어 분리 방침의
 # "UX/UI 미분리" 갭 해소 시작). 여기서는 재노출만 — bare name 그대로라
-# 기존 테스트(m.format_registry_text 등 직접 호출)가 안 깨진다.
+# 기존 테스트(m.format_registry_text 등 직접 호출)가 안 깨진다. 2026-09-04
+# (D-108, O-021 Stage 4-4) — ManagementPanel이 management_panel.py로
+# 옮겨가며 아래 대부분이 이 파일 안에서 직접은 안 불리게 됐지만, 각각
+# test_main.py가 m.<이름>로 재노출 여부 자체를 검증하는 공개 별칭이라 유지
+# (format_shared_docs_text만 그런 테스트가 없어 제거).
 from main_view import (  # noqa: E402
-    _is_or_under,  # noqa: F401 — 이 파일 안에서 직접은 안 불림, test_main.py가
-    # m._is_or_under로 재노출 여부 자체를 검증하는 공개 별칭이라 유지.
+    _is_or_under,  # noqa: F401
     find_relations_for_path,
-    format_orchestration_log_text,
-    format_proposals_text,
-    format_registry_text,
-    format_schema_validation_text,
-    format_session_context_log_text,
-    format_shared_docs_text,
-    format_watchdog_log_text,
-    format_watcher_log_text,
-    get_available_drives,
-    load_session_context_log,
-    review_age_days,  # noqa: F401 — SyncFormatsDialog가 sync_formats_dialog.py로
-    # 옮겨가며 이 파일 안에서 직접은 안 불리게 됐지만, test_main.py가
-    # m.review_age_days로 재노출 여부 자체를 검증하는 공개 별칭이라 유지.
-    validate_registry,
+    format_orchestration_log_text,  # noqa: F401
+    format_proposals_text,  # noqa: F401
+    format_registry_text,  # noqa: F401
+    format_schema_validation_text,  # noqa: F401
+    format_session_context_log_text,  # noqa: F401
+    format_watchdog_log_text,  # noqa: F401
+    format_watcher_log_text,  # noqa: F401
+    get_available_drives,  # noqa: F401
+    load_session_context_log,  # noqa: F401
+    review_age_days,  # noqa: F401
+    validate_registry,  # noqa: F401
 )
 
 # 2026-09-04(D-104, O-021 Stage 4-2) — QThread 워커 4종은 main_workers.py로
 # 이관(레이어 분리 방침의 "UX/UI 미분리" 갭 해소, Stage 4-1 다음 조각).
-# 여기서는 재노출만 — bare name 그대로라 기존 테스트(m.ClassificationWorker
-# 등 직접 참조)가 안 깨진다.
+# 여기서는 재노출만 — bare name 그대로라 기존 테스트가 안 깨진다.
+# ClassificationWorker는 D-108(SaveDocumentDialog/ManagementPanel 둘 다
+# 옮겨감)로 이 파일 안에서 더 이상 안 쓰여 재노출 목록에서 제거(재노출
+# 여부를 검증하는 테스트 없음, 실측 확인 후 정리).
 from main_workers import (  # noqa: E402
-    ClassificationWorker,
     InboxWatcherThread,
     RootInitWorker,
 )
 
+# 2026-09-04(D-108, O-021 Stage 4-4) — ManagementPanel(개발자 탭)도 독립
+# 파일로 이관. 여기서는 재노출만.
+from management_panel import ManagementPanel  # noqa: E402
+
 # 2026-09-04(D-098, O-021 Stage 1) — 경로 상수는 router_paths.py로 이관(레이어
 # 분리 방침의 "경로" 레이어 신설). 여기서는 재노출만 — bare name 그대로라
 # 기존 monkeypatch 기반 테스트(예: monkeypatch.setattr(m, "LOG_PATH", ...))는
-# 안 깨진다.
+# 안 깨진다. DRIFT_LOG_PATH/DRIFT_SCRIPT_PATH는 D-108로 ManagementPanel이
+# 옮겨가며 이 파일 안에서 더 이상 안 쓰여 제거(재노출 검증 테스트 없음).
 from router_paths import (  # noqa: E402
-    DRIFT_LOG_PATH,
-    DRIFT_SCRIPT_PATH,
     LOG_PATH,
     SCRIPTS_DIR,
 )
@@ -175,14 +172,8 @@ def _install_crash_logging() -> None:
     sys.excepthook = excepthook
 
 
-def find_python_interpreter() -> str:
-    """드리프트 스크립트를 실행할 python 인터프리터 경로를 찾는다.
-    sys.executable은 exe로 패키징(PyInstaller)된 상태에서는 SSOT_Explorer.exe
-    자기 자신을 가리켜서 못 쓴다 — 그럴 때만 PATH에서 진짜 python을 찾는다."""
-    if not getattr(sys, "frozen", False):
-        return sys.executable
-    found = shutil.which("python") or shutil.which("python3")
-    return found or "python"
+# (find_python_interpreter는 main_view.py로 이관됨 — D-108, O-021 Stage
+# 4-4, 상단 import 참고)
 
 # 2026-08-14(공개 준비, D-039) — 레지스트리 경로를 개인 폴더 하드코딩에서
 # 환경변수로. `SSOT_REGISTRY_PATH`가 있으면 그걸 쓰고, 없으면 범용 기본값
@@ -227,17 +218,9 @@ def load_labeled_folders() -> list[dict]:
     return router_registry.load_labeled_folders(REGISTRY_PATH)
 
 
-def load_shared_docs() -> list[dict]:
-    """공용 컨벤션 문서 목록 — 여러 루트가 참조할 수 있는 문서(해시 추적 대상).
-    이 문서가 바뀌면 dependsOnDocs에 그 label을 걸어둔 루트들에 드리프트
-    스크립트가 '반영 필요'를 표시한다."""
-    if not REGISTRY_PATH.exists():
-        return []
-    try:
-        data = json.loads(REGISTRY_PATH.read_text(encoding="utf-8-sig"))
-    except (OSError, json.JSONDecodeError):
-        return []
-    return data.get("sharedDocs", [])
+# (load_shared_docs는 main.py 안에서 더 이상 안 쓰임 — ManagementPanel이
+# management_panel.py로 옮겨가며 자체 REGISTRY_PATH로 다시 구현함, D-108.
+# 재노출 안 함 — 이걸 검증하는 테스트 없음, 실측 확인 후 정리.)
 
 
 # ------------------------------------------------------------------ 관계
@@ -347,220 +330,9 @@ def find_index_files(folder: Path) -> dict:
 
 # -------------------------------------------------------------------- 관리
 
-class ManagementPanel(QWidget):
-    """레지스트리(JSON)+스키마검증+Inbox감시로그+키워드레지스트리+세션
-    컨텍스트로그+드리프트 로그를 보여주고, 드리프트 체크를 즉시 실행할 수
-    있게 한다. 전부 앱 자신의 제어 파일이라 P-01(읽기전용 원칙) 범위 밖 —
-    프로젝트 파일 자체는 여전히 안 건드린다.
-
-    2026-08-14(D-047) — 모달 QDialog였다가(D-038 최초 도입 당시 이름
-    ManagementDialog) 사용자 요청으로 메인 창의 상시 탭("개발자")으로
-    승격 — Lazzy_App_OS_Monorepo의 사이드바 "개발자" 대분류와 같은 발상
-    (D-046 로컬 웹콘솔의 "환경 세팅 전 임시 대안"). QDialog 전용 기능
-    (.exec() 모달)을 안 쓰므로 QWidget으로 베이스를 바꿨을 뿐 내부 로직은
-    전부 그대로."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.process: QProcess | None = None
-        self.classification_worker: ClassificationWorker | None = None
-
-        layout = QVBoxLayout(self)
-
-        layout.addWidget(QLabel("루트 레지스트리 (ssot-roots.json) — 읽기 전용, 추가/삭제/참조조건 수정은 다른 경로로"))
-        self.registry_view = QTextBrowser()
-        self.registry_view.setMaximumHeight(160)
-        layout.addWidget(self.registry_view)
-
-        # 2026-08-14(D-038) — 필드 오타/타입 오류를 앱이 조용히 무시하지 않고
-        # 여기서 눈에 띄게 보여준다(Backstage catalog-info.yaml 스키마 검증
-        # 대비 격차를 좁히는 낮은 비용 항목).
-        layout.addWidget(QLabel("스키마 검증"))
-        self.schema_view = QTextBrowser()
-        self.schema_view.setMaximumHeight(90)
-        layout.addWidget(self.schema_view)
-
-        # 2026-08-14(D-042) — Inbox 감시 로그(경량 O-006, 감지+기록만).
-        layout.addWidget(QLabel("Inbox 감시 로그 (최근 20건)"))
-        self.watcher_log_view = QTextBrowser()
-        self.watcher_log_view.setMaximumHeight(90)
-        layout.addWidget(self.watcher_log_view)
-
-        # 2026-08-14(D-044) — 키워드 레지스트리(맥락형 인덱싱 1단계, Lazzy
-        # keyword_registry.py 경량 이식) — 반복 관측된 키워드가 active로
-        # 승급되면 다음 분류부터 점수 보너스를 받는다.
-        layout.addWidget(QLabel("키워드 레지스트리 (반복 관측→자동 승급)"))
-        self.keyword_registry_view = QTextBrowser()
-        self.keyword_registry_view.setMaximumHeight(90)
-        layout.addWidget(self.keyword_registry_view)
-
-        # 2026-08-14(D-045) — SessionStart 훅(이 레포 밖)이 쌓는 로그. 이
-        # 앱은 읽기만("어떤 루트가 실제로 세션에서 쓰였는지" 가시화).
-        layout.addWidget(QLabel("세션 컨텍스트 로그 (최근 20건 — SessionStart 훅)"))
-        self.session_context_log_view = QTextBrowser()
-        self.session_context_log_view.setMaximumHeight(90)
-        layout.addWidget(self.session_context_log_view)
-
-        # 2026-08-23(D-076) — 분류 파이프라인 벤치마크. 드리프트체크(아래)가
-        # 이미 "버튼 눌러서 실제 스크립트 실행+실시간 출력" 패턴을 갖고
-        # 있지만, classify_content는 무거운 서브프로세스가 아니라 순수
-        # 파이썬 함수 호출(빠름)이라 QProcess 대신 이미 있는 ClassificationWorker
-        # (D-051/H-008, SaveDocumentDialog가 쓰던 QThread 래퍼)를 그대로
-        # 재사용한다 — "샌드박스"를 따로 안 만든 이유: classify_content는
-        # 애초에 P-01(읽기전용) 설계라 실제 등록 데이터로 바로 돌려도
-        # 안전하고, 자체 로그(ssot_orchestrator_log.json)에만 기록을 남긴다.
-        layout.addWidget(QLabel("분류 파이프라인 벤치마크 (실제 코드 실행 — router_orchestrator.orchestrate())"))
-        bench_row = QHBoxLayout()
-        self.bench_input = QLineEdit()
-        self.bench_input.setPlaceholderText("분류해볼 텍스트를 입력...")
-        self.bench_run_btn = QPushButton("지금 실행")
-        self.bench_run_btn.clicked.connect(self.run_benchmark)
-        bench_row.addWidget(self.bench_input, 1)
-        bench_row.addWidget(self.bench_run_btn)
-        layout.addLayout(bench_row)
-        self.bench_result_view = QTextBrowser()
-        self.bench_result_view.setMaximumHeight(110)
-        self.bench_result_view.setPlainText("(아직 실행 안 함)")
-        layout.addWidget(self.bench_result_view)
-
-        layout.addWidget(QLabel("오케스트레이션 로그 (최근 20건 — classify가 GUI/CLI/MCP 어디서 불렸든 전부 쌓임)"))
-        self.orchestration_log_view = QTextBrowser()
-        self.orchestration_log_view.setMaximumHeight(110)
-        layout.addWidget(self.orchestration_log_view)
-
-        # 2026-09-04(D-093, O-012) — 분류 피드백 원장(D-029부터 쌓여왔지만
-        # 뷰가 없었던 데이터). GUI 승인/취소 버튼 + MCP record_classification_
-        # feedback tool(D-092) 양쪽이 같은 파일에 쓰므로 뷰도 하나로 합친다.
-        layout.addWidget(QLabel("분류 피드백 이력 (승인/취소 원장 — GUI 버튼 + MCP record_classification_feedback 공통)"))
-        self.proposals_view = QTextBrowser()
-        self.proposals_view.setMaximumHeight(110)
-        layout.addWidget(self.proposals_view)
-
-        # 2026-08-28(D-088 후속) — 워치독은 GUI 프로세스 밖(작업 스케줄러)
-        # 에서 도니까, 이 앱이 그 실행 이력을 사후에 읽어서 보여주는 것뿐
-        # (다른 로그뷰와 동일 원칙 — 이 앱은 워치독을 실행하지 않는다).
-        layout.addWidget(QLabel("워치독 로그 (최근 20건 — 세션 없이 도는 백그라운드 감지, 근거 포함)"))
-        self.watchdog_log_view = QTextBrowser()
-        self.watchdog_log_view.setMaximumHeight(130)
-        layout.addWidget(self.watchdog_log_view)
-
-        layout.addWidget(QLabel("드리프트 진행상황(실시간) / 로그"))
-        self.log_view = QTextBrowser()
-        layout.addWidget(self.log_view)
-
-        btn_row = QHBoxLayout()
-        self.run_btn = QPushButton("지금 드리프트 체크 실행")
-        self.run_btn.clicked.connect(self.run_drift_check)
-        refresh_btn = QPushButton("저장된 로그 새로고침")
-        refresh_btn.clicked.connect(self.refresh)
-        btn_row.addWidget(self.run_btn)
-        btn_row.addWidget(refresh_btn)
-        btn_row.addStretch(1)
-        layout.addLayout(btn_row)
-
-        self.status_label = QLabel("")
-        layout.addWidget(self.status_label)
-
-        self.refresh()
-
-    def refresh(self):
-        docs_text = format_shared_docs_text(load_shared_docs())
-        roots_text = format_registry_text(load_roots())
-        self.registry_view.setPlainText(f"[공용문서(sharedDocs)]\n{docs_text}\n\n[루트]\n{roots_text}")
-        errors = validate_registry(load_registry_raw())
-        self.schema_view.setPlainText(format_schema_validation_text(errors))
-        self.watcher_log_view.setPlainText(format_watcher_log_text(router_watcher.load_watcher_log()))
-        self.keyword_registry_view.setPlainText(
-            router_keyword_registry.format_keyword_registry_text(router_keyword_registry.load_keyword_registry())
-        )
-        self.session_context_log_view.setPlainText(
-            format_session_context_log_text(load_session_context_log())
-        )
-        self.orchestration_log_view.setPlainText(
-            format_orchestration_log_text(router_orchestrator.load_orchestration_log())
-        )
-        self.proposals_view.setPlainText(
-            format_proposals_text(router_proposals.load_proposals(), router_proposals.load_trust_state())
-        )
-        self.watchdog_log_view.setPlainText(
-            format_watchdog_log_text(ssot_background_watchdog.load_watchdog_log())
-        )
-        if DRIFT_LOG_PATH.exists():
-            text = DRIFT_LOG_PATH.read_text(encoding="utf-8", errors="replace")
-            self.log_view.setPlainText(text[-5000:])
-        else:
-            self.log_view.setPlainText("(로그 없음 — 아직 드리프트 감지 안 됨)")
-
-    def run_drift_check(self):
-        if not DRIFT_SCRIPT_PATH.exists():
-            QMessageBox.warning(self, "실행 실패", f"스크립트 없음: {DRIFT_SCRIPT_PATH}")
-            return
-        self.run_btn.setEnabled(False)
-        self.status_label.setText("⏳ 실행 중...")
-        self.log_view.setPlainText("")  # 실시간 출력으로 대체 — 끝나면 저장된 로그로 새로고침 가능
-
-        self.process = QProcess(self)
-        self.process.setProgram(find_python_interpreter())
-        self.process.setArguments([str(DRIFT_SCRIPT_PATH)])
-        self.process.readyReadStandardOutput.connect(self._on_process_output)
-        self.process.readyReadStandardError.connect(self._on_process_output)
-        self.process.finished.connect(self._on_process_finished)
-        self.process.errorOccurred.connect(self._on_process_error)
-        self.process.start()
-
-    def _on_process_output(self):
-        if not self.process:
-            return
-        out = bytes(self.process.readAllStandardOutput()).decode("utf-8", errors="replace")
-        err = bytes(self.process.readAllStandardError()).decode("utf-8", errors="replace")
-        if out:
-            self.log_view.append(out.rstrip("\n"))
-        if err:
-            self.log_view.append(err.rstrip("\n"))
-
-    def _on_process_finished(self, exit_code, _exit_status):
-        self.run_btn.setEnabled(True)
-        if exit_code == 0:
-            self.status_label.setText(f"✅ 완료 ({datetime.now().strftime('%H:%M:%S')})")
-        else:
-            self.status_label.setText(f"❌ 종료 코드 {exit_code}")
-        self.process = None
-        self.refresh()
-
-    def _on_process_error(self, _error):
-        self.status_label.setText("❌ 실행 실패")
-        self.run_btn.setEnabled(True)
-        self.process = None
-
-    def run_benchmark(self):
-        """2026-08-23(D-076) — orchestrate()를 실제 등록 레지스트리로 배경
-        스레드에서 실행(ClassificationWorker, D-051/H-008 재사용). 결과가
-        오면 스테이지별 소요시간을 보여주고, 이 실행 자체가 이미
-        ssot_orchestrator_log.json에 자동으로 쌓였으니 로그 뷰도 새로고침."""
-        text = self.bench_input.text().strip()
-        if not text:
-            self.bench_result_view.setPlainText("(텍스트를 입력하세요)")
-            return
-        self.bench_run_btn.setEnabled(False)
-        self.bench_result_view.setPlainText("⏳ 실행 중...")
-        self.classification_worker = ClassificationWorker(text, load_roots())
-        self.classification_worker.result_ready.connect(self._on_benchmark_result)
-        self.classification_worker.start()
-
-    def _on_benchmark_result(self, result: dict):
-        self.bench_run_btn.setEnabled(True)
-        lines = [f"총 {result.get('totalElapsedMs', '?')}ms"]
-        for step in result["steps"]:
-            extra = " (skipped)" if step.get("skipped") else ""
-            lines.append(f"  {step['stage']:<16} {step.get('elapsedMs', '?')}ms{extra}")
-        top3 = result["candidates"][:3]
-        if top3:
-            lines.append("후보: " + ", ".join(f"{c['rootLabel']}({c['score']})" for c in top3))
-        else:
-            lines.append("후보 없음")
-        self.bench_result_view.setPlainText("\n".join(lines))
-        self.classification_worker = None
-        self.refresh()  # 오케스트레이션 로그 뷰에 이번 실행이 바로 반영되게
+# (ManagementPanel은 management_panel.py로 이관됨 — D-108, O-021
+# Stage 4-4, 상단 import 참고. 자기만의 REGISTRY_PATH 캐싱 — 그 파일
+# docstring 참고)
 
 
 # ------------------------------------------------------- AI 툴별 동기화 다이얼로그
