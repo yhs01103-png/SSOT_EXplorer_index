@@ -4,16 +4,27 @@ Qt 없이 순수 함수 호출로 검증한다(router_registry.py류와 동일 �
 test_main.py의 기존 통합 테스트가 계속 커버한다."""
 from __future__ import annotations
 
+import json
+
 import pytest
 
 import main_pipeline as mp
 import router_proposals as rp
+import router_registry as rr
 
 
 @pytest.fixture(autouse=True)
 def isolated_router_proposals(tmp_path, monkeypatch):
     monkeypatch.setattr(rp, "PROPOSALS_LOG_PATH", tmp_path / "proposals.json")
     monkeypatch.setattr(rp, "TRUST_STATE_PATH", tmp_path / "trust.json")
+
+
+@pytest.fixture(autouse=True)
+def isolated_folder_snapshot(tmp_path, monkeypatch):
+    """add_root_entry()가 router_registry.save_folder_snapshot()도 호출한다
+    (D-090, 하위 폴더 README 추적 기준점) — 실제 사용자 파일 절대 안
+    건드리게 격리."""
+    monkeypatch.setattr(rr, "FOLDER_SNAPSHOT_PATH", tmp_path / "folder-snapshots.json")
 
 
 def _candidate(root_dir):
@@ -99,3 +110,124 @@ def test_record_save_cancelled_records_cancelled_decision(tmp_path):
     proposals = rp.load_proposals()
     assert len(proposals) == 1
     assert proposals[0]["decision"] == "cancelled"
+
+
+# --------------------------------------------------------- find_nested_roots
+
+def test_find_nested_roots_detects_covered_subroot(tmp_path):
+    parent = tmp_path / "workspace"
+    child = parent / "sub"
+    child.mkdir(parents=True)
+    roots = [{"label": "sub", "path": str(child)}]
+    covered = mp.find_nested_roots(parent.resolve(), roots)
+    assert [r["label"] for r in covered] == ["sub"]
+
+
+def test_find_nested_roots_empty_when_no_overlap(tmp_path):
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    roots = [{"label": "a", "path": str(a)}]
+    assert mp.find_nested_roots(b.resolve(), roots) == []
+
+
+def test_find_nested_roots_ignores_exact_same_path(tmp_path):
+    """등록하려는 폴더 자기 자신은 "하위"가 아니다 — 재등록 시나리오에서
+    자기 자신을 삼켰다고 오탐하면 안 된다."""
+    folder = tmp_path / "same"
+    folder.mkdir()
+    roots = [{"label": "same", "path": str(folder)}]
+    assert mp.find_nested_roots(folder.resolve(), roots) == []
+
+
+# --------------------------------------------------------- add_root_entry
+
+def test_add_root_entry_writes_registry_snapshot_and_init_file(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    folder = tmp_path / "newproj"
+    folder.mkdir()
+
+    result = mp.add_root_entry(str(folder), "newproj", [], registry_path)
+    assert result["status"] == "ok"
+    assert result["entry"]["label"] == "newproj"
+    assert [r["label"] for r in result["roots"]] == ["newproj"]
+    assert [r["label"] for r in rr.load_roots(registry_path)] == ["newproj"]
+    assert (folder / "CLAUDE.md").exists()
+    assert "initFileError" not in result
+
+
+def test_add_root_entry_appends_to_existing_roots(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    folder = tmp_path / "newproj"
+    folder.mkdir()
+    existing = [{"label": "old", "path": "C:\\old", "referenceCondition": ""}]
+
+    result = mp.add_root_entry(str(folder), "newproj", existing, registry_path)
+    assert result["status"] == "ok"
+    assert {r["label"] for r in result["roots"]} == {"old", "newproj"}
+    assert existing == [{"label": "old", "path": "C:\\old", "referenceCondition": ""}]  # 원본 안 건드림
+
+
+def test_add_root_entry_does_not_overwrite_existing_claude_md(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    folder = tmp_path / "newproj"
+    folder.mkdir()
+    (folder / "CLAUDE.md").write_text("손편집 내용", encoding="utf-8")
+
+    result = mp.add_root_entry(str(folder), "newproj", [], registry_path)
+    assert result["status"] == "ok"
+    assert (folder / "CLAUDE.md").read_text(encoding="utf-8") == "손편집 내용"
+
+
+def test_add_root_entry_conflict_returns_disk_state(tmp_path):
+    """test_main.py의 test_save_roots_detects_external_write_conflict와
+    동일 기법 — router_registry 모듈 함수를 안 거치고 파일을 직접 바꿔서
+    "다른 프로세스가 그 사이 먼저 썼다"를 시뮬레이션한다(모듈 함수를
+    거치면 그 자체가 _last_known_hash를 갱신해버려 충돌이 재현이 안 됨)."""
+    registry_path = tmp_path / "ssot-roots.json"
+    folder = tmp_path / "newproj"
+    folder.mkdir()
+    rr.save_roots([], registry_path)  # 기준선 — _last_known_hash 확정
+
+    external = json.loads(registry_path.read_text(encoding="utf-8-sig"))
+    external["roots"].append({"label": "external", "path": "C:\\external"})
+    registry_path.write_text(json.dumps(external), encoding="utf-8")
+
+    result = mp.add_root_entry(str(folder), "newproj", [], registry_path)
+    assert result["status"] == "conflict"
+    assert [r["label"] for r in result["roots"]] == ["external"]  # 최신 디스크 상태
+    assert [r["label"] for r in rr.load_roots(registry_path)] == ["external"]  # newproj는 안 써짐
+
+
+# --------------------------------------------------------- remove_root_entry
+
+def test_remove_root_entry_removes_and_saves(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    roots = [
+        {"label": "a", "path": "C:\\a", "referenceCondition": ""},
+        {"label": "b", "path": "C:\\b", "referenceCondition": ""},
+    ]
+    rr.save_roots(roots, registry_path)
+
+    result = mp.remove_root_entry(0, roots, registry_path)
+    assert result["status"] == "ok"
+    assert result["removed"]["label"] == "a"
+    assert [r["label"] for r in result["roots"]] == ["b"]
+    assert [r["label"] for r in rr.load_roots(registry_path)] == ["b"]
+
+
+def test_remove_root_entry_conflict_returns_disk_state(tmp_path):
+    registry_path = tmp_path / "ssot-roots.json"
+    roots = [{"label": "a", "path": "C:\\a", "referenceCondition": ""}]
+    rr.save_roots(roots, registry_path)  # 기준선 — _last_known_hash 확정
+
+    # "다른 프로세스"가 그 사이 파일을 직접 바꿨다고 시뮬레이션(모듈 함수를
+    # 안 거쳐서 _last_known_hash가 이 변경을 모름).
+    external = json.loads(registry_path.read_text(encoding="utf-8-sig"))
+    external["roots"].append({"label": "external", "path": "C:\\external"})
+    registry_path.write_text(json.dumps(external), encoding="utf-8")
+
+    result = mp.remove_root_entry(0, roots, registry_path)
+    assert result["status"] == "conflict"
+    assert {r["label"] for r in result["roots"]} == {"a", "external"}

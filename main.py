@@ -1774,6 +1774,10 @@ class SSOTExplorer(QMainWindow):
             )
 
     def add_root(self):
+        """2026-09-04(D-101, O-021 Stage 3) — 중첩루트 검사(find_nested_roots)
+        와 실제 등록 시퀀스(add_root_entry)는 main_pipeline.py로 이관, 이
+        메서드는 다이얼로그 순서(폴더 선택 → 경고 확인 → 이름 입력 →
+        등록)와 결과 표시만 담당한다."""
         folder = QFileDialog.getExistingDirectory(self, "SSOT 루트로 등록할 폴더 선택")
         if not folder:
             return
@@ -1785,19 +1789,7 @@ class SSOTExplorer(QMainWindow):
         # 배열 순서" 절 참고) — 지금까진 이걸 사람이 등록 시점에 알아챌
         # 방법이 전혀 없었다. 등록 전에 미리 보여주고 확인받는다.
         new_root = Path(folder).resolve()
-        covered = []
-        for r in self.roots:
-            try:
-                existing_path = Path(r["path"]).resolve()
-            except (OSError, ValueError):
-                continue
-            if existing_path == new_root:
-                continue
-            try:
-                existing_path.relative_to(new_root)
-            except ValueError:
-                continue
-            covered.append(r)
+        covered = main_pipeline.find_nested_roots(new_root, self.roots)
         if covered:
             preview = "\n".join(f"  · {r['label']} ({r['path']})" for r in covered[:20])
             if len(covered) > 20:
@@ -1819,40 +1811,20 @@ class SSOTExplorer(QMainWindow):
         label, ok = QInputDialog.getText(self, "루트 이름", "표시할 이름:", text=Path(folder).name)
         if not ok or not label.strip():
             return
-        entry = {"label": label.strip(), "path": folder, "referenceCondition": ""}
-        self.roots.append(entry)
-        try:
-            save_roots(self.roots)
-        except RegistryConflictError as e:
-            self.roots.pop()  # 실패했으니 메모리 상태도 되돌림
-            self.roots = load_roots()  # 최신 디스크 상태로 다시 맞춤
-            QMessageBox.warning(self, "루트 추가 실패", f"{e}\n(레지스트리를 새로고침했습니다 — 다시 시도하세요.)")
+
+        result = main_pipeline.add_root_entry(folder, label, self.roots, REGISTRY_PATH)
+        self.roots = result["roots"]
+        if result["status"] == "conflict":
+            QMessageBox.warning(self, "루트 추가 실패", f"{result['error']}\n(레지스트리를 새로고침했습니다 — 다시 시도하세요.)")
             self.tree.clear()
             self.populate_roots()
             return
-
-        # 2026-09-04 — 하위 폴더 README 추적(D-0XX)의 기준점. 등록 시점의
-        # "누가 README를 갖고 있었는지" 스냅샷이 없으면 워치독이 나중에
-        # "사라졌다"를 판단할 기준이 없다 — 실패해도 등록 자체는 이미
-        # 끝났으니 조용히 넘어간다(다음 워치독 스캔이 빈 스냅샷 기준으로
-        # 다시 시작할 뿐, 등록을 막을 이유는 아님).
-        try:
-            snapshot = router_registry.scan_subfolder_readmes(Path(folder))
-            router_registry.save_folder_snapshot(entry["label"], snapshot)
-        except OSError:
-            pass
-
-        # 새 루트는 기존 내용이 없으니 안전하게 init CLAUDE.md를 바로 생성
-        claude_path = resolve_claude_md_target(Path(folder))
-        if not claude_path.exists():
-            try:
-                claude_path.write_text(generate_init_claude_md(entry), encoding="utf-8")
-            except OSError as e:
-                QMessageBox.warning(self, "init 생성 실패", str(e))
+        if result.get("initFileError"):
+            QMessageBox.warning(self, "init 생성 실패", result["initFileError"])
 
         self.tree.clear()
         self.populate_roots()
-        self.statusBar().showMessage(f"✅ 루트 추가됨: {entry['label']}", 4000)
+        self.statusBar().showMessage(f"✅ 루트 추가됨: {result['entry']['label']}", 4000)
 
     def remove_root(self):
         if not self.roots:
@@ -1865,20 +1837,19 @@ class SSOTExplorer(QMainWindow):
         self._remove_root_at(labels.index(choice))
 
     def _remove_root_at(self, idx: int):
-        """실제 삭제 로직 — 툴바 버튼과 Delete 단축키가 공유(중복 제거)."""
-        removed = self.roots.pop(idx)
-        try:
-            save_roots(self.roots)
-        except RegistryConflictError as e:
-            self.roots.insert(idx, removed)  # 실패했으니 메모리 상태도 되돌림
-            self.roots = load_roots()  # 최신 디스크 상태로 다시 맞춤
-            QMessageBox.warning(self, "루트 삭제 실패", f"{e}\n(레지스트리를 새로고침했습니다 — 다시 시도하세요.)")
+        """실제 삭제 로직 — 툴바 버튼과 Delete 단축키가 공유(중복 제거).
+        2026-09-04(D-101, O-021 Stage 3) — save_roots 시퀀스는 main_pipeline.
+        remove_root_entry()로 이관, 이 메서드는 결과 표시만 담당한다."""
+        result = main_pipeline.remove_root_entry(idx, self.roots, REGISTRY_PATH)
+        self.roots = result["roots"]
+        if result["status"] == "conflict":
+            QMessageBox.warning(self, "루트 삭제 실패", f"{result['error']}\n(레지스트리를 새로고침했습니다 — 다시 시도하세요.)")
             self.tree.clear()
             self.populate_roots()
             return
         self.tree.clear()
         self.populate_roots()
-        self.statusBar().showMessage(f"🗑 삭제됨: {removed['label']} (파일은 그대로 둠, 레지스트리에서만 제외)", 5000)
+        self.statusBar().showMessage(f"🗑 삭제됨: {result['removed']['label']} (파일은 그대로 둠, 레지스트리에서만 제외)", 5000)
 
     def on_delete_key(self):
         """트리에서 최상위(루트) 항목이 선택된 상태로 Delete를 누르면 삭제
