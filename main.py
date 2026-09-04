@@ -72,13 +72,17 @@ try:
 except ImportError:
     _JSONSCHEMA_AVAILABLE = False
 
-SCRIPTS_DIR = Path.home() / ".claude" / "scripts"
-DRIFT_LOG_PATH = SCRIPTS_DIR / "ssot-index-drift.log"
-# 2026-08-13: 순수 Python으로 교체(크로스플랫폼) — PS1 버전은 레거시 보존만.
-DRIFT_SCRIPT_PATH = SCRIPTS_DIR / "ssot_index_drift_check.py"
-# 2026-08-14(D-045) — ~/.claude/hooks/ssot_session_context.py(이 레포 밖,
-# SessionStart 훅)가 쌓는 로그. 이 앱은 읽기만 함(관리자 패널 뷰).
-SESSION_CONTEXT_LOG_PATH = SCRIPTS_DIR / "ssot_session_context_log.json"
+# 2026-09-04(D-098, O-021 Stage 1) — 경로 상수는 router_paths.py로 이관(레이어
+# 분리 방침의 "경로" 레이어 신설). 여기서는 재노출만 — bare name 그대로라
+# 기존 monkeypatch 기반 테스트(예: monkeypatch.setattr(m, "LOG_PATH", ...))는
+# 안 깨진다.
+from router_paths import (  # noqa: E402
+    DRIFT_LOG_PATH,
+    DRIFT_SCRIPT_PATH,
+    LOG_PATH,
+    SCRIPTS_DIR,
+    SESSION_CONTEXT_LOG_PATH,
+)
 
 # --------------------------------------------------------------------- 로깅
 #
@@ -90,7 +94,7 @@ SESSION_CONTEXT_LOG_PATH = SCRIPTS_DIR / "ssot_session_context_log.json"
 # 예외를 다시 안 던지므로 같은 상황에서도 죽지 않는다. SSOT_Explorer는 원래
 # print()/logging이 아예 없었다 — --windowed exe(콘솔 없음)라 뭔가 터지면
 # 사용자 눈엔 그냥 조용히 멈추거나 사라지는 것처럼 보이는 게 더 큰 문제였다.
-LOG_PATH = SCRIPTS_DIR / "ssot_explorer.log"
+# (LOG_PATH는 router_paths.py에서 이관된 값 — 위 import 참고)
 
 
 def _setup_logger() -> logging.Logger:

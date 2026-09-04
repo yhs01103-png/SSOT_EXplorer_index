@@ -35,14 +35,14 @@ from __future__ import annotations
 
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 
 import router_keyword_registry
 import router_watcher
 from main import load_registry_raw, load_session_context_log, validate_registry
+from router_paths import (
+    PAGE_PATH,  # D-098, O-021 Stage 1 — 경로 레이어로 이관, 재노출만
+)
 
-STATIC_DIR = Path(__file__).resolve().parent / "dev_console_static"
-PAGE_PATH = STATIC_DIR / "dev_console.html"
 DEFAULT_HOST = "127.0.0.1"  # 로컬 전용 기본값 — 위 모듈 docstring 참고
 DEFAULT_PORT = 8765
 

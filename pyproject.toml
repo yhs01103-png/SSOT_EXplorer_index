@@ -97,6 +97,7 @@ files = [
     "router_embeddings.py",
     "router_keyword_registry.py",
     "router_orchestrator.py",
+    "router_paths.py",
     "router_proposals.py",
     "router_registry.py",
     "router_sync.py",

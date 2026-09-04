@@ -38,8 +38,11 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-PROPOSALS_LOG_PATH = Path.home() / ".claude" / "scripts" / "ssot_router_proposals.json"
-TRUST_STATE_PATH = Path.home() / ".claude" / "scripts" / "ssot_router_trust.json"
+from router_paths import (  # D-098, O-021 Stage 1 — 경로 레이어로 이관, 재노출만
+    PROPOSALS_LOG_PATH,
+    TRUST_STATE_PATH,
+)
+
 TRUST_PROMOTION_STREAK = 5  # Lazzy confidence_calibrator.py의 _REVIEW_PROMOTION_THRESHOLD와 동일 값
 # D-094 — trusted 후보가 router_orchestrator.orchestrate()에서 실제로 받는
 # additive 가점. ACTIVE_KEYWORD_BONUS(0.15)보다 작게 잡음 — "과거 이 루트가

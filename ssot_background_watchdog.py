@@ -69,6 +69,9 @@ from pathlib import Path
 
 import router_proposals
 import router_registry
+from router_paths import (
+    WATCHDOG_LOG_PATH,  # D-098, O-021 Stage 1 — 경로 레이어로 이관, 재노출만
+)
 from router_proposals import is_developer_mode, resolve_registry_path
 
 log = logging.getLogger("ssot_explorer")
@@ -87,7 +90,7 @@ DEFAULT_SCHEDULE_TIME = "09:00"  # HH:MM, schtasks /st 형식
 # 로그다. O-017(이동추적 알고리즘 투자 여부)이 "실사용 데이터가 쌓이면
 # 판단"이라고 미뤄둔 바로 그 데이터를 여기서 모은다 — 그래서 상한을
 # 다른 진단성 로그(세션 컨텍스트 로그 500개)보다 넉넉하게 잡는다.
-WATCHDOG_LOG_PATH = Path.home() / ".claude" / "scripts" / "ssot_watchdog_log.json"
+# (WATCHDOG_LOG_PATH는 router_paths.py에서 이관된 값 — 상단 import 참고)
 WATCHDOG_LOG_MAX_ENTRIES = 2000
 
 

@@ -38,6 +38,9 @@ from datetime import date, datetime
 from pathlib import Path
 
 import router_proposals
+from router_paths import (
+    FOLDER_SNAPSHOT_PATH,  # D-098, O-021 Stage 1 — 경로 레이어로 이관, 재노출만
+)
 
 log = logging.getLogger("ssot_explorer")
 
@@ -486,7 +489,7 @@ NOISE_DIR_NAMES = {
    # 하나로 유지하고 싶지만 그쪽은 mcp SDK 의존 모듈이라 이 워치독/등록
    # 경로(mcp 미설치로도 동작해야 함, D-088)에서 못 끌어옴 — 값만 복제.
 
-FOLDER_SNAPSHOT_PATH = Path.home() / ".claude" / "scripts" / "ssot_folder_snapshots.json"
+# (FOLDER_SNAPSHOT_PATH는 router_paths.py에서 이관된 값 — 상단 import 참고)
 
 
 def scan_subfolder_readmes(root_path: Path) -> dict[str, bool]:

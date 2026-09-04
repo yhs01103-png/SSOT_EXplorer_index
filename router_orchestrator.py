@@ -82,8 +82,10 @@ import router_classifier
 import router_embeddings
 import router_keyword_registry
 import router_proposals
+from router_paths import (
+    ORCHESTRATION_LOG_PATH,  # D-098, O-021 Stage 1 — 경로 레이어로 이관, 재노출만
+)
 
-ORCHESTRATION_LOG_PATH = Path.home() / ".claude" / "scripts" / "ssot_orchestrator_log.json"
 README_FILENAME = "readme.md"
 PROSE_MATCH_WEIGHT = 0.4  # D-033: 프로즈검색 신호가 additive로 기여하는 최대 가중치
 EMBEDDING_MATCH_BONUS = 0.2  # D-092(O-016 A안): 유사도(0~1)에 곱해 additive 가산.

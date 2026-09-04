@@ -30,9 +30,11 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
+from router_paths import (
+    WATCHER_LOG_PATH,  # D-098, O-021 Stage 1 — 경로 레이어로 이관, 재노출만
+)
 from router_proposals import atomic_write_json
 
-WATCHER_LOG_PATH = Path.home() / ".claude" / "scripts" / "ssot_watcher_log.json"
 DEFAULT_POLL_INTERVAL = 2.0  # 초
 
 

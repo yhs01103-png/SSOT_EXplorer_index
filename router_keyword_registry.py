@@ -28,9 +28,10 @@ import json
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from router_paths import (
+    KEYWORD_REGISTRY_PATH,  # D-098, O-021 Stage 1 — 경로 레이어로 이관, 재노출만
+)
 from router_proposals import atomic_write_json
-
-KEYWORD_REGISTRY_PATH = Path.home() / ".claude" / "scripts" / "ssot_keyword_registry.json"
 
 # keyword_registry.py(D-SERVER-054/D-SERVER-062)와 동일 임계값.
 PROMOTION_HIT_THRESHOLD = 5
