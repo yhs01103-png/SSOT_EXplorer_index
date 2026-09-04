@@ -249,7 +249,7 @@ def test_orchestrate_no_candidates_reports_needs_clarification(tmp_path):
     assert result["needsClarification"] is True
 
 
-# --------------------------------------------------------- 신뢰 폐루프 주석
+# --------------------------------------------------------- 신뢰 폐루프
 
 def test_orchestrate_annotates_trusted_candidate(tmp_path):
     root_dir = tmp_path / "trusted_root"
@@ -272,6 +272,54 @@ def test_orchestrate_untrusted_candidate_shows_false(tmp_path):
     result = ro.orchestrate("특수키워드 관련 내용", roots, log_path=tmp_path / "log.json")
     assert result["candidates"][0]["trusted"] is False
     assert result["candidates"][0]["acceptanceRate"] is None
+
+
+# --------------------------------------------------- D-094: 신뢰 점수 가점(결정 번복)
+
+def test_orchestrate_trust_bonus_applies_to_trusted_candidate_score(tmp_path):
+    """D-094 — trusted면 SCOPE_MATCH_BONUS(0.3) 위에 TRUST_MATCH_BONUS(0.1)가
+    additive로 더해진다(다른 신호와 동일 모양) — 예전엔 참고 정보로만 붙고
+    점수는 그대로였음."""
+    root_dir = tmp_path / "trusted_root"
+    root_dir.mkdir()
+    roots = [{"label": "trusted_root", "path": str(root_dir), "scope": "특수키워드", "referenceCondition": ""}]
+    candidate = {"rootLabel": "trusted_root", "rootPath": str(root_dir), "score": 0.5, "reason": "테스트"}
+    for _ in range(rp.TRUST_PROMOTION_STREAK):
+        rp.record_decision(candidate, "x", "approved")
+
+    result = ro.orchestrate("특수키워드 관련 내용", roots, log_path=tmp_path / "log.json")
+    cand = result["candidates"][0]
+    assert cand["score"] == pytest.approx(0.3 + rp.TRUST_MATCH_BONUS, abs=0.001)
+    assert "신뢰보너스" in cand["signals"]
+    trust_step = next(s for s in result["steps"] if s["stage"] == "trust_annotation")
+    assert trust_step["bonusAppliedCount"] == 1
+
+
+def test_orchestrate_trust_bonus_does_not_add_new_candidates(tmp_path):
+    """D-094 — 다른 additive 신호와 동일 원칙: keyword/scope/prose 신호로
+    merged에 오른 후보가 하나도 없으면(이 요청과 겹치는 게 전혀 없으면)
+    trusted 이력이 있어도 신규 후보를 만들지 않는다."""
+    root_dir = tmp_path / "trusted_root"
+    root_dir.mkdir()
+    roots = [{"label": "trusted_root", "path": str(root_dir), "scope": "", "referenceCondition": ""}]
+    candidate = {"rootLabel": "trusted_root", "rootPath": str(root_dir), "score": 0.5, "reason": "테스트"}
+    for _ in range(rp.TRUST_PROMOTION_STREAK):
+        rp.record_decision(candidate, "x", "approved")
+
+    result = ro.orchestrate("전혀 무관한 질의", roots, log_path=tmp_path / "log.json")
+    assert result["candidates"] == []
+
+
+def test_orchestrate_untrusted_candidate_gets_no_bonus(tmp_path):
+    root_dir = tmp_path / "x"
+    root_dir.mkdir()
+    roots = [{"label": "x", "path": str(root_dir), "scope": "특수키워드", "referenceCondition": ""}]
+    result = ro.orchestrate("특수키워드 관련 내용", roots, log_path=tmp_path / "log.json")
+    cand = result["candidates"][0]
+    assert cand["score"] == pytest.approx(0.3, abs=0.001)  # SCOPE_MATCH_BONUS만, 신뢰 가점 없음
+    assert "신뢰보너스" not in cand["signals"]
+    trust_step = next(s for s in result["steps"] if s["stage"] == "trust_annotation")
+    assert trust_step["bonusAppliedCount"] == 0
 
 
 # --------------------------------------------------------------------- 로깅

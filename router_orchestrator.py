@@ -13,10 +13,10 @@
         원칙 그대로 유지, 사용자가 명시적으로 재확인: "일단 실시간
         스캔으로 가고 나중에 db 붙으면 그때 구조화". 1단계보다 느리지만
         루트가 몇 개 안 돼서(현재 5개) 비용 낮음)
-  3단계 신뢰 폐루프 주석 — router_proposals.is_trusted()/acceptance_rate()
-        로 각 후보에 신뢰도 정보를 붙임(순위를 바꾸진 않음 — D-029 "항상
-        사람 확인" 원칙과 같은 이유로, 과거 승인이력이 자동으로 우선순위를
-        좌우하게 하지 않음. 참고 정보로만)
+  3단계 신뢰 폐루프 — router_proposals.is_trusted()/acceptance_rate()로 각
+        후보에 신뢰도 정보를 붙이고, trusted면 TRUST_MATCH_BONUS만큼 실제
+        점수에도 가점(D-094, 아래 참고 — 예전엔 참고 정보로만 붙이고 순위는
+        안 바꿨음)
 
 매 실행마다 3단계 각각 "뭘 시도했고 몇 개 나왔는지"를 기록해서
 ORCHESTRATION_LOG_PATH에 원자적 쓰기로 남긴다 — router_proposals의
@@ -57,7 +57,18 @@ SCOPE_MATCH_BONUS/ACTIVE_KEYWORD_BONUS/TARGET_ROLE_BONUS와 같은 모양).
 행동 변화라 데이터 없이 먼저 넣지 않는다는 이 프로젝트의 관례를 따름).
 이 범위 제한 덕에 별도 캐싱 인프라 없이도 비용이 자연히 낮다 — 매 호출마다
 임베딩되는 루트 수가 "등록된 전체 루트"가 아니라 "이미 매치된 소수 후보"로
-줄어든다."""
+줄어든다.
+
+**(D-094, 2026-09-04) — 신뢰 폐루프가 참고 정보에서 실제 점수 반영으로
+(결정 번복)**: D-029/D-030 당시 명시적 결정은 "과거 승인 이력이 자동으로
+우선순위를 좌우하게 하지 않는다"였다 — 5단계는 candidates에 trusted/
+acceptanceRate만 붙이고 순위는 절대 안 바꿨다. 상용 비교 분석에서 이게
+"피드백 루프"라는 이름과 달리 실제로는 아무 것도 학습하지 않는 스트릭
+카운터일 뿐이라는 이름-실체 괴리로 지적됨 — 결정을 번복해 다른 additive
+신호(SCOPE_MATCH_BONUS/ACTIVE_KEYWORD_BONUS/EMBEDDING_MATCH_BONUS)와 같은
+모양으로 router_proposals.TRUST_MATCH_BONUS를 실제 점수에 더한다. 다른
+단계와 동일 원칙 — 이 신호 하나로 merged에 없던 새 후보를 추가하지는
+않는다(이미 keyword/scope/prose 신호로 후보가 된 루트만 가점 대상)."""
 from __future__ import annotations
 
 import json
@@ -258,15 +269,30 @@ def orchestrate(
     except router_ai_judgment.AIJudgeProviderNotConfigured:
         steps.append({"stage": "ai_judgment", "skipped": True, "reason": "provider_not_configured", "elapsedMs": _elapsed_ms(_t)})
 
-    # 5단계 — 신뢰 폐루프 주석(순위는 안 바꿈, 참고 정보만 붙임)
+    # 5단계 — 신뢰 폐루프(D-094부터 trusted 후보는 실제 점수에도 가점,
+    # 모듈 docstring 참고). 다른 additive 신호와 동일하게 이미 merged에
+    # 오른 후보만 대상 — 이 신호 하나로 새 후보를 추가하지 않는다.
     _t = time.perf_counter()
     trusted_count = 0
+    bonus_applied = 0
     for label, cand in merged.items():
         cand["trusted"] = router_proposals.is_trusted(label)
         cand["acceptanceRate"] = router_proposals.acceptance_rate(label)
         if cand["trusted"]:
             trusted_count += 1
-    steps.append({"stage": "trust_annotation", "trustedCount": trusted_count, "elapsedMs": _elapsed_ms(_t)})
+            cand["score"] = round(min(cand["score"] + router_proposals.TRUST_MATCH_BONUS, 1.0), 3)
+            cand["signals"].append("신뢰보너스")
+            cand["reason"] += (
+                f" / 과거 {router_proposals.TRUST_PROMOTION_STREAK}연속 승인 이력 보너스"
+                f"(+{router_proposals.TRUST_MATCH_BONUS})"
+            )
+            bonus_applied += 1
+    steps.append({
+        "stage": "trust_annotation",
+        "trustedCount": trusted_count,
+        "bonusAppliedCount": bonus_applied,
+        "elapsedMs": _elapsed_ms(_t),
+    })
 
     candidates = sorted(
         merged.values(), key=lambda c: (len(c["signals"]), c["score"]), reverse=True

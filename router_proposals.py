@@ -16,6 +16,18 @@
 Lazzy 원본은 trusted면 리뷰 자체를 생략(mark_trusted_auto)하지만, 그 부분은
 사용자 결정과 배치돼 의도적으로 이식 안 함.
 
+**D-094(결정 번복) — trusted가 실제 분류 점수에도 반영됨**: D-029/D-030
+당시엔 "과거 승인 이력이 자동으로 우선순위를 좌우하게 하지 않는다"는 게
+명시적 결정이었다(trusted는 참고용 배지일 뿐, router_orchestrator.orchestrate()
+5단계는 순위를 절대 안 바꿨음). 그런데 그 결과 "피드백 루프"라는 이름이
+실제로는 아무 것도 학습하지 않는 스트릭 카운터에 불과하다는 이름-실체
+괴리가 상용 비교 분석에서 지적됐다 — 결정을 번복해 TRUST_MATCH_BONUS를
+새로 도입하고, orchestrate()가 다른 additive 신호(SCOPE_MATCH_BONUS/
+ACTIVE_KEYWORD_BONUS/EMBEDDING_MATCH_BONUS)와 같은 모양으로 trusted 후보의
+점수에 실제로 가점을 준다. "항상 사람 확인 후 승인"이라는 D-029의 별개
+원칙(자동 저장 금지)은 이번에도 그대로 유지 — 바뀌는 건 순위/점수뿐, 저장은
+여전히 매번 버튼 클릭이 필요하다.
+
 router_classifier.py와 마찬가지로 Qt를 import하지 않는 순수 모듈 — 나중에
 서버 프로세스로 떼어내도 그대로 재사용 가능.
 """
@@ -29,6 +41,14 @@ from pathlib import Path
 PROPOSALS_LOG_PATH = Path.home() / ".claude" / "scripts" / "ssot_router_proposals.json"
 TRUST_STATE_PATH = Path.home() / ".claude" / "scripts" / "ssot_router_trust.json"
 TRUST_PROMOTION_STREAK = 5  # Lazzy confidence_calibrator.py의 _REVIEW_PROMOTION_THRESHOLD와 동일 값
+# D-094 — trusted 후보가 router_orchestrator.orchestrate()에서 실제로 받는
+# additive 가점. ACTIVE_KEYWORD_BONUS(0.15)보다 작게 잡음 — "과거 이 루트가
+# 자주 맞았다"는 메타 신호일 뿐이라, 이번 요청의 실제 내용 겹침(구조화/
+# 프로즈/시맨틱)보다 약하게 취급해야 한 번 신뢰를 얻은 루트가 이후 무관한
+# 요청에서도 계속 상위권을 차지하는 자기강화 편향을 억제할 수 있다.
+# TRUST_PROMOTION_STREAK의 "단 한 번의 거부로 즉시 스트릭 0 + 강등"이라는
+# 보수성이 그 편향의 1차 방어선이고, 이 상수의 작은 크기가 2차 방어선.
+TRUST_MATCH_BONUS = 0.1
 
 
 def resolve_registry_path() -> Path:
