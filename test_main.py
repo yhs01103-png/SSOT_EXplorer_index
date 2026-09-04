@@ -105,8 +105,12 @@ def isolated_orchestrator_state(tmp_path, monkeypatch):
     # D-045 — ManagementPanel(D-047 전 이름 ManagementDialog)이
     # SESSION_CONTEXT_LOG_PATH를 읽는다(이 앱은 안 쓰지만, 격리 안 하면
     # 테스트가 실제 사용자 로그 내용에 따라 결과가 갈리는 비결정적
-    # 테스트가 된다).
-    monkeypatch.setattr(m, "SESSION_CONTEXT_LOG_PATH", tmp_path / "session-context-log.json")
+    # 테스트가 된다). 2026-09-04(D-103, O-021 Stage 4-1) —
+    # load_session_context_log()가 main_view.py로 이관되며 SESSION_CONTEXT_
+    # LOG_PATH의 bare name도 그쪽 모듈 네임스페이스에서 resolve된다 — 패치
+    # 대상을 main_view로 변경(main.py는 이제 이 이름을 아예 재노출 안 함).
+    import main_view
+    monkeypatch.setattr(main_view, "SESSION_CONTEXT_LOG_PATH", tmp_path / "session-context-log.json")
     # D-088 후속 — ManagementPanel이 이제 워치독 로그도 읽는다. 같은 이유로
     # 격리(실제 사용자 로그 내용에 따라 결과가 갈리는 비결정적 테스트 방지).
     import ssot_background_watchdog

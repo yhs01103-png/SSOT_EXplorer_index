@@ -17,6 +17,7 @@ import pytest
 
 import dev_console_server as dcs
 import main as m
+import main_view
 import router_keyword_registry as kr
 import router_watcher as rw
 
@@ -24,7 +25,10 @@ import router_watcher as rw
 @pytest.fixture(autouse=True)
 def isolated_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(m, "REGISTRY_PATH", tmp_path / "ssot-roots.json")
-    monkeypatch.setattr(m, "SESSION_CONTEXT_LOG_PATH", tmp_path / "session-log.json")
+    # 2026-09-04(D-103, O-021 Stage 4-1) — load_session_context_log()가
+    # main_view.py로 이관되며 SESSION_CONTEXT_LOG_PATH의 bare name도 그쪽
+    # 모듈 네임스페이스에서 resolve된다 — 패치 대상을 main_view로 변경.
+    monkeypatch.setattr(main_view, "SESSION_CONTEXT_LOG_PATH", tmp_path / "session-log.json")
     monkeypatch.setattr(rw, "WATCHER_LOG_PATH", tmp_path / "watcher-log.json")
     monkeypatch.setattr(kr, "KEYWORD_REGISTRY_PATH", tmp_path / "keywords.json")
     m._LAST_KNOWN_HASH = ""

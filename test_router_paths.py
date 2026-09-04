@@ -30,9 +30,17 @@ def test_main_reexports_match_router_paths():
     import main as m
     assert m.DRIFT_LOG_PATH is rp.DRIFT_LOG_PATH
     assert m.DRIFT_SCRIPT_PATH is rp.DRIFT_SCRIPT_PATH
-    assert m.SESSION_CONTEXT_LOG_PATH is rp.SESSION_CONTEXT_LOG_PATH
     assert m.LOG_PATH is rp.LOG_PATH
     assert m.SCRIPTS_DIR is rp.SCRIPTS_DIR
+
+
+def test_main_view_reexports_match_router_paths():
+    """2026-09-04(D-103, O-021 Stage 4-1) — SESSION_CONTEXT_LOG_PATH를 쓰는
+    load_session_context_log()가 main.py에서 main_view.py로 이관되며, 그
+    bare name도 main_view의 네임스페이스에서 resolve된다(더 이상 main.py가
+    재노출 안 함)."""
+    import main_view
+    assert main_view.SESSION_CONTEXT_LOG_PATH is rp.SESSION_CONTEXT_LOG_PATH
 
 
 def test_router_orchestrator_reexports_match_router_paths():
