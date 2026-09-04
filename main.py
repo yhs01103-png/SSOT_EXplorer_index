@@ -24,6 +24,7 @@ import sys
 import traceback
 import webbrowser
 from collections import Counter
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
@@ -570,14 +571,37 @@ def format_shared_docs_text(shared_docs: list[dict]) -> str:
     return "\n\n".join(lines)
 
 
+def _format_recent_log_text(
+    entries: list[dict],
+    limit: int,
+    empty_message: str,
+    render_entry: Callable[[dict], list[str]],
+) -> str:
+    """2026-09-04(D-099, H-012 해소, O-021 Stage 2) — 개발자 탭 로그뷰
+    포맷터 5종(format_watcher_log_text 등)이 전부 같은 골격("최근 limit개만,
+    최신이 위로")을 각자 복붙하고 있던 걸 하나로 모은다. 항목 하나가 줄
+    1개(대부분)든 여러 개(format_watchdog_log_text처럼 요약+실패사유+근거
+    줄을 같이 내는 경우)든 상관없이 render_entry가 그 항목의 줄 목록만
+    돌려주면 된다 — reversed(recent)로 최신 항목부터 순회하며 그대로
+    이어붙이므로, 항목 내부의 줄 순서(예: 요약 줄이 근거 줄보다 먼저)는
+    항상 보존된다(줄 단위로 통째로 뒤집는 방식이었다면 이게 깨졌을 것)."""
+    if not entries:
+        return empty_message
+    recent = entries[-limit:]
+    lines: list[str] = []
+    for entry in reversed(recent):
+        lines.extend(render_entry(entry))
+    return "\n".join(lines)
+
+
 def format_watcher_log_text(events: list[dict], limit: int = 20) -> str:
     """D-042 — Inbox 감시 로그를 관리자 패널에 보여줄 텍스트로. 최신 항목이
     위로 오게(다른 로그뷰들과 통일된 관례) 최근 limit개만."""
-    if not events:
-        return "(로그 없음 — 아직 감지된 파일 없음, Inbox 감시를 시작하면 쌓임)"
-    recent = events[-limit:]
-    lines = [f"{e['timestamp']}  {e['fileName']}  ({e['watchDir']})" for e in recent]
-    return "\n".join(reversed(lines))
+    return _format_recent_log_text(
+        events, limit,
+        "(로그 없음 — 아직 감지된 파일 없음, Inbox 감시를 시작하면 쌓임)",
+        lambda e: [f"{e['timestamp']}  {e['fileName']}  ({e['watchDir']})"],
+    )
 
 
 def load_session_context_log(path: Path | None = None) -> list[dict]:
@@ -594,14 +618,13 @@ def load_session_context_log(path: Path | None = None) -> list[dict]:
 
 def format_session_context_log_text(entries: list[dict], limit: int = 20) -> str:
     """관리자 패널용 — 최신이 위로, 최근 limit개만."""
-    if not entries:
-        return "(로그 없음 — 등록 루트 안에서 Claude Code 세션을 열면 쌓임)"
-    recent = entries[-limit:]
-    lines = [
-        f"{e['timestamp']}  {e['matchedLabel']}  (관련폴더 {e['relatedCount']}개, 다른루트 {e['otherRootsCount']}개)"
-        for e in recent
-    ]
-    return "\n".join(reversed(lines))
+    return _format_recent_log_text(
+        entries, limit,
+        "(로그 없음 — 등록 루트 안에서 Claude Code 세션을 열면 쌓임)",
+        lambda e: [
+            f"{e['timestamp']}  {e['matchedLabel']}  (관련폴더 {e['relatedCount']}개, 다른루트 {e['otherRootsCount']}개)"
+        ],
+    )
 
 
 def format_orchestration_log_text(runs: list[dict], limit: int = 20) -> str:
@@ -610,18 +633,17 @@ def format_orchestration_log_text(runs: list[dict], limit: int = 20) -> str:
     이미 쌓아둔 ssot_orchestrator_log.json을 그대로 읽어서, 각 실행의 전체
     소요시간(totalElapsedMs)+최상위 후보를 한 줄로 보여준다. 다른 로그뷰와
     동일 관례(최신이 위, 최근 limit개만)."""
-    if not runs:
-        return "(로그 없음 — classify를 한 번이라도 실행하면 쌓임)"
-    recent = runs[-limit:]
-    lines = []
-    for r in recent:
+    def render(r: dict) -> list[str]:
         top = r.get("topCandidate")
         top_text = f"{top['rootLabel']}({top['score']})" if top else "(후보 없음)"
         total_ms = r.get("totalElapsedMs")
         ms_text = f"{total_ms}ms" if total_ms is not None else "?"
         preview = (r.get("queryPreview") or "").replace("\n", " ")[:40]
-        lines.append(f"{r['ranAt']}  {ms_text:>9}  1위:{top_text}  \"{preview}\"")
-    return "\n".join(reversed(lines))
+        return [f"{r['ranAt']}  {ms_text:>9}  1위:{top_text}  \"{preview}\""]
+
+    return _format_recent_log_text(
+        runs, limit, "(로그 없음 — classify를 한 번이라도 실행하면 쌓임)", render,
+    )
 
 
 def format_watchdog_log_text(runs: list[dict], limit: int = 20) -> str:
@@ -630,16 +652,12 @@ def format_watchdog_log_text(runs: list[dict], limit: int = 20) -> str:
     ssot_watchdog_log.json을 그대로 읽어서, 각 실행이 뭘 검사했고 뭘
     찾았으며(근거 포함) 토스트를 실제로 띄웠는지 보여준다 — "무슨 파일을
     무슨 근거로 판단했는지"가 알림 요약이 아니라 여기 그대로 남는다."""
-    if not runs:
-        return "(로그 없음 — 워치독이 아직 한 번도 안 돌았음)"
-    recent = runs[-limit:]
-    lines = []
-    for r in reversed(recent):
+    def render(r: dict) -> list[str]:
         toast_text = "🔔" if r.get("toastFired") else "-"
-        lines.append(
+        lines = [
             f"{r['ranAt']}  검사 루트{r.get('checkedRoots', 0)}+라벨폴더{r.get('checkedLabeledFolders', 0)}"
             f"  발견 {r.get('newFindingsCount', 0)}건  토스트{toast_text}"
-        )
+        ]
         # 2026-09-04(D-096) — 스캔 도중 예외가 나면(레지스트리 쓰기 충돌 등)
         # findings/toast는 비어있어도 이 줄만으로 "그날 실패했다"가 보여야
         # 한다 — 예전엔 이 경우 로그 자체가 안 남아 무인 실행 실패가 완전히
@@ -649,7 +667,9 @@ def format_watchdog_log_text(runs: list[dict], limit: int = 20) -> str:
         for f in r.get("findings", []):
             evidence = ", ".join(f"{k}={v}" for k, v in (f.get("evidence") or {}).items())
             lines.append(f"    [{f['targetType']}/{f['targetLabel']}] {f['actionType']}: {f['note']} ({evidence})")
-    return "\n".join(lines)
+        return lines
+
+    return _format_recent_log_text(runs, limit, "(로그 없음 — 워치독이 아직 한 번도 안 돌았음)", render)
 
 
 def format_proposals_text(proposals: list[dict], trust_state: dict, limit: int = 20) -> str:
@@ -661,17 +681,18 @@ def format_proposals_text(proposals: list[dict], trust_state: dict, limit: int =
     피드백이 같은 파일에 합쳐지므로, 이 뷰 하나가 두 경로 전부를 보여준다.
     각 줄에 그 루트의 현재 신뢰 상태(연속 5승인 시 ✅, D-030)도 같이 표시.
     다른 로그뷰와 동일 관례(최신이 위, 최근 limit개만)."""
-    if not proposals:
-        return "(기록 없음 — SaveDocumentDialog 승인/취소 또는 MCP record_classification_feedback 호출 시 쌓임)"
-    recent = proposals[-limit:]
-    lines = []
-    for p in reversed(recent):
+    def render(p: dict) -> list[str]:
         label = p.get("rootLabel") or "?"
         badge = " ✅신뢰됨" if trust_state.get(label, {}).get("trusted") else ""
         mark = "✔승인" if p.get("decision") == "approved" else "✘취소"
         preview = (p.get("contentPreview") or "").replace("\n", " ")[:40]
-        lines.append(f"{p.get('decidedAt', '?')}  {mark}  {label}({p.get('score', '?')}){badge}  \"{preview}\"")
-    return "\n".join(lines)
+        return [f"{p.get('decidedAt', '?')}  {mark}  {label}({p.get('score', '?')}){badge}  \"{preview}\""]
+
+    return _format_recent_log_text(
+        proposals, limit,
+        "(기록 없음 — SaveDocumentDialog 승인/취소 또는 MCP record_classification_feedback 호출 시 쌓임)",
+        render,
+    )
 
 
 def get_available_drives() -> list[str]:
