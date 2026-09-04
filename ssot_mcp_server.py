@@ -75,6 +75,7 @@ IDE 쪽 mcp 설정(예: Claude Code `.mcp.json`)에 이 파일을 커맨드로 �
 from __future__ import annotations
 
 import fnmatch
+import functools
 from datetime import date
 from pathlib import Path
 
@@ -129,7 +130,39 @@ _DEV_MODE_OFF = {
 }
 
 
+def _dev_mode_gate(*, returns_list: bool):
+    """D-097 — `if not is_developer_mode(REGISTRY_PATH): return ...` 2줄
+    가드가 tool 8개에 그대로 복붙돼 있던 걸(상용 비교 분석에서 지적된
+    지점) 데코레이터 하나로 모은다. 반환 타입이 tool마다 dict 하나
+    (classify_content/record_classification_feedback)거나 list[dict]
+    하나짜리 리스트(나머지 6개)라 그 차이만 `returns_list`로 받는다 —
+    실제 게이트 판단(is_developer_mode 호출)과 오프라인 응답값은 한
+    곳(`_DEV_MODE_OFF`)에만 있다.
+
+    `@server.tool()`보다 안쪽에 둔다(데코레이터는 아래→위로 적용되므로
+    `@server.tool() / @_dev_mode_gate(...) / def foo(): ...` 순서) — 그래야
+    MCP 서버가 등록하는 건 이 게이트를 통과한 뒤 원본을 부르는 wrapper다.
+    `functools.wraps`로 `__name__`/`__doc__`/`__wrapped__`를 보존해서
+    `inspect.signature()`가 원본 시그니처를 그대로 보고(MCP SDK의 파라미터
+    스키마 생성), 테스트가 `mcp_srv.<tool>(...)`으로 직접 불러도 동일하게
+    동작한다(server.tool()이 원본을 그대로 반환한다는 기존 실측 확인,
+    test_ssot_mcp_server.py 상단 참고 — 이 데코레이터를 하나 더 씌워도 그
+    성질은 그대로 유지됨)."""
+    off_value = [_DEV_MODE_OFF] if returns_list else _DEV_MODE_OFF
+
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            if not is_developer_mode(REGISTRY_PATH):
+                return off_value
+            return func(*args, **kwargs)
+        return wrapper
+
+    return decorator
+
+
 @server.tool()
+@_dev_mode_gate(returns_list=True)
 def list_ssot_roots() -> list[dict]:
     """등록된 SSOT 루트 목록을 반환한다(label/path/scope/참조조건 요약) —
     다른 tool을 부르기 전에 어떤 루트가 있는지 확인하는 용도. `pathExists`
@@ -137,10 +170,7 @@ def list_ssot_roots() -> list[dict]:
     여부는 항상 호출한 쪽/사람이 판단, 이 tool이 자동으로 지우지 않는다.
 
     2026-08-17(D-057) — 개발자 모드가 꺼져 있으면 빈 응답 대신 명시적
-    에러 dict 하나만 반환(아래 게이트 3곳 전부 공통)."""
-    if not is_developer_mode(REGISTRY_PATH):
-        return [_DEV_MODE_OFF]
-
+    에러 dict 하나만 반환(`_dev_mode_gate`, D-097 — tool 8개 공통)."""
     return [
         {
             "label": r.get("label", ""),
@@ -154,6 +184,7 @@ def list_ssot_roots() -> list[dict]:
 
 
 @server.tool()
+@_dev_mode_gate(returns_list=True)
 def check_readme_freshness(
     root_label: str | None = None, stale_days: int = README_STALE_DAYS
 ) -> list[dict]:
@@ -161,10 +192,8 @@ def check_readme_freshness(
     시각(mtime) 대비 며칠이나 뒤처졌는지 확인한다. root_label을 주면 그
     루트 하나만, 안 주면 등록된 전체를 확인한다. 파일을 절대 고치지 않는다
     — status가 "stale"이면 호출한 에이전트/사람이 README를 검토할지
-    판단한다. 개발자 모드가 꺼져 있으면 에러 dict 하나만 반환(D-057)."""
-    if not is_developer_mode(REGISTRY_PATH):
-        return [_DEV_MODE_OFF]
-
+    판단한다. 개발자 모드가 꺼져 있으면 에러 dict 하나만 반환한다
+    (`_dev_mode_gate`, D-097)."""
     roots = router_registry.load_roots(REGISTRY_PATH)
     if root_label is not None:
         roots = [r for r in roots if r.get("label") == root_label]
@@ -174,6 +203,7 @@ def check_readme_freshness(
 
 
 @server.tool()
+@_dev_mode_gate(returns_list=False)
 def classify_content(text: str) -> dict:
     """텍스트 하나를 등록된 SSOT 루트들과 대조해 어디에 속할지 순위 매긴
     후보를 반환한다 — 이미 있는 6단계 분류 파이프라인(router_orchestrator.
@@ -188,20 +218,18 @@ def classify_content(text: str) -> dict:
     부작용이 아니라 D-044부터 있던 동작 그대로다.
 
     개발자 모드가 꺼져 있으면 분류를 아예 실행하지 않고 에러 dict만
-    반환한다(D-057) — 내부 로그도 안 쌓인다.
+    반환한다(`_dev_mode_gate`, D-097) — 내부 로그도 안 쌓인다.
 
     **최종적으로 어느 루트를 선택했는지 결정했으면 `record_classification_
     feedback`을 그 candidate로 호출해달라(D-092, O-012)** — 강제는 아니지만,
     호출 안 하면 이 판단의 승인/거부 데이터가 전혀 안 쌓여서 신뢰 폐루프
     (trusted/acceptanceRate)와 향후 랭킹 재조정 둘 다 영영 근거 데이터를
     못 모은다."""
-    if not is_developer_mode(REGISTRY_PATH):
-        return _DEV_MODE_OFF
-
     return router_orchestrator.orchestrate(text, router_registry.load_roots(REGISTRY_PATH))
 
 
 @server.tool()
+@_dev_mode_gate(returns_list=False)
 def record_classification_feedback(candidate: dict, content_preview: str, decision: str) -> dict:
     """`classify_content()`가 반환한 `candidates` 배열의 항목 하나를 실제로
     채택했는지(`decision="approved"`) 아니면 다른 곳으로 갔는지
@@ -232,14 +260,12 @@ def record_classification_feedback(candidate: dict, content_preview: str, decisi
     O-012가 이미 기록해둔 미지수).
 
     개발자 모드가 꺼져 있으면 다른 tool과 동일하게 기록 없이 에러 dict만
-    반환한다(D-057 게이팅 관례)."""
-    if not is_developer_mode(REGISTRY_PATH):
-        return _DEV_MODE_OFF
-
+    반환한다(`_dev_mode_gate`, D-097)."""
     return record_decision(candidate, content_preview, decision)
 
 
 @server.tool()
+@_dev_mode_gate(returns_list=True)
 def list_triggered_actions(root_label: str, changed_paths: list[str]) -> list[dict]:
     """등록 루트의 `actions`(D-058, O-013) 중 `changed_paths`와 `trigger`가
     매치되는 것만 신호로 반환한다 — 스크립트를 절대 실행하지 않는다(P-01,
@@ -256,10 +282,7 @@ def list_triggered_actions(root_label: str, changed_paths: list[str]) -> list[di
 
     root_label을 못 찾으면 check_readme_freshness와 동일하게
     label_not_found 신호 하나만 반환. 개발자 모드가 꺼져 있으면 다른
-    tool과 동일하게 에러 dict 하나만 반환한다(D-057 게이팅 관례)."""
-    if not is_developer_mode(REGISTRY_PATH):
-        return [_DEV_MODE_OFF]
-
+    tool과 동일하게 에러 dict 하나만 반환한다(`_dev_mode_gate`, D-097)."""
     roots = [r for r in router_registry.load_roots(REGISTRY_PATH) if r.get("label") == root_label]
     if not roots:
         return [{"status": "label_not_found", "label": root_label}]
@@ -291,6 +314,7 @@ def list_triggered_actions(root_label: str, changed_paths: list[str]) -> list[di
 
 
 @server.tool()
+@_dev_mode_gate(returns_list=True)
 def list_registered_actions(root_label: str | None = None) -> list[dict]:
     """등록된 actions(D-058/D-061)를 매칭 없이 그대로 나열한다 —
     `list_triggered_actions`가 changed_paths와 대조해 매치되는 것만
@@ -303,10 +327,7 @@ def list_registered_actions(root_label: str | None = None) -> list[dict]:
     항목은 scriptPath/scriptExists가 빈 값/False로 나온다(D-061).
 
     root_label을 줬는데 못 찾으면 다른 tool과 동일하게 label_not_found.
-    개발자 모드가 꺼져 있으면 에러 dict 하나만(D-057 게이팅 관례)."""
-    if not is_developer_mode(REGISTRY_PATH):
-        return [_DEV_MODE_OFF]
-
+    개발자 모드가 꺼져 있으면 에러 dict 하나만(`_dev_mode_gate`, D-097)."""
     roots = router_registry.load_roots(REGISTRY_PATH)
     if root_label is not None:
         roots = [r for r in roots if r.get("label") == root_label]
@@ -332,6 +353,7 @@ def list_registered_actions(root_label: str | None = None) -> list[dict]:
 
 
 @server.tool()
+@_dev_mode_gate(returns_list=True)
 def list_missing_index_folders(root_label: str) -> list[dict]:
     """등록 루트 바로 밑(depth=1)에서 CLAUDE.md/README.md가 (둘 중
     하나라도) 없는 하위 폴더를 후보로 반환한다 — 파일을 절대 안 만든다
@@ -352,10 +374,7 @@ def list_missing_index_folders(root_label: str) -> list[dict]:
 
     root_label을 못 찾으면 다른 tool과 동일하게 label_not_found 신호.
     개발자 모드가 꺼져 있으면 다른 tool과 동일하게 에러 dict 하나만
-    반환한다(D-057 게이팅 관례)."""
-    if not is_developer_mode(REGISTRY_PATH):
-        return [_DEV_MODE_OFF]
-
+    반환한다(`_dev_mode_gate`, D-097)."""
     roots = [r for r in router_registry.load_roots(REGISTRY_PATH) if r.get("label") == root_label]
     if not roots:
         return [{"status": "label_not_found", "label": root_label}]
@@ -386,6 +405,7 @@ def list_missing_index_folders(root_label: str) -> list[dict]:
 
 
 @server.tool()
+@_dev_mode_gate(returns_list=True)
 def check_labeled_folders_audit(label: str | None = None) -> list[dict]:
     """등록된 라벨 폴더(들)의 감사 상태를 확인한다(O-018(b)/D-073). label을
     주면 그 하나만, 안 주면 등록된 전체를 확인한다. 각 항목에:
@@ -407,10 +427,8 @@ def check_labeled_folders_audit(label: str | None = None) -> list[dict]:
       references` 참고).
     파일을 절대 안 고친다 — 3자 불일치가 보이면 실제로 README를 만들거나
     고칠지는 호출한 에이전트(Claude Code)가 판단한다. 개발자 모드가
-    꺼져 있으면 다른 tool과 동일하게 에러 dict 하나만 반환(D-057)."""
-    if not is_developer_mode(REGISTRY_PATH):
-        return [_DEV_MODE_OFF]
-
+    꺼져 있으면 다른 tool과 동일하게 에러 dict 하나만 반환한다
+    (`_dev_mode_gate`, D-097)."""
     folders = router_registry.load_labeled_folders(REGISTRY_PATH)
     if label is not None:
         folders = [f for f in folders if f.get("label") == label]
