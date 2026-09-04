@@ -94,6 +94,7 @@ files = [
     "cli.py",
     "main_pipeline.py",
     "main_view.py",
+    "main_workers.py",
     "router_ai_judgment.py",
     "router_classifier.py",
     "router_embeddings.py",

@@ -26,7 +26,7 @@ import webbrowser
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QProcess, QSettings, Qt, QThread, Signal
+from PySide6.QtCore import QProcess, QSettings, Qt
 from PySide6.QtGui import QAction, QColor, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
@@ -83,6 +83,17 @@ from main_view import (  # noqa: E402
     load_session_context_log,
     review_age_days,
     validate_registry,
+)
+
+# 2026-09-04(D-104, O-021 Stage 4-2) — QThread 워커 4종은 main_workers.py로
+# 이관(레이어 분리 방침의 "UX/UI 미분리" 갭 해소, Stage 4-1 다음 조각).
+# 여기서는 재노출만 — bare name 그대로라 기존 테스트(m.ClassificationWorker
+# 등 직접 참조)가 안 깨진다.
+from main_workers import (  # noqa: E402
+    ClassificationWorker,
+    InboxWatcherThread,
+    RootInitWorker,
+    SearchWorker,
 )
 
 # 2026-09-04(D-098, O-021 Stage 1) — 경로 상수는 router_paths.py로 이관(레이어
@@ -285,14 +296,14 @@ from router_sync import (  # noqa: E402
     SYNC_MARKER,  # noqa: F401 — 2026-09-04(D-102) export_all_roots()가 main_pipeline로 옮겨가며
     # 이 파일 안에서 직접은 안 불리게 됐지만, test_main.py가 m.SYNC_MARKER로 재노출 여부 자체를
     # 검증하는 공개 별칭이라 유지(resolve_format_target과 동일 이유, 바로 아래 참고).
-    resolve_claude_md_target,
     resolve_format_target,  # noqa: F401 — 이 파일 안에서 직접은 안 불림(router_sync.resolve_format_target로만
     # 씀), 하지만 test_main.py가 m.resolve_format_target로 재노출 여부 자체를 검증하는 공개 별칭이라 유지.
 )
 
-
-def generate_init_claude_md(entry: dict) -> str:
-    return router_sync.generate_init_claude_md(entry, REGISTRY_PATH)
+# (resolve_claude_md_target/generate_init_claude_md는 main.py 안에서 더 이상
+# 안 쓰임 — RootInitWorker가 main_workers.py로 옮겨가며 router_sync를 직접
+# 씀, D-104. add_root_entry()도 D-101부터 이미 router_sync 직접 호출. 재노출
+# 안 함 — 이걸 검증하는 테스트 없음, 실측 확인 후 정리.)
 
 
 # (format_registry_text/format_shared_docs_text/_format_recent_log_text+5
@@ -316,72 +327,8 @@ def find_index_files(folder: Path) -> dict:
     return router_registry.find_index_files(folder)
 
 
-# ---------------------------------------------------------------- Inbox 감시
-#
-# 2026-08-14(D-042) — O-006 경량화(자동분류 연결 없이 감지+로그+알림만).
-# router_watcher.InboxWatcher.start()는 블로킹 폴링 루프라 SearchWorker와
-# 같은 이유로 QThread에서 돌린다(Qt 이벤트 루프를 안 막기 위해).
-
-class InboxWatcherThread(QThread):
-    new_file_detected = Signal(str, str)  # (watch_dir, file_name)
-
-    def __init__(self, watch_dir: Path):
-        super().__init__()
-        self.watch_dir = watch_dir
-        self._watcher = router_watcher.InboxWatcher(watch_dir, on_new_file=self._on_new_file)
-
-    def _on_new_file(self, file_name: str):
-        router_watcher.record_new_file_event(self.watch_dir, file_name)
-        self.new_file_detected.emit(str(self.watch_dir), file_name)
-
-    def run(self):
-        self._watcher.start()
-
-    def stop(self):
-        self._watcher.stop()
-
-
-# --------------------------------------------------------------------- 검색
-#
-# 2026-08-13: 재귀 스캔(os.walk)을 QThread로 분리 — 등록된 루트가 크면
-# 원래는 다이얼로그를 만드는 동안 UI 전체가 멈췄다(모달이라 더 체감됨).
-# 이제 "검색 중..." 표시만 먼저 뜨고, 스캔은 백그라운드에서 돌다가 끝나면
-# 신호로 결과를 채운다.
-
-class SearchWorker(QThread):
-    result_ready = Signal(list)
-
-    def __init__(self, roots: list[dict], query: str):
-        super().__init__()
-        self.roots = roots
-        self.query = query
-        self._cancelled = False
-
-    def cancel(self):
-        self._cancelled = True
-
-    def run(self):
-        q = self.query.lower()
-        matches = []
-        for r in self.roots:
-            if self._cancelled:
-                return
-            root_path = Path(r["path"])
-            if not root_path.exists():
-                continue
-            for dirpath, dirnames, filenames in os.walk(root_path):
-                if self._cancelled:
-                    return
-                dirnames[:] = [d for d in dirnames if not d.startswith(".")]
-                for name in dirnames + filenames:
-                    if q in name.lower():
-                        matches.append(str(Path(dirpath) / name))
-                if len(matches) >= 300:
-                    break
-            if len(matches) >= 300:
-                break
-        if not self._cancelled:
-            self.result_ready.emit(matches)
+# (InboxWatcherThread/SearchWorker는 main_workers.py로 이관됨 — D-104,
+# O-021 Stage 4-2, 상단 import 참고)
 
 
 class SearchDialog(QDialog):
@@ -771,22 +718,9 @@ class SyncFormatsDialog(QDialog):
 
 
 # ------------------------------------------------------- 라우터(D-029) — 저장
-
-class ClassificationWorker(QThread):
-    """SaveDocumentDialog.run_classification()의 router_orchestrator.
-    orchestrate() 호출을 배경 스레드로 분리(D-051, H-008) — SearchWorker
-    (D-013)와 같은 "느린 작업은 QThread로" 패턴."""
-    result_ready = Signal(dict)
-
-    def __init__(self, text: str, roots: list[dict]):
-        super().__init__()
-        self.text = text
-        self.roots = roots
-
-    def run(self):
-        result = router_orchestrator.orchestrate(self.text, self.roots)
-        self.result_ready.emit(result)
-
+#
+# (ClassificationWorker는 main_workers.py로 이관됨 — D-104, O-021 Stage 4-2,
+# 상단 import 참고)
 
 class SaveDocumentDialog(QDialog):
     """"저장하면 알아서 맞는 프로젝트 폴더로" 워크플로우의 1단계(수동 캡처
@@ -975,35 +909,9 @@ class SaveDocumentDialog(QDialog):
         super().closeEvent(event)
 
 
-class RootInitWorker(QThread):
-    """_ensure_all_roots_initialized()의 존재확인+init 생성 루프를 배경
-    스레드로 분리(H-009) — 루트 개수만큼 순차 is_dir()/exists()/쓰기를
-    UI 스레드(__init__)에서 돌리던 걸, SearchWorker(D-013)/
-    ClassificationWorker(D-051)와 같은 "느린 I/O는 QThread로" 패턴으로
-    옮겼다. 현재 등록 루트(로컬/OneDrive 5개)에서는 체감 지연이 실측된
-    적 없지만, 네트워크 드라이브나 오프라인 경로가 섞이는 시나리오까지
-    감안해 재현 전에 선제 적용."""
-    done = Signal(list)
-
-    def __init__(self, roots: list[dict]):
-        super().__init__()
-        self.roots = roots
-
-    def run(self):
-        created = []
-        for entry in self.roots:
-            root_path = Path(entry["path"])
-            if not root_path.is_dir():
-                continue  # 경로 자체가 없으면(다른 기기 전용 등) 건너뜀
-            claude_path = resolve_claude_md_target(root_path)
-            if claude_path.exists():
-                continue
-            try:
-                claude_path.write_text(generate_init_claude_md(entry), encoding="utf-8")
-                created.append(entry["label"])
-            except OSError:
-                pass  # 권한 문제 등 — 조용히 건너뜀, 앱 시작을 막을 이유 없음
-        self.done.emit(created)
+# (RootInitWorker는 main_workers.py로 이관됨 — D-104, O-021 Stage 4-2,
+# 상단 import 참고. 생성자가 registry_path를 추가로 받게 됐으므로 아래
+# _ensure_all_roots_initialized()의 호출부도 같이 바뀜)
 
 
 # ---------------------------------------------------------------------- 앱
@@ -1342,8 +1250,13 @@ class SSOTExplorer(QMainWindow):
         2026-08-17(H-009) — 실제 파일 존재확인+쓰기 루프는 RootInitWorker
         (QThread)로 옮겨 __init__이 이 작업이 끝나길 기다리지 않고 바로
         반환한다(SearchWorker/ClassificationWorker와 동일 패턴). self에
-        참조를 들고 있어야 워커가 가비지컬렉트 안 됨."""
-        self.root_init_worker = RootInitWorker(self.roots)
+        참조를 들고 있어야 워커가 가비지컬렉트 안 됨.
+
+        2026-09-04(D-104, O-021 Stage 4-2) — RootInitWorker가 main_workers.py
+        로 옮겨가며 생성자가 registry_path를 명시로 받게 됐다(그 파일
+        안에서는 main.py의 모듈 전역 REGISTRY_PATH를 bare name으로 참조할
+        수 없어서, 이 파일이 생성 시점에 직접 주입)."""
+        self.root_init_worker = RootInitWorker(self.roots, REGISTRY_PATH)
         self.root_init_worker.done.connect(self._on_roots_initialized)
         self.root_init_worker.start()
 
